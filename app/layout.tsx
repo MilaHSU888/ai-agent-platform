@@ -22,24 +22,24 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL(origin),
-    title: "WorkHub｜企業智慧工具平台",
-    description: "整合全公司與各部門小工具，追蹤平台採用率與實際效益。",
+    title: "智匯｜企業部門知識問答平台",
+    description: "整合部門專屬知識庫、AI 問答引用、Excel 匯入匯出與知識維運後台。",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "WorkHub｜企業智慧工具平台",
-      description: "整合工具・衡量採用・量化效益",
+      title: "智匯｜企業部門知識問答平台",
+      description: "讓每個部門，都有一位懂內部知識的 AI 助理。",
       type: "website",
       url: origin,
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "WorkHub 企業智慧工具平台" }],
+      images: [{ url: `${origin}/og-phase2.png`, width: 1200, height: 630, alt: "智匯企業部門知識問答平台" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "WorkHub｜企業智慧工具平台",
-      description: "整合工具・衡量採用・量化效益",
-      images: [`${origin}/og.png`],
+      title: "智匯｜企業部門知識問答平台",
+      description: "部門專屬知識庫、可追溯引用與 Excel 維運後台",
+      images: [`${origin}/og-phase2.png`],
     },
   };
 }

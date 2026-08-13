@@ -1,361 +1,411 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 
+type View = "departments" | "chat" | "prompts" | "qa" | "admin";
 type Department = {
   id: string;
   name: string;
   short: string;
-  count: number;
-  active: number;
-  tools: number;
-  saved: number;
+  description: string;
+  documents: number;
+  entries: string;
+  updated: string;
+  color: string;
+  topics: string[];
+  starters: string[];
 };
 
-type Tool = {
+type KnowledgeDocument = {
   id: string;
   name: string;
-  description: string;
   department: string;
-  type: "AI" | "非 AI";
-  badge?: string;
-  users: number;
-  runs: number;
-  saved: number;
-  color: string;
-  icon: string;
+  type: string;
+  version: string;
+  rows: number;
+  updated: string;
+  owner: string;
+  status: "已發布" | "索引中" | "待審核";
+};
+
+type Message = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  citations?: string[];
 };
 
 const departments: Department[] = [
-  { id: "shared", name: "全公司共用", short: "全", count: 328, active: 286, tools: 6, saved: 916 },
-  { id: "finance", name: "財務部", short: "財", count: 18, active: 16, tools: 4, saved: 138 },
-  { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 5, saved: 171 },
-  { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 4, saved: 96 },
-  { id: "general", name: "總務部", short: "總", count: 15, active: 11, tools: 3, saved: 72 },
-  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 6, saved: 384 },
-  { id: "purchase", name: "採購部", short: "採", count: 21, active: 18, tools: 4, saved: 142 },
-  { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 5, saved: 318 },
-  { id: "material", name: "資材部", short: "材", count: 26, active: 22, tools: 4, saved: 186 },
-  { id: "mfg1", name: "製造一部", short: "一", count: 52, active: 41, tools: 4, saved: 264 },
-  { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 4, saved: 247 },
-  { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 5, saved: 121 },
+  { id: "finance", name: "財務部", short: "財", description: "費用、預算、請款與會計制度", documents: 36, entries: "12.8K", updated: "12 分鐘前", color: "indigo", topics: ["費用報支", "預算規範", "付款流程"], starters: ["國內出差的住宿費上限是多少？", "請款單需要哪些附件？", "今年預算調整的申請流程"] },
+  { id: "hr", name: "人力資源部", short: "人", description: "差勤、福利、招募與內部規章", documents: 28, entries: "8.6K", updated: "今天 09:24", color: "rose", topics: ["差勤規章", "員工福利", "招募流程"], starters: ["家庭照顧假如何申請？", "新人試用期的考核流程", "年度健檢補助規定"] },
+  { id: "purchase", name: "採購部", short: "採", description: "供應商、採購條款與詢比議價", documents: 42, entries: "15.1K", updated: "昨天 16:40", color: "amber", topics: ["詢比議價", "供應商評核", "採購條款"], starters: ["哪些採購案需要三家比價？", "供應商年度評核標準", "緊急採購的核准層級"] },
+  { id: "quality", name: "品保部", short: "品", description: "品質標準、檢驗規範與異常處理", documents: 64, entries: "21.4K", updated: "38 分鐘前", color: "teal", topics: ["檢驗標準", "8D 報告", "客訴處理"], starters: ["來料尺寸超差的處理流程", "8D 報告完成期限", "最新版抽樣檢驗規範"] },
+  { id: "rd", name: "研發部", short: "研", description: "產品規格、設計標準與技術文件", documents: 87, entries: "31.2K", updated: "今天 10:05", color: "violet", topics: ["設計規範", "BOM 版本", "技術標準"], starters: ["ECN 變更需要哪些審核？", "查詢 A 系列的材料規格", "設計驗證需要保留哪些紀錄"] },
+  { id: "manufacturing", name: "製造部", short: "製", description: "SOP、設備操作與生產異常", documents: 73, entries: "26.7K", updated: "1 小時前", color: "blue", topics: ["作業 SOP", "設備點檢", "異常通報"], starters: ["產線換線前要做哪些確認？", "設備每日點檢項目", "缺料停線的通報流程"] },
+  { id: "sales", name: "業務部", short: "業", description: "產品資訊、報價原則與客戶服務", documents: 31, entries: "10.3K", updated: "昨天 14:18", color: "cyan", topics: ["產品資訊", "報價原則", "客戶服務"], starters: ["標準報價的有效期限", "客戶樣品申請流程", "產品 A 的交期說明"] },
+  { id: "it", name: "資訊部", short: "資", description: "系統操作、帳號權限與資安政策", documents: 39, entries: "11.9K", updated: "今天 08:42", color: "slate", topics: ["系統手冊", "權限申請", "資安政策"], starters: ["VPN 無法連線如何排除？", "新增 ERP 權限的申請流程", "外部檔案交換的資安規範"] },
 ];
 
-const tools: Tool[] = [
-  { id: "meeting", name: "會議紀錄助手", description: "自動整理逐字稿、待辦事項與決策摘要", department: "shared", type: "AI", badge: "熱門", users: 214, runs: 846, saved: 286, color: "violet", icon: "記" },
-  { id: "translate", name: "多語翻譯助手", description: "中英日文件翻譯與企業用語校正", department: "shared", type: "AI", users: 186, runs: 638, saved: 192, color: "blue", icon: "譯" },
-  { id: "document", name: "文件格式轉換", description: "PDF、Word、Excel 檔案快速轉換", department: "shared", type: "非 AI", users: 172, runs: 512, saved: 84, color: "cyan", icon: "轉" },
-  { id: "mail", name: "郵件草稿助手", description: "依情境產生專業郵件與回覆建議", department: "shared", type: "AI", users: 149, runs: 427, saved: 118, color: "orange", icon: "郵" },
-  { id: "search", name: "內規快速查詢", description: "搜尋公司規章、表單與標準流程", department: "shared", type: "AI", users: 132, runs: 391, saved: 129, color: "green", icon: "查" },
-  { id: "image", name: "圖片壓縮工具", description: "批次壓縮與調整常用圖片格式", department: "shared", type: "非 AI", users: 94, runs: 246, saved: 42, color: "pink", icon: "圖" },
-
-  { id: "invoice", name: "發票核對助手", description: "比對發票、請款單與付款條件", department: "finance", type: "AI", badge: "本月新增", users: 15, runs: 184, saved: 62, color: "blue", icon: "核" },
-  { id: "expense", name: "費用分析儀表板", description: "依成本中心彙整費用與異常項目", department: "finance", type: "非 AI", users: 12, runs: 96, saved: 28, color: "green", icon: "費" },
-  { id: "budget", name: "預算差異說明助手", description: "產生預算與實績差異初稿", department: "finance", type: "AI", users: 9, runs: 74, saved: 34, color: "violet", icon: "算" },
-  { id: "reconcile", name: "對帳檔整理工具", description: "合併銀行與 ERP 對帳資料", department: "finance", type: "非 AI", users: 11, runs: 128, saved: 39, color: "cyan", icon: "帳" },
-
-  { id: "ticket", name: "IT 服務台助手", description: "問題分類、相似案例與處理步驟建議", department: "it", type: "AI", users: 14, runs: 212, saved: 68, color: "blue", icon: "修" },
-  { id: "account", name: "帳號權限申請", description: "整合 AD 帳號與系統權限申請", department: "it", type: "非 AI", users: 14, runs: 89, saved: 19, color: "cyan", icon: "權" },
-  { id: "log", name: "系統日誌分析", description: "彙整錯誤日誌並標示可能原因", department: "it", type: "AI", users: 10, runs: 108, saved: 41, color: "orange", icon: "誌" },
-  { id: "asset", name: "資訊資產盤點", description: "查詢設備、授權與保固狀態", department: "it", type: "非 AI", users: 12, runs: 65, saved: 18, color: "green", icon: "盤" },
-  { id: "code", name: "程式碼審查助手", description: "檢查變更、風險與測試覆蓋", department: "it", type: "AI", users: 8, runs: 76, saved: 35, color: "violet", icon: "碼" },
-
-  { id: "jd", name: "職缺文案助手", description: "依職務需求產生招募文案初稿", department: "hr", type: "AI", users: 8, runs: 68, saved: 24, color: "violet", icon: "徵" },
-  { id: "onboard", name: "新人報到清單", description: "跨部門報到任務與進度追蹤", department: "hr", type: "非 AI", users: 10, runs: 54, saved: 18, color: "green", icon: "新" },
-  { id: "policy", name: "人事規章問答", description: "查詢差勤、福利與內部人事規章", department: "hr", type: "AI", users: 9, runs: 124, saved: 37, color: "blue", icon: "問" },
-  { id: "attendance", name: "差勤異常彙整", description: "彙整待確認的差勤與加班紀錄", department: "hr", type: "非 AI", users: 7, runs: 62, saved: 17, color: "orange", icon: "勤" },
-
-  { id: "repair", name: "修繕申請中心", description: "廠區修繕通報、分派與進度查詢", department: "general", type: "非 AI", users: 11, runs: 76, saved: 17, color: "orange", icon: "繕" },
-  { id: "contract", name: "合約摘要助手", description: "整理行政合約重點與到期日", department: "general", type: "AI", users: 8, runs: 49, saved: 22, color: "violet", icon: "約" },
-  { id: "room", name: "會議室資源管理", description: "空間、設備與借用衝突查詢", department: "general", type: "非 AI", users: 9, runs: 88, saved: 13, color: "cyan", icon: "室" },
-
-  { id: "spec", name: "規格文件助手", description: "摘要規格、比對版本與標示變更", department: "rd", type: "AI", badge: "熱門", users: 42, runs: 318, saved: 126, color: "violet", icon: "規" },
-  { id: "patent", name: "專利檢索助手", description: "整理技術關鍵字與相似專利", department: "rd", type: "AI", users: 31, runs: 186, saved: 84, color: "blue", icon: "專" },
-  { id: "testreport", name: "測試報告產生器", description: "彙整測試數據與報告格式", department: "rd", type: "非 AI", users: 38, runs: 241, saved: 71, color: "green", icon: "測" },
-  { id: "bom", name: "BOM 差異比對", description: "快速標示版本間料件差異", department: "rd", type: "非 AI", users: 29, runs: 164, saved: 49, color: "cyan", icon: "料" },
-  { id: "risk", name: "設計風險檢查", description: "依歷史案例提示潛在設計風險", department: "rd", type: "AI", users: 24, runs: 127, saved: 41, color: "orange", icon: "險" },
-  { id: "tech", name: "技術知識搜尋", description: "跨專案搜尋核准的技術文件", department: "rd", type: "AI", users: 35, runs: 223, saved: 68, color: "pink", icon: "知" },
-
-  { id: "quote", name: "報價比較助手", description: "彙整供應商報價與差異說明", department: "purchase", type: "AI", users: 17, runs: 164, saved: 58, color: "blue", icon: "價" },
-  { id: "supplier", name: "供應商評核", description: "品質、交期與服務績效彙整", department: "purchase", type: "非 AI", users: 14, runs: 82, saved: 24, color: "green", icon: "供" },
-  { id: "po", name: "採購單查詢", description: "依料號、廠商與日期查詢 PO", department: "purchase", type: "非 AI", users: 19, runs: 202, saved: 35, color: "cyan", icon: "購" },
-  { id: "clause", name: "採購條款檢查", description: "提示付款、交期與責任條款", department: "purchase", type: "AI", users: 12, runs: 91, saved: 25, color: "violet", icon: "款" },
-
-  { id: "crm", name: "CRM 業務助理", description: "查詢客戶、案件、機會與歷史互動", department: "sales", type: "AI", badge: "最常使用", users: 34, runs: 428, saved: 118, color: "blue", icon: "客" },
-  { id: "rfq", name: "RFQ／PO 查詢", description: "依客戶、料號與單號唯讀查詢", department: "sales", type: "非 AI", users: 31, runs: 286, saved: 54, color: "cyan", icon: "單" },
-  { id: "brief", name: "拜訪摘要助手", description: "整理客戶拜訪重點與後續行動", department: "sales", type: "AI", users: 29, runs: 218, saved: 73, color: "violet", icon: "訪" },
-  { id: "market", name: "市場情報助手", description: "彙整市場、客戶、競品與新聞", department: "sales", type: "AI", users: 25, runs: 156, saved: 49, color: "orange", icon: "情" },
-  { id: "forecast", name: "業績預測看板", description: "機會進度、預測金額與落差追蹤", department: "sales", type: "非 AI", users: 18, runs: 94, saved: 24, color: "green", icon: "績" },
-
-  { id: "inventory", name: "庫存異常助手", description: "標示呆滯、短缺與異常異動", department: "material", type: "AI", users: 21, runs: 196, saved: 66, color: "orange", icon: "庫" },
-  { id: "stock", name: "即時庫存查詢", description: "依廠別、儲位與料號查詢存量", department: "material", type: "非 AI", users: 24, runs: 382, saved: 48, color: "cyan", icon: "存" },
-  { id: "label", name: "標籤批次產生", description: "批次產生入出庫與料件標籤", department: "material", type: "非 AI", users: 18, runs: 142, saved: 31, color: "green", icon: "標" },
-  { id: "demand", name: "需求彙整助手", description: "彙整交期、需求變更與缺料項目", department: "material", type: "AI", users: 16, runs: 118, saved: 41, color: "violet", icon: "需" },
-
-  { id: "shift1", name: "交班摘要助手", description: "彙整生產、異常與待處理事項", department: "mfg1", type: "AI", users: 38, runs: 304, saved: 92, color: "blue", icon: "班" },
-  { id: "daily1", name: "生產日報整併", description: "合併線別日報並計算達成率", department: "mfg1", type: "非 AI", users: 41, runs: 266, saved: 61, color: "green", icon: "日" },
-  { id: "issue1", name: "異常通報中心", description: "通報設備、品質與物料異常", department: "mfg1", type: "非 AI", users: 35, runs: 182, saved: 42, color: "orange", icon: "異" },
-  { id: "sop1", name: "SOP 快速查詢", description: "依站別與機種取得核准版 SOP", department: "mfg1", type: "AI", users: 32, runs: 215, saved: 69, color: "violet", icon: "程" },
-
-  { id: "shift2", name: "交班摘要助手", description: "彙整生產、異常與待處理事項", department: "mfg2", type: "AI", users: 36, runs: 288, saved: 86, color: "blue", icon: "班" },
-  { id: "daily2", name: "生產日報整併", description: "合併線別日報並計算達成率", department: "mfg2", type: "非 AI", users: 38, runs: 248, saved: 58, color: "green", icon: "日" },
-  { id: "issue2", name: "異常通報中心", description: "通報設備、品質與物料異常", department: "mfg2", type: "非 AI", users: 34, runs: 174, saved: 41, color: "orange", icon: "異" },
-  { id: "sop2", name: "SOP 快速查詢", description: "依站別與機種取得核准版 SOP", department: "mfg2", type: "AI", users: 29, runs: 202, saved: 62, color: "violet", icon: "程" },
-
-  { id: "kpi", name: "經營 KPI 看板", description: "彙整部門目標、實績與變化趨勢", department: "management", type: "非 AI", users: 8, runs: 128, saved: 27, color: "green", icon: "標" },
-  { id: "report", name: "管理報告助手", description: "依指標產生月報重點與初稿", department: "management", type: "AI", users: 8, runs: 94, saved: 36, color: "violet", icon: "報" },
-  { id: "benefit", name: "工具效益分析", description: "比較採用率、節省工時與任務成果", department: "management", type: "非 AI", users: 8, runs: 78, saved: 18, color: "blue", icon: "效" },
-  { id: "project", name: "專案進度摘要", description: "跨部門彙整里程碑、風險與待決策", department: "management", type: "AI", users: 7, runs: 62, saved: 28, color: "orange", icon: "進" },
-  { id: "decision", name: "決策資料搜尋", description: "搜尋歷次會議、決議與追蹤狀態", department: "management", type: "AI", users: 7, runs: 54, saved: 22, color: "cyan", icon: "決" },
+const seedDocuments: KnowledgeDocument[] = [
+  { id: "KB-0241", name: "國內外出差費用標準.xlsx", department: "finance", type: "Excel", version: "v3.2", rows: 184, updated: "2026/08/13 10:28", owner: "林怡君", status: "已發布" },
+  { id: "KB-0240", name: "費用報支作業辦法.pdf", department: "finance", type: "PDF", version: "v5.0", rows: 68, updated: "2026/08/13 09:52", owner: "林怡君", status: "已發布" },
+  { id: "KB-0239", name: "供應商年度評核表.xlsx", department: "purchase", type: "Excel", version: "v2.4", rows: 326, updated: "2026/08/12 16:40", owner: "陳冠宇", status: "已發布" },
+  { id: "KB-0238", name: "抽樣檢驗規範.xlsx", department: "quality", type: "Excel", version: "v4.1", rows: 512, updated: "2026/08/13 09:18", owner: "王志豪", status: "索引中" },
+  { id: "KB-0237", name: "員工差勤管理辦法.docx", department: "hr", type: "Word", version: "v6.0", rows: 92, updated: "2026/08/13 09:24", owner: "許雅雯", status: "已發布" },
+  { id: "KB-0236", name: "A 系列產品規格.xlsx", department: "rd", type: "Excel", version: "v1.8", rows: 840, updated: "2026/08/13 10:05", owner: "張博凱", status: "待審核" },
 ];
 
-const trend = [42, 47, 51, 55, 59, 63, 68, 72, 76, 79, 82, 85];
+const promptCards = [
+  { title: "規章快速摘要", category: "全公司共用", text: "請將下列規章整理成適用對象、申請條件、操作步驟與注意事項。", used: 126 },
+  { title: "表格差異比對", category: "已核准 Skill", text: "比對兩份表格，列出新增、刪除、數值異動與可能影響。", used: 89 },
+  { title: "會議決議追蹤", category: "我的 Prompt", text: "依會議紀錄擷取決議、負責人、期限與未決事項。", used: 42 },
+];
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("zh-TW").format(value);
-}
+const answerByDepartment: Record<string, string> = {
+  finance: "依《國內外出差費用標準 v3.2》，國內出差住宿費需依職等與地區上限核銷；請款時應附住宿發票、出差申請單與行程證明。若超過標準，需在報支前取得部門主管核准並註明原因。",
+  hr: "依《員工差勤管理辦法 v6.0》，申請人應先於人資系統選擇假別、填寫期間與事由；需要佐證的假別須同步上傳文件。送出後依直屬主管及人資單位順序核准。",
+  purchase: "依採購管理規範，達公告門檻的採購原則上需完成三家詢比價；若為獨家來源、緊急需求或指定相容性，可檢附例外說明並依金額層級核准。",
+  quality: "依《抽樣檢驗規範 v4.1》，發現尺寸超差時應先隔離批次、停止放行並建立異常單；品保完成複驗後，依結果啟動退料、特採或供應商改善流程。",
+  rd: "ECN 變更需包含變更原因、影響料號、BOM 與圖面版本、庫存處置及驗證結果，並由研發、品保、製造與相關權責單位完成會簽後發布。",
+  manufacturing: "換線前請確認工單、料號、治具、程式版本與首件檢驗要求；清線完成後由線長覆核，首件經品保確認才可正式量產。",
+  sales: "標準報價單的有效期限為 30 天；若涉及原物料價格波動、客製規格或特殊交期，應於備註欄載明適用條件並由業務主管覆核。",
+  it: "請先確認網路、帳號狀態與 MFA 驗證，再重新啟動 VPN 用戶端。仍無法連線時，請附上錯誤畫面與發生時間建立 IT 服務單，資訊部將比對系統日誌。",
+};
+
+const Icon = ({ name }: { name: string }) => <span className="line-icon" aria-hidden="true">{name}</span>;
 
 export default function Home() {
-  const [activeDepartment, setActiveDepartment] = useState("shared");
-  const [view, setView] = useState<"tools" | "analytics">("tools");
+  const [view, setView] = useState<View>("departments");
+  const [activeDepartmentId, setActiveDepartmentId] = useState("finance");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [question, setQuestion] = useState("");
+  const [documents, setDocuments] = useState(seedDocuments);
   const [query, setQuery] = useState("");
-  const [type, setType] = useState<"全部" | "AI" | "非 AI">("全部");
-  const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const [adminDepartment, setAdminDepartment] = useState("all");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadDepartment, setUploadDepartment] = useState("finance");
+  const [sheetPreview, setSheetPreview] = useState<string[][]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [toast, setToast] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const department = departments.find((item) => item.id === activeDepartment) ?? departments[0];
-  const visibleTools = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return tools.filter((tool) => {
-      const matchesDepartment = tool.department === activeDepartment;
-      const matchesType = type === "全部" || tool.type === type;
-      const matchesQuery = !normalized || `${tool.name}${tool.description}`.toLowerCase().includes(normalized);
-      return matchesDepartment && matchesType && matchesQuery;
-    });
-  }, [activeDepartment, query, type]);
+  const activeDepartment = departments.find((item) => item.id === activeDepartmentId) ?? departments[0];
+  const filteredDepartments = departments.filter((department) =>
+    `${department.name}${department.description}${department.topics.join("")}`.toLowerCase().includes(query.toLowerCase()),
+  );
+  const filteredDocuments = useMemo(() => documents.filter((document) => {
+    const matchesDepartment = adminDepartment === "all" || document.department === adminDepartment;
+    return matchesDepartment && document.name.toLowerCase().includes(query.toLowerCase());
+  }), [documents, adminDepartment, query]);
 
-  const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
-  const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
+  function flash(message: string) {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  }
+
+  function openDepartment(id: string) {
+    setActiveDepartmentId(id);
+    setMessages([]);
+    setQuestion("");
+    setView("chat");
+  }
+
+  function ask(text = question) {
+    const cleaned = text.trim();
+    if (!cleaned) return;
+    const base = Date.now();
+    const userMessage: Message = { id: base, role: "user", content: cleaned };
+    const response: Message = {
+      id: base + 1,
+      role: "assistant",
+      content: answerByDepartment[activeDepartment.id],
+      citations: activeDepartment.id === "finance" ? ["國內外出差費用標準.xlsx · 費用標準", "費用報支作業辦法.pdf · 第 4.2 節"] : [`${activeDepartment.name}知識手冊 · 最新核准版`, `${activeDepartment.topics[0]}作業規範 · 第 3 節`],
+    };
+    setMessages((current) => [...current, userMessage, response]);
+    setQuestion("");
+  }
+
+  async function inspectFile(file: File) {
+    setSelectedFile(file);
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<(string | number | boolean)[]>(sheet, { header: 1, defval: "" });
+      setSheetPreview(rows.slice(0, 5).map((row) => row.slice(0, 6).map(String)));
+    } catch {
+      setSheetPreview([]);
+      flash("檔案已選取，系統將於上傳後進行內容解析");
+    }
+  }
+
+  async function uploadFile() {
+    if (!selectedFile) return;
+    setUploading(true);
+    const department = departments.find((item) => item.id === uploadDepartment)!;
+    const nextId = `KB-${String(242 + documents.length - seedDocuments.length).padStart(4, "0")}`;
+    const nextDocument: KnowledgeDocument = {
+      id: nextId,
+      name: selectedFile.name,
+      department: uploadDepartment,
+      type: selectedFile.name.toLowerCase().endsWith(".xlsx") || selectedFile.name.toLowerCase().endsWith(".xls") ? "Excel" : selectedFile.name.split(".").pop()?.toUpperCase() || "檔案",
+      version: "v1.0",
+      rows: Math.max(sheetPreview.length - 1, 0),
+      updated: new Intl.DateTimeFormat("zh-TW", { dateStyle: "short", timeStyle: "short" }).format(new Date()),
+      owner: "Mila Chang",
+      status: "索引中",
+    };
+
+    try {
+      const form = new FormData();
+      form.append("file", selectedFile);
+      form.append("department", uploadDepartment);
+      form.append("rowCount", String(nextDocument.rows));
+      await fetch("/api/knowledge/documents", { method: "POST", body: form });
+    } catch {
+      // The optimistic record keeps the prototype usable when local storage bindings are offline.
+    }
+
+    setDocuments((current) => [nextDocument, ...current]);
+    setUploading(false);
+    setUploadOpen(false);
+    setSelectedFile(null);
+    setSheetPreview([]);
+    flash(`${department.name}的「${nextDocument.name}」已上傳，正在建立索引`);
+  }
+
+  function exportDocuments() {
+    const rows = filteredDocuments.map((document) => ({
+      文件編號: document.id,
+      文件名稱: document.name,
+      所屬部門: departments.find((item) => item.id === document.department)?.name,
+      類型: document.type,
+      版本: document.version,
+      資料筆數: document.rows,
+      更新時間: document.updated,
+      維護人: document.owner,
+      狀態: document.status,
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "知識庫清冊");
+    XLSX.writeFile(workbook, `知識庫清冊_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    flash("知識庫清冊已匯出為 Excel");
+  }
+
+  function exportConversation() {
+    if (!messages.length) return flash("請先開始一段問答再匯出");
+    const workbook = XLSX.utils.book_new();
+    const rows = messages.map((message, index) => ({
+      序號: index + 1,
+      角色: message.role === "user" ? "使用者" : "AI 助理",
+      內容: message.content,
+      引用來源: message.citations?.join("；") ?? "",
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "問答紀錄");
+    XLSX.writeFile(workbook, `${activeDepartment.name}_問答紀錄.xlsx`);
+    flash("本次問答已匯出為 Excel");
+  }
+
+  const pageTitle = view === "departments" ? "部門知識庫" : view === "chat" ? `${activeDepartment.name}知識助理` : view === "prompts" ? "Prompt / Skill 中心" : view === "qa" ? "品保文件核對" : "知識庫管理";
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand" aria-label="企業工具平台首頁">
-          <div className="brand-mark"><span></span><span></span><span></span><span></span></div>
-          <div>
-            <strong>WorkHub</strong>
-            <small>企業智慧工具平台</small>
-          </div>
-        </div>
-        <nav className="topnav" aria-label="主要功能">
-          <button className={view === "tools" ? "active" : ""} onClick={() => setView("tools")}>工具中心</button>
-          <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>管理者後台</button>
-        </nav>
-        <div className="user-area">
-          <button className="icon-button" aria-label="通知"><span className="notification-dot"></span>◎</button>
-          <div className="avatar">王</div>
-          <div className="user-copy"><strong>王大明</strong><small>資訊部・管理者</small></div>
-          <span className="chevron">⌄</span>
-        </div>
-      </header>
+      <aside className="app-sidebar">
+        <button className="brand" onClick={() => setView("departments")} aria-label="回到首頁">
+          <span className="brand-mark">知</span>
+          <span><strong>智匯</strong><small>KNOWLEDGE OS</small></span>
+        </button>
 
-      <aside className="sidebar">
-        <div className="sidebar-heading"><span>部門工具</span><small>12 個分類</small></div>
-        <nav className="department-list" aria-label="部門分類">
-          {departments.map((item, index) => (
-            <button
-              key={item.id}
-              className={activeDepartment === item.id ? "active" : ""}
-              onClick={() => { setActiveDepartment(item.id); setView("tools"); setQuery(""); }}
-            >
-              <span className={`dept-icon ${index === 0 ? "shared" : ""}`}>{item.short}</span>
-              <span>{item.name}</span>
-              <small>{item.tools}</small>
-            </button>
-          ))}
+        <nav className="main-nav" aria-label="主要功能">
+          <p>工作空間</p>
+          <button className={view === "departments" || view === "chat" ? "active" : ""} onClick={() => setView("departments")}><Icon name="⌂" /><span>部門知識庫</span></button>
+          <button className={view === "prompts" ? "active" : ""} onClick={() => setView("prompts")}><Icon name="✦" /><span>Prompt / Skill</span><em>12</em></button>
+          <button className={view === "qa" ? "active" : ""} onClick={() => setView("qa")}><Icon name="✓" /><span>品保文件核對</span></button>
+          <p>維運管理</p>
+          <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><Icon name="▦" /><span>知識庫管理</span></button>
+          <button onClick={() => flash("權限設定功能已預留，可串接 AD 群組")}><Icon name="♙" /><span>權限與角色</span></button>
+          <button onClick={() => flash("分析儀表板功能已預留")}><Icon name="↗" /><span>使用分析</span></button>
         </nav>
-        <div className="sidebar-footer">
-          <div className="status-row"><span className="status-dot"></span><span>服務運作正常</span></div>
-          <p>最後更新 08/13 14:32</p>
+
+        <div className="sidebar-status">
+          <div><span className="pulse" /><strong>知識服務正常</strong></div>
+          <small>8 個知識庫 · 最後同步 2 分鐘前</small>
         </div>
+        <button className="profile" onClick={() => flash("目前角色：知識維護者")}>
+          <span className="avatar">MC</span>
+          <span><strong>Mila Chang</strong><small>知識維護者</small></span>
+          <b>•••</b>
+        </button>
       </aside>
 
-      <main className="main-content">
-        {view === "tools" ? (
-          <>
-            <section className="welcome-row">
+      <main className={`workspace ${view === "chat" ? "chat-workspace" : ""}`}>
+        <header className="topbar">
+          <div className="breadcrumb"><button onClick={() => setView("departments")}>智匯</button><span>/</span><strong>{pageTitle}</strong></div>
+          <div className="top-actions">
+            <button className="icon-button" aria-label="說明" onClick={() => flash("這是依 Phase 2 規劃建立的知識問答平台")}>?</button>
+            <button className="icon-button notification" aria-label="通知" onClick={() => flash("有 3 份文件等待審核")}>♢<i>3</i></button>
+          </div>
+        </header>
+
+        {view === "departments" && (
+          <section className="page-content department-page">
+            <div className="hero-row">
               <div>
-                <p className="eyebrow">工具中心</p>
-                <h1>{department.name}</h1>
-                <p>{department.id === "shared" ? "所有同仁都能使用的日常效率工具" : `提供 ${department.name} 同仁使用的專屬工具與工作流程`}</p>
+                <div className="eyebrow"><span /> PHASE 2 · KNOWLEDGE HUB</div>
+                <h1>今天想從哪個部門找答案？</h1>
+                <p>選擇部門後，系統會自動連結您有權限的專屬知識庫。</p>
               </div>
-              <div className="compact-metrics" aria-label="部門使用概況">
-                <div><strong>{department.count}</strong><span>部門人數</span></div>
-                <div><strong>{department.active}</strong><span>本月活躍</span></div>
-                <div><strong>{department.tools}</strong><span>可用工具</span></div>
+              <div className="summary-pill"><span><b>400</b> 份文件</span><i /><span><b>138K</b> 筆知識</span><i /><span className="healthy"><b>99.8%</b> 可用率</span></div>
+            </div>
+
+            <label className="global-search">
+              <Icon name="⌕" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋部門、知識主題或文件內容…" />
+              <kbd>⌘ K</kbd>
+            </label>
+
+            <div className="section-heading"><div><h2>部門專屬知識庫</h2><p>依您的 AD 權限顯示 8 個可使用的知識範圍</p></div><span>已自動套用權限</span></div>
+            <div className="department-grid">
+              {filteredDepartments.map((department) => (
+                <button className="department-card" key={department.id} onClick={() => openDepartment(department.id)}>
+                  <div className="card-top">
+                    <span className={`dept-avatar ${department.color}`}>{department.short}</span>
+                    <span className="open-arrow">↗</span>
+                  </div>
+                  <h3>{department.name}<span>專屬 Agent</span></h3>
+                  <p>{department.description}</p>
+                  <div className="topic-list">{department.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
+                  <div className="card-data"><span><b>{department.documents}</b> 份文件</span><span><b>{department.entries}</b> 筆知識</span></div>
+                  <div className="card-footer"><span><i className="status-dot" />{department.updated}更新</span><strong>開始提問 <b>→</b></strong></div>
+                </button>
+              ))}
+            </div>
+            {!filteredDepartments.length && <div className="empty-search"><strong>找不到符合的知識庫</strong><p>請換一個關鍵字再試一次。</p></div>}
+          </section>
+        )}
+
+        {view === "chat" && (
+          <section className="chat-layout">
+            <aside className="conversation-sidebar">
+              <button className="new-chat" onClick={() => setMessages([])}><span>＋</span>新增對話</button>
+              <div className="conversation-search"><Icon name="⌕" /><input aria-label="搜尋對話" placeholder="搜尋對話" /></div>
+              <p>今天</p>
+              <button className="conversation-item active"><span>{messages[0]?.content || "新的知識問答"}</span><b>•••</b></button>
+              <p>最近 7 天</p>
+              <button className="conversation-item"><span>費用報支需要哪些附件？</span></button>
+              <button className="conversation-item"><span>年度預算調整流程</span></button>
+              <button className="conversation-item"><span>出差住宿費用上限</span></button>
+              <div className="scope-card"><span className={`dept-avatar small ${activeDepartment.color}`}>{activeDepartment.short}</span><div><strong>{activeDepartment.name}知識範圍</strong><small>已鎖定 · 無法切換至未授權資料</small></div></div>
+            </aside>
+
+            <div className="chat-panel">
+              <div className="chat-header">
+                <div><span className={`dept-avatar small ${activeDepartment.color}`}>{activeDepartment.short}</span><div><strong>{activeDepartment.name}知識助理</strong><small><i className="status-dot" /> 已連線 · {activeDepartment.documents} 份核准文件</small></div></div>
+                <div><button className="secondary-button" onClick={exportConversation}>⇩ 匯出 Excel</button><button className="icon-button" onClick={() => flash("已複製本頁專屬連結")}>↗</button></div>
               </div>
-            </section>
 
-            <section className="toolbar" aria-label="工具搜尋與篩選">
-              <label className="search-box">
-                <span>⌕</span>
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋工具名稱或用途…" aria-label="搜尋工具" />
-                <kbd>⌘ K</kbd>
-              </label>
-              <div className="segmented" aria-label="工具類型">
-                {(["全部", "AI", "非 AI"] as const).map((item) => (
-                  <button key={item} className={type === item ? "active" : ""} onClick={() => setType(item)}>{item === "AI" ? "AI 工具" : item === "非 AI" ? "非 AI" : item}</button>
-                ))}
-              </div>
-            </section>
-
-            <section className="section-title">
-              <div><h2>{department.id === "shared" ? "共用工具" : `${department.name}工具`}</h2><span>{visibleTools.length} 項</span></div>
-              <p>依您的 AD 權限顯示</p>
-            </section>
-
-            {visibleTools.length > 0 ? (
-              <section className="tool-grid">
-                {visibleTools.map((tool) => (
-                  <article className="tool-card" key={tool.id}>
-                    <div className="tool-top">
-                      <div className={`tool-icon ${tool.color}`}>{tool.icon}</div>
-                      <div className="tool-tags"><span className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type}</span>{tool.badge && <span className="hot-tag">{tool.badge}</span>}</div>
-                    </div>
-                    <h3>{tool.name}</h3>
-                    <p>{tool.description}</p>
-                    <div className="tool-stats"><span><b>{tool.users}</b> 人使用</span><span><b>{formatNumber(tool.runs)}</b> 次執行</span></div>
-                    <button className="launch-button" onClick={() => setSelectedTool(tool)}>開啟工具 <span>→</span></button>
+              <div className={`message-stream ${messages.length ? "has-messages" : ""}`}>
+                {!messages.length ? (
+                  <div className="chat-welcome">
+                    <span className={`agent-orb ${activeDepartment.color}`}>{activeDepartment.short}<i>✦</i></span>
+                    <h1>您好，我是{activeDepartment.name}知識助理</h1>
+                    <p>我只會依據您已獲授權的{activeDepartment.name}文件回答，並在每則答案標示引用來源。</p>
+                    <div className="starter-grid">{activeDepartment.starters.map((starter, index) => <button key={starter} onClick={() => ask(starter)}><span>{["⌕", "▤", "↗"][index]}</span><strong>{starter}</strong><b>→</b></button>)}</div>
+                  </div>
+                ) : messages.map((message) => (
+                  <article className={`message ${message.role}`} key={message.id}>
+                    <div className="message-avatar">{message.role === "user" ? "MC" : "知"}</div>
+                    <div className="message-body"><strong>{message.role === "user" ? "您" : `${activeDepartment.name}知識助理`}</strong><p>{message.content}</p>{message.citations && <div className="inline-citations">{message.citations.map((citation, index) => <button key={citation}><span>{index + 1}</span>{citation}</button>)}</div>}</div>
                   </article>
                 ))}
-              </section>
-            ) : (
-              <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
-            )}
+              </div>
 
-            <section className="privacy-note"><span>盾</span><div><strong>資料安全由平台統一控管</strong><p>AI 請求依公司政策選用地端或核准的雲端模型；平台會記錄使用事件，不會顯示個人輸入內容給主管。</p></div></section>
-          </>
-        ) : (
-          <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
+              <div className="composer-wrap">
+                <div className="composer">
+                  <textarea value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); ask(); } }} placeholder={`詢問${activeDepartment.name}的規章、流程或資料…`} aria-label="輸入問題" />
+                  <div><button aria-label="上傳附件" onClick={() => flash("可上傳附件進行單次問答，不會自動寫入知識庫")}>＋</button><span>僅搜尋 {activeDepartment.name}知識庫</span><button className="send-button" onClick={() => ask()} disabled={!question.trim()}>↑</button></div>
+                </div>
+                <small>AI 可能產生錯誤，重要資訊請以引用原始文件為準。</small>
+              </div>
+            </div>
+
+            <aside className="source-panel">
+              <div className="source-header"><strong>引用來源</strong><span>{messages.length ? "2" : "0"}</span></div>
+              {messages.length ? <>
+                <article className="source-card selected"><div><span className="file-badge excel">XLS</span><p><strong>國內外出差費用標準.xlsx</strong><small>v3.2 · 2026/08/13</small></p><b>1</b></div><blockquote>國內住宿費應依職等與地區標準核實報支，超額應事前取得核准…</blockquote><button>開啟原始文件 ↗</button></article>
+                <article className="source-card"><div><span className="file-badge pdf">PDF</span><p><strong>費用報支作業辦法.pdf</strong><small>v5.0 · 第 4.2 節</small></p><b>2</b></div><blockquote>報支時應檢附合法憑證、核准單據及必要之行程證明…</blockquote><button>開啟原始文件 ↗</button></article>
+              </> : <div className="no-sources"><span>▱</span><strong>尚無引用來源</strong><p>開始提問後，這裡會顯示回答所依據的文件與原文片段。</p></div>}
+              <div className="source-policy"><span>✓</span><p><strong>企業資料保護</strong><small>本次問答使用地端模型處理，資料不會送往未授權的雲端服務。</small></p></div>
+            </aside>
+          </section>
+        )}
+
+        {view === "admin" && (
+          <section className="page-content admin-page">
+            <div className="admin-heading"><div><div className="eyebrow"><span /> KNOWLEDGE OPERATIONS</div><h1>知識庫管理</h1><p>維護部門文件、版本、索引與發布狀態。</p></div><div><button className="secondary-button" onClick={exportDocuments}>⇩ 匯出 Excel</button><button className="primary-button" onClick={() => setUploadOpen(true)}>＋ 上傳知識文件</button></div></div>
+            <div className="admin-stats">
+              <article><span className="stat-icon indigo">▤</span><div><small>知識文件</small><strong>{documents.length + 394}</strong><p><b>+18</b> 本月新增</p></div></article>
+              <article><span className="stat-icon teal">✓</span><div><small>已發布</small><strong>389</strong><p>97.2% 可供問答</p></div></article>
+              <article><span className="stat-icon amber">↻</span><div><small>處理中</small><strong>8</strong><p>索引 5 · 審核 3</p></div></article>
+              <article><span className="stat-icon rose">!</span><div><small>需要處理</small><strong>3</strong><p>版本或欄位待確認</p></div></article>
+            </div>
+
+            <div className="admin-panel">
+              <div className="panel-toolbar">
+                <div className="tabs"><button className="active">全部文件 <span>{documents.length + 394}</span></button><button>待處理 <span>8</span></button><button>版本紀錄</button></div>
+                <div><label className="table-search"><Icon name="⌕" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋文件" /></label><select value={adminDepartment} onChange={(event) => setAdminDepartment(event.target.value)} aria-label="依部門篩選"><option value="all">全部部門</option>{departments.map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select><button className="icon-button">☷</button></div>
+              </div>
+              <div className="document-table">
+                <div className="document-row document-head"><span>文件名稱</span><span>部門知識庫</span><span>版本</span><span>資料量</span><span>更新時間</span><span>維護人</span><span>狀態</span><span /></div>
+                {filteredDocuments.map((document) => {
+                  const department = departments.find((item) => item.id === document.department)!;
+                  return <div className="document-row" key={document.id}>
+                    <div className="document-name"><span className={`file-badge ${document.type.toLowerCase()}`}>{document.type === "Excel" ? "XLS" : document.type === "PDF" ? "PDF" : "DOC"}</span><p><strong>{document.name}</strong><small>{document.id} · {document.type}</small></p></div>
+                    <span className="department-label"><i className={department.color}>{department.short}</i>{department.name}</span>
+                    <strong>{document.version}</strong><span>{document.rows.toLocaleString()} 筆</span><span>{document.updated}</span><span>{document.owner}</span>
+                    <span className={`status-badge ${document.status === "已發布" ? "published" : document.status === "索引中" ? "indexing" : "review"}`}><i />{document.status}</span>
+                    <button className="more-button" onClick={() => flash(`${document.name}：可查看版本、停用或重新索引`)}>•••</button>
+                  </div>;
+                })}
+              </div>
+              <div className="table-footer"><span>顯示 1–{filteredDocuments.length} 筆，共 {documents.length + 394} 筆</span><div><button disabled>‹</button><button className="active">1</button><button>2</button><button>3</button><span>…</span><button>42</button><button>›</button></div></div>
+            </div>
+          </section>
+        )}
+
+        {view === "prompts" && (
+          <section className="page-content simple-page">
+            <div className="hero-row"><div><div className="eyebrow"><span /> APPROVED WORKFLOWS</div><h1>Prompt / Skill 中心</h1><p>從已核准的工作範本開始任務，或管理自己的常用提示。</p></div><button className="primary-button" onClick={() => flash("已建立新的 Prompt 草稿")}>＋ 新增我的 Prompt</button></div>
+            <div className="prompt-grid">{promptCards.map((prompt) => <article key={prompt.title}><span>{prompt.category}</span><h3>{prompt.title}</h3><p>{prompt.text}</p><div><small>已使用 {prompt.used} 次</small><button onClick={() => { setView("chat"); setQuestion(prompt.text); }}>開始使用 →</button></div></article>)}</div>
+          </section>
+        )}
+
+        {view === "qa" && (
+          <section className="page-content simple-page">
+            <div className="hero-row"><div><div className="eyebrow"><span /> HUMAN-IN-THE-LOOP QA</div><h1>品保文件核對</h1><p>保留人工覆核、簽名、版本與完整稽核紀錄。</p></div><button className="primary-button" onClick={() => flash("已建立一筆新的文件核對任務")}>＋ 建立核對任務</button></div>
+            <div className="qa-board"><div className="qa-document"><div className="mock-document"><span>QA INSPECTION REPORT</span><h3>進料檢驗報告</h3><div className="mock-lines" /><div className="mock-table">{Array.from({ length: 18 }).map((_, index) => <i key={index} />)}</div></div></div><div className="qa-results"><div><span>AI 擷取結果</span><b>信心度 96.4%</b></div>{["供應商料號：SP-2408-A", "檢驗批號：IN-260813-07", "抽樣數量：80 pcs", "判定結果：允收"].map((item, index) => <label key={item}><input type="checkbox" defaultChecked={index < 3} /><span><small>欄位 {index + 1}</small><strong>{item}</strong></span><button>修改</button></label>)}<textarea placeholder="新增覆核備註…" /><button className="primary-button" onClick={() => flash("覆核結果已簽名並保留稽核紀錄")}>完成覆核與簽名</button></div></div>
+          </section>
         )}
       </main>
 
-      {selectedTool && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setSelectedTool(null)}>
-          <section className="tool-modal" role="dialog" aria-modal="true" aria-labelledby="tool-modal-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button className="modal-close" onClick={() => setSelectedTool(null)} aria-label="關閉">×</button>
-            <div className={`tool-icon ${selectedTool.color} large`}>{selectedTool.icon}</div>
-            <span className={selectedTool.type === "AI" ? "ai-tag" : "plain-tag"}>{selectedTool.type} 工具</span>
-            <h2 id="tool-modal-title">{selectedTool.name}</h2>
-            <p>{selectedTool.description}</p>
-            <div className="modal-kpis">
-              <div><strong>{selectedTool.users}</strong><span>本月使用者</span></div>
-              <div><strong>{formatNumber(selectedTool.runs)}</strong><span>執行次數</span></div>
-              <div><strong>{selectedTool.saved}h</strong><span>預估節省</span></div>
-            </div>
-            <div className="launch-panel">
-              <div><strong>準備就緒</strong><span>{selectedTool.type === "AI" ? "由 LLM Proxy 套用公司資料政策" : "使用事件將寫入統一遙測服務"}</span></div>
-              <button onClick={() => setSelectedTool(null)}>進入工具 <span>↗</span></button>
-            </div>
-          </section>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: number }) {
-  const [period, setPeriod] = useState("本月");
-  const [detailDepartment, setDetailDepartment] = useState("sales");
-  const ranked = [...departments.slice(1)].sort((a, b) => b.active / b.count - a.active / a.count);
-  const detail = departments.find((item) => item.id === detailDepartment) ?? departments[7];
-  const detailTools = tools.filter((tool) => tool.department === detailDepartment);
-  const detailRuns = detailTools.reduce((sum, tool) => sum + tool.runs, 0);
-  const detailSaved = detailTools.reduce((sum, tool) => sum + tool.saved, 0);
-  return (
-    <div className="analytics-view">
-      <section className="analytics-header">
-        <div><p className="eyebrow">管理者視角</p><h1>平台成效儀表板</h1><p>追蹤 300–350 位同仁的採用狀況與量化效益</p></div>
-        <label className="period-select"><span>期間</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option>本月</option><option>近 3 個月</option><option>本年度</option></select></label>
-      </section>
-
-      <section className="kpi-grid">
-        <article><div className="kpi-label"><span className="mini-icon blue">人</span>本月活躍使用者</div><strong>286 <small>/ 328 人</small></strong><p className="positive">↑ 12.4% <span>較上月</span></p></article>
-        <article><div className="kpi-label"><span className="mini-icon violet">用</span>整體採用率</div><strong>87.2%</strong><p className="positive">↑ 5.8% <span>較上月</span></p></article>
-        <article><div className="kpi-label"><span className="mini-icon cyan">次</span>工具執行次數</div><strong>{formatNumber(totalRuns)}</strong><p className="positive">↑ 18.6% <span>較上月</span></p></article>
-        <article className="highlight"><div className="kpi-label"><span className="mini-icon orange">時</span>預估節省工時</div><strong>{formatNumber(totalSaved)} <small>小時</small></strong><p>約當 <b>{Math.round(totalSaved / 160)} 人月</b> 工作量</p></article>
-      </section>
-
-      <section className="analytics-grid">
-        <article className="panel usage-trend">
-          <div className="panel-header"><div><h2>平台採用趨勢</h2><p>近 12 週不重複活躍使用者</p></div><span className="legend"><i></i> 活躍使用者</span></div>
-          <div className="chart-wrap">
-            <div className="y-axis"><span>300</span><span>200</span><span>100</span><span>0</span></div>
-            <div className="line-chart" role="img" aria-label="活躍使用者由第一週 138 人成長至第十二週 286 人">
-              {[100, 67, 34, 0].map((pos) => <i className="grid-line" style={{ top: `${pos}%` }} key={pos}></i>)}
-              <div className="trend-bars">{trend.map((value, index) => <div className="trend-column" key={index}><i style={{ height: `${value}%` }}><b></b></i></div>)}</div>
-              <div className="x-axis">{["5/25", "6/01", "6/08", "6/15", "6/22", "6/29", "7/06", "7/13", "7/20", "7/27", "8/03", "8/10"].map((label) => <span key={label}>{label}</span>)}</div>
-            </div>
+      {uploadOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setUploadOpen(false); }}>
+        <section className="upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
+          <div className="modal-header"><div><span className="stat-icon indigo">⇧</span><div><h2 id="upload-title">上傳知識文件</h2><p>支援 Excel、PDF、Word 與 CSV</p></div></div><button onClick={() => setUploadOpen(false)} aria-label="關閉">×</button></div>
+          <div className="modal-body">
+            <label>發布至部門知識庫<select value={uploadDepartment} onChange={(event) => setUploadDepartment(event.target.value)}>{departments.map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select></label>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.doc,.docx" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) inspectFile(file); }} />
+            <button className={`dropzone ${selectedFile ? "has-file" : ""}`} onClick={() => fileRef.current?.click()}>
+              {selectedFile ? <><span className="file-badge excel">XLS</span><strong>{selectedFile.name}</strong><small>{(selectedFile.size / 1024).toFixed(1)} KB · 點擊可更換檔案</small></> : <><span>⇧</span><strong>拖放檔案到這裡，或點擊選擇</strong><small>Excel 每個工作表都會建立欄位索引 · 單檔上限 25 MB</small></>}
+            </button>
+            {sheetPreview.length > 0 && <div className="sheet-preview"><div><strong>Excel 內容預覽</strong><span>前 {sheetPreview.length} 列 · {sheetPreview[0]?.length || 0} 欄</span></div><div className="preview-scroll">{sheetPreview.map((row, rowIndex) => <div className={rowIndex === 0 ? "preview-head" : ""} key={rowIndex}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell || "—"}</span>)}</div>)}</div></div>}
+            <div className="upload-settings"><label><input type="checkbox" defaultChecked /> 自動建立全文與欄位索引</label><label><input type="checkbox" defaultChecked /> 完成後發布至 Agent</label></div>
           </div>
-        </article>
+          <div className="modal-footer"><button className="secondary-button" onClick={() => setUploadOpen(false)}>取消</button><button className="primary-button" disabled={!selectedFile || uploading} onClick={uploadFile}>{uploading ? "上傳與解析中…" : "上傳並建立索引"}</button></div>
+        </section>
+      </div>}
 
-        <article className="panel type-share">
-          <div className="panel-header"><div><h2>工具類型分布</h2><p>依本月執行次數</p></div></div>
-          <div className="donut" style={{ background: "conic-gradient(#615bd7 0 68%, #2fb6aa 68% 100%)" }}><div><strong>68%</strong><span>AI 工具</span></div></div>
-          <div className="donut-legend"><div><span><i className="purple-dot"></i>AI 工具</span><strong>6,284 次</strong></div><div><span><i className="teal-dot"></i>非 AI 工具</span><strong>2,957 次</strong></div></div>
-        </article>
-      </section>
-
-      <section className="panel department-performance">
-        <div className="panel-header"><div><h2>部門採用與效益</h2><p>點選部門可查看該部門的工具</p></div><span className="data-note">資料截至 08/13 14:32</span></div>
-        <div className="performance-table" role="table" aria-label="部門採用與效益">
-          <div className="table-row table-head" role="row"><span>部門</span><span>活躍使用者</span><span>採用率</span><span>使用次數</span><span>可用工具</span><span>節省工時</span><span>狀態</span><span></span></div>
-          {ranked.map((item) => {
-            const rate = Math.round(item.active / item.count * 100);
-            const runs = tools.filter((tool) => tool.department === item.id).reduce((sum, tool) => sum + tool.runs, 0);
-            return <button className={`table-row ${detailDepartment === item.id ? "selected" : ""}`} role="row" key={item.id} onClick={() => setDetailDepartment(item.id)}>
-              <span className="dept-cell"><i>{item.short}</i><strong>{item.name}</strong></span>
-              <span><b>{item.active}</b> / {item.count} 人</span>
-              <span className="rate-cell"><i><b style={{ width: `${rate}%` }}></b></i><strong>{rate}%</strong></span>
-              <span><b>{formatNumber(runs)}</b> 次</span><span>{item.tools} 項</span><span><b>{item.saved}h</b></span>
-              <span><em className={rate >= 85 ? "excellent" : rate >= 75 ? "steady" : "attention"}>{rate >= 85 ? "表現優異" : rate >= 75 ? "穩定成長" : "需關注"}</em></span>
-              <span className="row-arrow">→</span>
-            </button>;
-          })}
-        </div>
-      </section>
-
-      <section className="panel tool-detail-panel">
-        <div className="detail-header">
-          <div><p className="eyebrow">部門工具明細</p><h2>{detail.name}｜使用次數與成效</h2><p>比較每一項工具的實際使用與可量化效益</p></div>
-          <label><span>切換部門</span><select value={detailDepartment} onChange={(event) => setDetailDepartment(event.target.value)}>{departments.slice(1).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-        </div>
-        <div className="detail-summary">
-          <div><span>部門活躍人數</span><strong>{detail.active} <small>/ {detail.count} 人</small></strong></div>
-          <div><span>部門工具使用次數</span><strong>{formatNumber(detailRuns)} <small>次</small></strong></div>
-          <div><span>預估節省工時</span><strong>{formatNumber(detailSaved)} <small>小時</small></strong></div>
-          <div><span>人均節省工時</span><strong>{(detailSaved / Math.max(detail.active, 1)).toFixed(1)} <small>小時</small></strong></div>
-        </div>
-        <div className="tool-detail-table" role="table" aria-label={`${detail.name}工具使用與效益`}>
-          <div className="tool-detail-row tool-detail-head" role="row"><span>工具名稱</span><span>類型</span><span>使用人數</span><span>使用次數</span><span>任務完成率</span><span>節省工時</span><span>效益判讀</span></div>
-          {detailTools.sort((a, b) => b.runs - a.runs).map((tool, index) => {
-            const completion = Math.max(88, 98 - index * 2);
-            const reach = Math.round(tool.users / detail.count * 100);
-            const impact = tool.saved >= 60 ? "高效益" : tool.saved >= 30 ? "效益穩定" : reach < 45 ? "推廣中" : "持續觀察";
-            return <div className="tool-detail-row" role="row" key={tool.id}>
-              <span className="detail-tool-name"><i className={`tool-icon ${tool.color}`}>{tool.icon}</i><span><strong>{tool.name}</strong><small>{tool.description}</small></span></span>
-              <span><em className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type}</em></span>
-              <span><b>{tool.users}</b> 人 <small>({reach}%)</small></span>
-              <span><b>{formatNumber(tool.runs)}</b> 次</span>
-              <span className="completion-cell"><i><b style={{ width: `${completion}%` }}></b></i><strong>{completion}%</strong></span>
-              <span><b>{tool.saved}h</b></span>
-              <span><em className={impact === "高效益" ? "impact-high" : impact === "效益穩定" ? "impact-steady" : "impact-watch"}>{impact}</em></span>
-            </div>;
-          })}
-        </div>
-        <div className="detail-footer"><span>i</span><p><strong>管理建議：</strong>{detailTools.some((tool) => tool.saved >= 60) ? `${detailTools.sort((a,b) => b.saved - a.saved)[0]?.name}帶來最高節省工時，可評估擴大使用情境。` : "目前工具使用穩定，建議持續觀察完成率與使用覆蓋。"} 低於 50% 覆蓋率的工具可安排教育訓練或訪談。</p></div>
-      </section>
-
-      <section className="measurement-note"><span>i</span><div><strong>效益估算方式</strong><p>由工具負責人設定每次成功任務的基準節省時間，平台只計入「完成」事件。實際效益可在第二階段加入任務成果與主管覆核。</p></div></section>
+      {toast && <div className="toast"><span>✓</span>{toast}</div>}
     </div>
   );
 }
