@@ -32,7 +32,7 @@ const departments: Department[] = [
   { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 5, saved: 171 },
   { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 4, saved: 96 },
   { id: "general", name: "總務部", short: "總", count: 15, active: 11, tools: 3, saved: 72 },
-  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 6, saved: 384 },
+  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 7, saved: 496 },
   { id: "purchase", name: "採購部", short: "採", count: 21, active: 18, tools: 4, saved: 142 },
   { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 5, saved: 318 },
   { id: "material", name: "資材部", short: "材", count: 26, active: 22, tools: 4, saved: 186 },
@@ -69,6 +69,7 @@ const tools: Tool[] = [
   { id: "contract", name: "合約摘要助手", description: "整理行政合約重點與到期日", department: "general", type: "AI", users: 8, runs: 49, saved: 22, color: "violet", icon: "約" },
   { id: "room", name: "會議室資源管理", description: "空間、設備與借用衝突查詢", department: "general", type: "非 AI", users: 9, runs: 88, saved: 13, color: "cyan", icon: "室" },
 
+  { id: "vision", name: "AI 識圖大師", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "rd", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
   { id: "spec", name: "規格文件助手", description: "摘要規格、比對版本與標示變更", department: "rd", type: "AI", badge: "熱門", users: 42, runs: 318, saved: 126, color: "violet", icon: "規" },
   { id: "patent", name: "專利檢索助手", description: "整理技術關鍵字與相似專利", department: "rd", type: "AI", users: 31, runs: 186, saved: 84, color: "blue", icon: "專" },
   { id: "testreport", name: "測試報告產生器", description: "彙整測試數據與報告格式", department: "rd", type: "非 AI", users: 38, runs: 241, saved: 71, color: "green", icon: "測" },
@@ -135,6 +136,10 @@ export default function Home() {
 
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
+
+  if (selectedTool?.id === "vision") {
+    return <VisionWorkspace onBack={() => setSelectedTool(null)} />;
+  }
 
   return (
     <div className="app-shell">
@@ -259,6 +264,180 @@ export default function Home() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+type ReviewStatus = "pending" | "confirmed" | "edited" | "flagged";
+
+type ReviewField = {
+  id: string;
+  marker: number;
+  label: string;
+  value: string;
+  original: string;
+  source: string;
+  confidence: number;
+  group: string;
+  status: ReviewStatus;
+};
+
+const initialReviewFields: ReviewField[] = [
+  { id: "finish", marker: 8, label: "表面處理", value: "銀鍍層 5–8 μm", original: "銀鍍層 5–8 μm", source: "SILVER PLATE 5-8μm", confidence: 74, group: "材料與製程", status: "pending" },
+  { id: "power", marker: 6, label: "功率承受", value: "30 W CW", original: "30 W CW", source: "POWER HANDLING: 30W CW", confidence: 83, group: "電氣規格", status: "pending" },
+  { id: "insertion", marker: 4, label: "插入損耗", value: "≤ 1.0 dB", original: "≤ 1.0 dB", source: "INSERTION LOSS ≤ 1.0 dB", confidence: 89, group: "電氣規格", status: "pending" },
+  { id: "drawing", marker: 1, label: "圖號／版次", value: "SD-RF-2807 / Rev.C", original: "SD-RF-2807 / Rev.C", source: "DWG NO. SD-RF-2807   REV C", confidence: 99, group: "基本資料", status: "pending" },
+  { id: "part", marker: 2, label: "產品名稱", value: "WR-28 波導帶通濾波器", original: "WR-28 波導帶通濾波器", source: "WR-28 WAVEGUIDE BPF", confidence: 98, group: "基本資料", status: "pending" },
+  { id: "frequency", marker: 3, label: "頻率範圍", value: "26.5–40 GHz", original: "26.5–40 GHz", source: "FREQUENCY RANGE 26.5 - 40 GHz", confidence: 97, group: "電氣規格", status: "pending" },
+  { id: "return", marker: 5, label: "回波損耗", value: "≥ 15 dB", original: "≥ 15 dB", source: "RETURN LOSS ≥ 15 dB", confidence: 96, group: "電氣規格", status: "pending" },
+  { id: "flange", marker: 7, label: "法蘭介面", value: "UG-599/U", original: "UG-599/U", source: "FLANGE: UG-599/U", confidence: 94, group: "機構規格", status: "pending" },
+];
+
+function VisionWorkspace({ onBack }: { onBack: () => void }) {
+  const [fields, setFields] = useState(initialReviewFields);
+  const [activeId, setActiveId] = useState(initialReviewFields[0].id);
+  const [filter, setFilter] = useState<"pending" | "confirmed" | "all">("pending");
+  const [zoom, setZoom] = useState(86);
+  const [uploadedName, setUploadedName] = useState("");
+  const [exported, setExported] = useState(false);
+  const [notice, setNotice] = useState("AI 已完成辨識，低信心項目已優先排列");
+
+  const doneCount = fields.filter((field) => field.status === "confirmed" || field.status === "edited").length;
+  const activeField = fields.find((field) => field.id === activeId) ?? fields[0];
+  const visibleFields = fields.filter((field) => filter === "all" || (filter === "confirmed" ? field.status === "confirmed" || field.status === "edited" : field.status === "pending" || field.status === "flagged"));
+  const allDone = doneCount === fields.length;
+
+  function updateValue(id: string, value: string) {
+    setFields((current) => current.map((field) => field.id === id ? { ...field, value } : field));
+  }
+
+  function selectNext(id: string) {
+    const pending = fields.filter((field) => field.id !== id && field.status !== "confirmed" && field.status !== "edited");
+    if (pending.length) setActiveId(pending[0].id);
+  }
+
+  function confirmField(id: string) {
+    const target = fields.find((field) => field.id === id);
+    if (!target) return;
+    const wasEdited = target.value !== target.original;
+    setFields((current) => current.map((field) => field.id === id ? { ...field, status: wasEdited ? "edited" : "confirmed" } : field));
+    setNotice(wasEdited ? `已記錄「${target.label}」的人工修正` : `已確認「${target.label}」`);
+    selectNext(id);
+  }
+
+  function flagField(id: string) {
+    const target = fields.find((field) => field.id === id);
+    setFields((current) => current.map((field) => field.id === id ? { ...field, status: "flagged" } : field));
+    if (target) setNotice(`已將「${target.label}」標記為待釐清，不會進入匯出資料`);
+    selectNext(id);
+  }
+
+  function handleKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    const tag = (event.target as HTMLElement).tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (event.key.toLowerCase() === "a" || event.key === "Enter") {
+      event.preventDefault();
+      confirmField(activeId);
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const index = visibleFields.findIndex((field) => field.id === activeId);
+      const next = event.key === "ArrowDown" ? Math.min(index + 1, visibleFields.length - 1) : Math.max(index - 1, 0);
+      if (visibleFields[next]) setActiveId(visibleFields[next].id);
+    }
+  }
+
+  return (
+    <div className="vision-app" tabIndex={0} onKeyDown={handleKeyboard}>
+      <header className="vision-topbar">
+        <button className="vision-brand" onClick={onBack} aria-label="返回工具中心">
+          <span className="vision-brand-mark">AI</span>
+          <span><strong>AI 識圖大師</strong><small>伸達科技・RF 工程圖數位化</small></span>
+        </button>
+        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>SD-RF-2807_RevC.pdf</strong><small>第 1 / 2 頁・辨識完成</small></span></div>
+        <div className="vision-actions"><button className="vision-history">版本紀錄</button><button className="vision-back" onClick={onBack}>返回工具中心</button></div>
+      </header>
+
+      <div className="vision-notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice("")} aria-label="關閉提示">×</button></div>
+
+      <main className="vision-layout">
+        <aside className="vision-queue">
+          <label className="new-drawing-button">＋ 新增工程圖<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => { const name = event.target.files?.[0]?.name ?? ""; setUploadedName(name); if (name) setNotice(`${name} 已加入辨識佇列`); }} /></label>
+          <div className="queue-heading"><strong>我的識圖任務</strong><span>5</span></div>
+          <div className="queue-filters"><button className="active">進行中 2</button><button>已完成 3</button></div>
+          <div className="drawing-list">
+            {uploadedName && <button className="drawing-item processing"><span className="file-thumb">PDF</span><span><strong>{uploadedName}</strong><small>AI 辨識處理中…</small><i><b style={{ width: "42%" }}></b></i></span></button>}
+            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>SD-RF-2807_RevC</strong><small>WR-28 波導濾波器</small><em>待核對・{fields.length - doneCount} 項</em></span></button>
+            <button className="drawing-item"><span className="file-thumb muted">PDF</span><span><strong>SD-RF-2311_RevB</strong><small>毫米波耦合器</small><em className="reviewing">核對中・4 / 11</em></span></button>
+            <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1904_RevA</strong><small>射頻功率分配器</small><em className="complete">已完成・昨天</em></span></button>
+            <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1508_RevD</strong><small>同軸固定衰減器</small><em className="complete">已完成・08/12</em></span></button>
+          </div>
+          <div className="queue-tip"><span>⌨</span><p><strong>快速核對</strong>↑ ↓ 切換欄位、A 或 Enter 確認，減少滑鼠操作。</p></div>
+        </aside>
+
+        <section className="drawing-workspace">
+          <div className="drawing-toolbar">
+            <div><button aria-label="縮小" onClick={() => setZoom((value) => Math.max(55, value - 10))}>−</button><span>{zoom}%</span><button aria-label="放大" onClick={() => setZoom((value) => Math.min(125, value + 10))}>＋</button><i></i><button>適合頁面</button></div>
+            <div><button>旋轉</button><button>原圖</button><button className="active">辨識框</button></div>
+          </div>
+          <div className="drawing-canvas">
+            <div className="drawing-sheet" style={{ transform: `scale(${zoom / 100})` }}>
+              <div className="sheet-header"><span>SHEN DA TECHNOLOGY CO., LTD.</span><strong>WR-28 WAVEGUIDE BANDPASS FILTER</strong></div>
+              <div className="front-view">
+                <span className="flange left"></span><span className="filter-body"></span><span className="flange right"></span>
+                <i className="center-line horizontal"></i><i className="center-line vertical"></i>
+                <div className="dimension width"><b></b><span>76.20 ±0.10</span><b></b></div>
+                <div className="dimension height"><b></b><span>25.40</span><b></b></div>
+                <small>FRONT VIEW</small>
+              </div>
+              <div className="side-view"><span className="side-block"></span><i className="center-line horizontal"></i><div className="dimension width"><b></b><span>41.50</span><b></b></div><small>SIDE VIEW</small></div>
+              <div className="spec-block">
+                <strong>ELECTRICAL SPECIFICATIONS</strong>
+                <p>FREQUENCY RANGE: 26.5 - 40 GHz</p>
+                <p>INSERTION LOSS: ≤ 1.0 dB</p>
+                <p>RETURN LOSS: ≥ 15 dB</p>
+                <p>POWER HANDLING: 30W CW</p>
+                <p>FLANGE: UG-599/U</p>
+              </div>
+              <div className="notes-block"><strong>NOTES</strong><p>1. MATERIAL: ALUMINUM 6061-T6</p><p>2. SILVER PLATE 5-8μm</p><p>3. REMOVE ALL BURRS AND SHARP EDGES</p></div>
+              <div className="title-block"><div><span>TITLE</span><strong>WR-28 WAVEGUIDE BPF</strong></div><div><span>DWG NO.</span><strong>SD-RF-2807</strong></div><div><span>REV.</span><strong>C</strong></div><div><span>SCALE</span><strong>1:1</strong></div></div>
+              {fields.map((field, index) => <button key={field.id} className={`balloon balloon-${index + 1} ${activeId === field.id ? "active" : ""} ${field.status === "confirmed" || field.status === "edited" ? "done" : ""}`} onClick={() => setActiveId(field.id)} aria-label={`定位 ${field.label}`}>{field.marker}</button>)}
+              <div className={`source-highlight highlight-${fields.findIndex((field) => field.id === activeId) + 1}`}></div>
+            </div>
+          </div>
+          <div className="page-strip"><button>‹</button><span className="page-thumb active"><i>1</i><small>工程圖</small></span><span className="page-thumb"><i>2</i><small>規格附表</small></span><button>›</button></div>
+        </section>
+
+        <aside className="review-panel">
+          <div className="review-heading">
+            <div><p className="eyebrow">人工覆核</p><h2>辨識結果核對</h2></div>
+            <span>{doneCount} / {fields.length}</span>
+          </div>
+          <div className="review-progress"><i><b style={{ width: `${doneCount / fields.length * 100}%` }}></b></i><div><span>{allDone ? "全部核對完成" : `尚有 ${fields.length - doneCount} 項待核對`}</span><small>完成後才可匯出</small></div></div>
+          <div className="review-filter"><button className={filter === "pending" ? "active" : ""} onClick={() => setFilter("pending")}>待核對 <b>{fields.length - doneCount}</b></button><button className={filter === "confirmed" ? "active" : ""} onClick={() => setFilter("confirmed")}>已確認</button><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button></div>
+          {!allDone && filter === "pending" && <div className="priority-note"><span>!</span>低信心項目優先，確認後自動前往下一筆</div>}
+          <div className="review-list">
+            {visibleFields.map((field) => (
+              <article key={field.id} className={`review-card ${activeId === field.id ? "active" : ""} ${field.status}`} onClick={() => setActiveId(field.id)}>
+                <div className="review-card-summary"><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className={field.confidence < 85 ? "low" : field.confidence < 93 ? "medium" : "high"}>{field.confidence}%</em><i>{field.status === "confirmed" ? "✓" : field.status === "edited" ? "修" : field.status === "flagged" ? "!" : "›"}</i></div>
+                {activeId === field.id && (
+                  <div className="review-card-detail">
+                    <div className="source-compare"><div><span>原圖截圖</span><strong>{field.source}</strong></div><span>AI →</span><label><span>辨識結果</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => event.currentTarget.select()} /></label></div>
+                    <p><span>定位</span> 已同步標示原圖球號 {field.marker}，修改內容將保留稽核紀錄。</p>
+                    <div className="review-buttons"><button className="flag-button" onClick={(event) => { event.stopPropagation(); flagField(field.id); }}>標記問題</button><button className="confirm-button" onClick={(event) => { event.stopPropagation(); confirmField(field.id); }}>✓ 確認並下一筆 <kbd>A</kbd></button></div>
+                  </div>
+                )}
+              </article>
+            ))}
+            {visibleFields.length === 0 && <div className="review-empty"><span>✓</span><strong>這個分類沒有項目</strong><p>可切換至其他分類繼續核對。</p></div>}
+          </div>
+          <div className="review-footer">
+            <div><span>人工覆核紀錄</span><strong>{fields.filter((field) => field.status === "edited").length} 項修正・{fields.filter((field) => field.status === "flagged").length} 項待釐清</strong></div>
+            <button disabled={!allDone} className={allDone ? "ready" : ""} onClick={() => { setExported(true); setNotice("已匯出 RF 規格表，並保存辨識與人工修正紀錄"); }}>{exported ? "✓ 已匯出規格表" : allDone ? "匯出規格表 →" : `完成 ${fields.length - doneCount} 項後匯出`}</button>
+            <small>可匯出 Excel / JSON，或送至內部料號主檔</small>
+          </div>
+        </aside>
+      </main>
     </div>
   );
 }
