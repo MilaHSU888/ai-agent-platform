@@ -3,7 +3,16 @@
 import { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 
-type View = "departments" | "chat" | "prompts" | "qa" | "admin";
+type View = "departments" | "chat" | "prompts" | "qa" | "admin" | "access" | "analytics";
+type Permission = "view" | "upload" | "review" | "admin";
+type Account = {
+  id: string;
+  name: string;
+  email: string;
+  title: string;
+  initials: string;
+  permissions: Record<string, Permission[]>;
+};
 type Department = {
   id: string;
   name: string;
@@ -47,6 +56,43 @@ const departments: Department[] = [
   { id: "it", name: "資訊部", short: "資", description: "系統操作、帳號權限與資安政策", documents: 39, entries: "11.9K", updated: "今天 08:42", color: "slate", topics: ["系統手冊", "權限申請", "資安政策"], starters: ["VPN 無法連線如何排除？", "新增 ERP 權限的申請流程", "外部檔案交換的資安規範"] },
 ];
 
+const permissionMeta: Record<Permission, { label: string; detail: string }> = {
+  view: { label: "查看問答", detail: "進入知識庫並使用 Agent" },
+  upload: { label: "上傳資料", detail: "新增與更新知識文件" },
+  review: { label: "審核發布", detail: "確認內容並發布版本" },
+  admin: { label: "管理員", detail: "管理部門成員與全部設定" },
+};
+
+const seedAccounts: Account[] = [
+  { id: "mila", name: "Mila Chang", email: "mila.chang@company.com", title: "平台管理員", initials: "MC", permissions: Object.fromEntries(departments.map((department) => [department.id, ["view", "upload", "review", "admin"] as Permission[]])) },
+  { id: "finance-owner", name: "林怡君", email: "yijun.lin@company.com", title: "財務知識維護者", initials: "林", permissions: { finance: ["view", "upload", "review"], hr: ["view"] } },
+  { id: "quality-reviewer", name: "王志豪", email: "zhihao.wang@company.com", title: "品保審核人", initials: "王", permissions: { quality: ["view", "upload", "review", "admin"], manufacturing: ["view"] } },
+  { id: "rd-editor", name: "張博凱", email: "bokai.chang@company.com", title: "研發文件維護者", initials: "張", permissions: { rd: ["view", "upload"], quality: ["view"], manufacturing: ["view"] } },
+  { id: "sales-viewer", name: "李佳玲", email: "jialing.li@company.com", title: "業務專員", initials: "李", permissions: { sales: ["view"], purchase: ["view"] } },
+];
+
+const departmentAnalytics: Record<string, { questions: number; users: number; adoption: number; citation: number; helpful: number; hours: number }> = {
+  finance: { questions: 1286, users: 32, adoption: 84, citation: 96, helpful: 91, hours: 118 },
+  hr: { questions: 934, users: 27, adoption: 78, citation: 94, helpful: 89, hours: 86 },
+  purchase: { questions: 742, users: 23, adoption: 69, citation: 93, helpful: 87, hours: 71 },
+  quality: { questions: 1648, users: 41, adoption: 88, citation: 98, helpful: 93, hours: 146 },
+  rd: { questions: 1872, users: 54, adoption: 82, citation: 95, helpful: 90, hours: 172 },
+  manufacturing: { questions: 2154, users: 83, adoption: 73, citation: 97, helpful: 88, hours: 204 },
+  sales: { questions: 1136, users: 36, adoption: 76, citation: 92, helpful: 86, hours: 105 },
+  it: { questions: 986, users: 29, adoption: 81, citation: 94, helpful: 92, hours: 94 },
+};
+
+const popularQuestions = [
+  { question: "費用報支需要哪些附件？", department: "finance", count: 186, helpful: 94 },
+  { question: "最新版抽樣檢驗規範", department: "quality", count: 164, helpful: 96 },
+  { question: "產線換線前要做哪些確認？", department: "manufacturing", count: 152, helpful: 91 },
+  { question: "ECN 變更需要哪些審核？", department: "rd", count: 141, helpful: 93 },
+  { question: "VPN 無法連線如何排除？", department: "it", count: 128, helpful: 89 },
+  { question: "家庭照顧假如何申請？", department: "hr", count: 119, helpful: 92 },
+  { question: "哪些採購案需要三家比價？", department: "purchase", count: 108, helpful: 90 },
+  { question: "標準報價的有效期限", department: "sales", count: 104, helpful: 88 },
+];
+
 const seedDocuments: KnowledgeDocument[] = [
   { id: "KB-0241", name: "國內外出差費用標準.xlsx", department: "finance", type: "Excel", version: "v3.2", rows: 184, updated: "2026/08/13 10:28", owner: "林怡君", status: "已發布" },
   { id: "KB-0240", name: "費用報支作業辦法.pdf", department: "finance", type: "PDF", version: "v5.0", rows: 68, updated: "2026/08/13 09:52", owner: "林怡君", status: "已發布" },
@@ -77,12 +123,17 @@ const Icon = ({ name }: { name: string }) => <span className="line-icon" aria-hi
 
 export default function Home() {
   const [view, setView] = useState<View>("departments");
+  const [accounts, setAccounts] = useState(seedAccounts);
+  const [currentAccountId, setCurrentAccountId] = useState("mila");
+  const [selectedAccessAccountId, setSelectedAccessAccountId] = useState("finance-owner");
   const [activeDepartmentId, setActiveDepartmentId] = useState("finance");
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
   const [documents, setDocuments] = useState(seedDocuments);
   const [query, setQuery] = useState("");
   const [adminDepartment, setAdminDepartment] = useState("all");
+  const [analyticsDepartment, setAnalyticsDepartment] = useState("all");
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<"7" | "30" | "90">("30");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadDepartment, setUploadDepartment] = useState("finance");
@@ -91,14 +142,28 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const currentAccount = accounts.find((account) => account.id === currentAccountId) ?? accounts[0];
+  const selectedAccessAccount = accounts.find((account) => account.id === selectedAccessAccountId) ?? accounts[0];
+  const accessibleDepartmentIds = departments.filter((department) => currentAccount.permissions[department.id]?.includes("view")).map((department) => department.id);
+  const manageableDepartmentIds = departments.filter((department) => currentAccount.permissions[department.id]?.some((permission) => permission === "upload" || permission === "review" || permission === "admin")).map((department) => department.id);
+  const uploadableDepartmentIds = departments.filter((department) => currentAccount.permissions[department.id]?.some((permission) => permission === "upload" || permission === "admin")).map((department) => department.id);
+  const canManageAccounts = departments.some((department) => currentAccount.permissions[department.id]?.includes("admin"));
+  const analyticsDepartments = departments.filter((department) => accessibleDepartmentIds.includes(department.id) && (analyticsDepartment === "all" || department.id === analyticsDepartment));
+  const analyticsMultiplier = analyticsPeriod === "7" ? 0.27 : analyticsPeriod === "90" ? 2.62 : 1;
+  const analyticsSummary = analyticsDepartments.reduce((summary, department) => {
+    const data = departmentAnalytics[department.id];
+    return { questions: summary.questions + data.questions, users: summary.users + data.users, citation: summary.citation + data.citation, helpful: summary.helpful + data.helpful, hours: summary.hours + data.hours };
+  }, { questions: 0, users: 0, citation: 0, helpful: 0, hours: 0 });
+  const analyticsDivisor = Math.max(analyticsDepartments.length, 1);
+  const trendValues = analyticsPeriod === "7" ? [48, 63, 58, 72, 68, 82, 91] : analyticsPeriod === "90" ? [42, 49, 46, 56, 61, 59, 67, 72, 70, 79, 84, 91] : [44, 50, 55, 52, 64, 69, 63, 76, 73, 82, 88, 94];
   const activeDepartment = departments.find((item) => item.id === activeDepartmentId) ?? departments[0];
   const filteredDepartments = departments.filter((department) =>
-    `${department.name}${department.description}${department.topics.join("")}`.toLowerCase().includes(query.toLowerCase()),
+    accessibleDepartmentIds.includes(department.id) && `${department.name}${department.description}${department.topics.join("")}`.toLowerCase().includes(query.toLowerCase()),
   );
   const filteredDocuments = useMemo(() => documents.filter((document) => {
-    const matchesDepartment = adminDepartment === "all" || document.department === adminDepartment;
+    const matchesDepartment = manageableDepartmentIds.includes(document.department) && (adminDepartment === "all" || document.department === adminDepartment);
     return matchesDepartment && document.name.toLowerCase().includes(query.toLowerCase());
-  }), [documents, adminDepartment, query]);
+  }), [documents, adminDepartment, query, manageableDepartmentIds]);
 
   function flash(message: string) {
     setToast(message);
@@ -106,6 +171,10 @@ export default function Home() {
   }
 
   function openDepartment(id: string) {
+    if (!accessibleDepartmentIds.includes(id)) {
+      flash("此帳號沒有該部門知識庫的查看權限");
+      return;
+    }
     setActiveDepartmentId(id);
     setMessages([]);
     setQuestion("");
@@ -142,6 +211,10 @@ export default function Home() {
 
   async function uploadFile() {
     if (!selectedFile) return;
+    if (!uploadableDepartmentIds.includes(uploadDepartment)) {
+      flash("此帳號沒有該部門知識庫的上傳權限");
+      return;
+    }
     setUploading(true);
     const department = departments.find((item) => item.id === uploadDepartment)!;
     const nextId = `KB-${String(242 + documents.length - seedDocuments.length).padStart(4, "0")}`;
@@ -153,7 +226,7 @@ export default function Home() {
       version: "v1.0",
       rows: Math.max(sheetPreview.length - 1, 0),
       updated: new Intl.DateTimeFormat("zh-TW", { dateStyle: "short", timeStyle: "short" }).format(new Date()),
-      owner: "Mila Chang",
+      owner: currentAccount.name,
       status: "索引中",
     };
 
@@ -162,7 +235,7 @@ export default function Home() {
       form.append("file", selectedFile);
       form.append("department", uploadDepartment);
       form.append("rowCount", String(nextDocument.rows));
-      await fetch("/api/knowledge/documents", { method: "POST", body: form });
+      await fetch("/api/knowledge/documents", { method: "POST", body: form, headers: { "x-demo-user-id": currentAccount.id } });
     } catch {
       // The optimistic record keeps the prototype usable when local storage bindings are offline.
     }
@@ -173,6 +246,48 @@ export default function Home() {
     setSelectedFile(null);
     setSheetPreview([]);
     flash(`${department.name}的「${nextDocument.name}」已上傳，正在建立索引`);
+  }
+
+  function switchAccount(accountId: string) {
+    const account = accounts.find((item) => item.id === accountId) ?? accounts[0];
+    const firstDepartment = departments.find((department) => account.permissions[department.id]?.includes("view"));
+    setCurrentAccountId(account.id);
+    setView("departments");
+    setMessages([]);
+    setQuery("");
+    setAdminDepartment("all");
+    setAnalyticsDepartment("all");
+    if (firstDepartment) {
+      setActiveDepartmentId(firstDepartment.id);
+      const firstUploadDepartment = departments.find((department) => account.permissions[department.id]?.some((permission) => permission === "upload" || permission === "admin"));
+      if (firstUploadDepartment) setUploadDepartment(firstUploadDepartment.id);
+    }
+    flash(`已切換為 ${account.name}，顯示其帳號權限`);
+  }
+
+  function setDepartmentRole(accountId: string, departmentId: string, role: "none" | Permission) {
+    const hierarchy: Record<Exclude<typeof role, "none">, Permission[]> = {
+      view: ["view"],
+      upload: ["view", "upload"],
+      review: ["view", "upload", "review"],
+      admin: ["view", "upload", "review", "admin"],
+    };
+    setAccounts((current) => current.map((account) => account.id !== accountId ? account : {
+      ...account,
+      permissions: { ...account.permissions, [departmentId]: role === "none" ? [] : hierarchy[role] },
+    }));
+    const department = departments.find((item) => item.id === departmentId)!;
+    flash(`${selectedAccessAccount.name}的${department.name}權限已更新`);
+  }
+
+  function approveDocument(documentId: string) {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document || !currentAccount.permissions[document.department]?.some((permission) => permission === "review" || permission === "admin")) {
+      flash("此帳號沒有審核發布權限");
+      return;
+    }
+    setDocuments((current) => current.map((item) => item.id === documentId ? { ...item, status: "已發布" } : item));
+    flash(`「${document.name}」已由 ${currentAccount.name} 確認並發布`);
   }
 
   function exportDocuments() {
@@ -207,7 +322,7 @@ export default function Home() {
     flash("本次問答已匯出為 Excel");
   }
 
-  const pageTitle = view === "departments" ? "部門知識庫" : view === "chat" ? `${activeDepartment.name}知識助理` : view === "prompts" ? "Prompt / Skill 中心" : view === "qa" ? "品保文件核對" : "知識庫管理";
+  const pageTitle = view === "departments" ? "部門知識庫" : view === "chat" ? `${activeDepartment.name}知識助理` : view === "prompts" ? "Prompt / Skill 中心" : view === "qa" ? "品保文件核對" : view === "access" ? "帳號與部門權限" : view === "analytics" ? "使用分析" : "知識庫管理";
 
   return (
     <div className="app-shell">
@@ -223,26 +338,27 @@ export default function Home() {
           <button className={view === "prompts" ? "active" : ""} onClick={() => setView("prompts")}><Icon name="✦" /><span>Prompt / Skill</span><em>12</em></button>
           <button className={view === "qa" ? "active" : ""} onClick={() => setView("qa")}><Icon name="✓" /><span>品保文件核對</span></button>
           <p>維運管理</p>
-          <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><Icon name="▦" /><span>知識庫管理</span></button>
-          <button onClick={() => flash("權限設定功能已預留，可串接 AD 群組")}><Icon name="♙" /><span>權限與角色</span></button>
-          <button onClick={() => flash("分析儀表板功能已預留")}><Icon name="↗" /><span>使用分析</span></button>
+          {manageableDepartmentIds.length > 0 && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><Icon name="▦" /><span>知識庫管理</span></button>}
+          {canManageAccounts && <button className={view === "access" ? "active" : ""} onClick={() => setView("access")}><Icon name="♙" /><span>帳號與權限</span></button>}
+          <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}><Icon name="↗" /><span>使用分析</span></button>
         </nav>
 
         <div className="sidebar-status">
           <div><span className="pulse" /><strong>知識服務正常</strong></div>
           <small>8 個知識庫 · 最後同步 2 分鐘前</small>
         </div>
-        <button className="profile" onClick={() => flash("目前角色：知識維護者")}>
-          <span className="avatar">MC</span>
-          <span><strong>Mila Chang</strong><small>知識維護者</small></span>
-          <b>•••</b>
-        </button>
+        <div className="profile">
+          <span className="avatar">{currentAccount.initials}</span>
+          <span><strong>{currentAccount.name}</strong><small>{currentAccount.title}</small></span>
+          <b>DEMO</b>
+        </div>
       </aside>
 
       <main className={`workspace ${view === "chat" ? "chat-workspace" : ""}`}>
         <header className="topbar">
           <div className="breadcrumb"><button onClick={() => setView("departments")}>智匯</button><span>/</span><strong>{pageTitle}</strong></div>
           <div className="top-actions">
+            <label className="account-switcher"><span>Demo 帳號</span><select value={currentAccount.id} onChange={(event) => switchAccount(event.target.value)} aria-label="切換展示帳號">{accounts.map((account) => <option value={account.id} key={account.id}>{account.name}｜{account.title}</option>)}</select></label>
             <button className="icon-button" aria-label="說明" onClick={() => flash("這是依 Phase 2 規劃建立的知識問答平台")}>?</button>
             <button className="icon-button notification" aria-label="通知" onClick={() => flash("有 3 份文件等待審核")}>♢<i>3</i></button>
           </div>
@@ -265,7 +381,7 @@ export default function Home() {
               <kbd>⌘ K</kbd>
             </label>
 
-            <div className="section-heading"><div><h2>部門專屬知識庫</h2><p>依您的 AD 權限顯示 8 個可使用的知識範圍</p></div><span>已自動套用權限</span></div>
+            <div className="section-heading"><div><h2>部門專屬知識庫</h2><p>{currentAccount.name} 可進入 {accessibleDepartmentIds.length} 個部門知識庫</p></div><span>帳號權限已套用</span></div>
             <div className="department-grid">
               {filteredDepartments.map((department) => (
                 <button className="department-card" key={department.id} onClick={() => openDepartment(department.id)}>
@@ -273,7 +389,7 @@ export default function Home() {
                     <span className={`dept-avatar ${department.color}`}>{department.short}</span>
                     <span className="open-arrow">↗</span>
                   </div>
-                  <h3>{department.name}<span>專屬 Agent</span></h3>
+                  <h3>{department.name}<span>{currentAccount.permissions[department.id]?.includes("admin") ? "管理員" : currentAccount.permissions[department.id]?.includes("review") ? "可審核" : currentAccount.permissions[department.id]?.includes("upload") ? "可上傳" : "可查看"}</span></h3>
                   <p>{department.description}</p>
                   <div className="topic-list">{department.topics.map((topic) => <span key={topic}>{topic}</span>)}</div>
                   <div className="card-data"><span><b>{department.documents}</b> 份文件</span><span><b>{department.entries}</b> 筆知識</span></div>
@@ -343,7 +459,7 @@ export default function Home() {
 
         {view === "admin" && (
           <section className="page-content admin-page">
-            <div className="admin-heading"><div><div className="eyebrow"><span /> KNOWLEDGE OPERATIONS</div><h1>知識庫管理</h1><p>維護部門文件、版本、索引與發布狀態。</p></div><div><button className="secondary-button" onClick={exportDocuments}>⇩ 匯出 Excel</button><button className="primary-button" onClick={() => setUploadOpen(true)}>＋ 上傳知識文件</button></div></div>
+            <div className="admin-heading"><div><div className="eyebrow"><span /> KNOWLEDGE OPERATIONS</div><h1>知識庫管理</h1><p>{currentAccount.name} 可維護 {manageableDepartmentIds.length} 個部門知識庫。</p></div><div><button className="secondary-button" onClick={exportDocuments}>⇩ 匯出 Excel</button>{uploadableDepartmentIds.length > 0 && <button className="primary-button" onClick={() => { setUploadDepartment(uploadableDepartmentIds[0]); setUploadOpen(true); }}>＋ 上傳知識文件</button>}</div></div>
             <div className="admin-stats">
               <article><span className="stat-icon indigo">▤</span><div><small>知識文件</small><strong>{documents.length + 394}</strong><p><b>+18</b> 本月新增</p></div></article>
               <article><span className="stat-icon teal">✓</span><div><small>已發布</small><strong>389</strong><p>97.2% 可供問答</p></div></article>
@@ -354,10 +470,10 @@ export default function Home() {
             <div className="admin-panel">
               <div className="panel-toolbar">
                 <div className="tabs"><button className="active">全部文件 <span>{documents.length + 394}</span></button><button>待處理 <span>8</span></button><button>版本紀錄</button></div>
-                <div><label className="table-search"><Icon name="⌕" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋文件" /></label><select value={adminDepartment} onChange={(event) => setAdminDepartment(event.target.value)} aria-label="依部門篩選"><option value="all">全部部門</option>{departments.map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select><button className="icon-button">☷</button></div>
+                <div><label className="table-search"><Icon name="⌕" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋文件" /></label><select value={adminDepartment} onChange={(event) => setAdminDepartment(event.target.value)} aria-label="依部門篩選"><option value="all">我的全部部門</option>{departments.filter((department) => manageableDepartmentIds.includes(department.id)).map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select><button className="icon-button">☷</button></div>
               </div>
               <div className="document-table">
-                <div className="document-row document-head"><span>文件名稱</span><span>部門知識庫</span><span>版本</span><span>資料量</span><span>更新時間</span><span>維護人</span><span>狀態</span><span /></div>
+                <div className="document-row document-head"><span>文件名稱</span><span>部門知識庫</span><span>版本</span><span>資料量</span><span>更新時間</span><span>維護人</span><span>狀態</span><span>操作</span></div>
                 {filteredDocuments.map((document) => {
                   const department = departments.find((item) => item.id === document.department)!;
                   return <div className="document-row" key={document.id}>
@@ -365,12 +481,84 @@ export default function Home() {
                     <span className="department-label"><i className={department.color}>{department.short}</i>{department.name}</span>
                     <strong>{document.version}</strong><span>{document.rows.toLocaleString()} 筆</span><span>{document.updated}</span><span>{document.owner}</span>
                     <span className={`status-badge ${document.status === "已發布" ? "published" : document.status === "索引中" ? "indexing" : "review"}`}><i />{document.status}</span>
-                    <button className="more-button" onClick={() => flash(`${document.name}：可查看版本、停用或重新索引`)}>•••</button>
+                    {document.status === "待審核" && currentAccount.permissions[document.department]?.some((permission) => permission === "review" || permission === "admin") ? <button className="review-action" onClick={() => approveDocument(document.id)}>確認發布</button> : <button className="more-button" onClick={() => flash(`${document.name}：可查看版本、停用或重新索引`)}>•••</button>}
                   </div>;
                 })}
               </div>
               <div className="table-footer"><span>顯示 1–{filteredDocuments.length} 筆，共 {documents.length + 394} 筆</span><div><button disabled>‹</button><button className="active">1</button><button>2</button><button>3</button><span>…</span><button>42</button><button>›</button></div></div>
             </div>
+          </section>
+        )}
+
+        {view === "access" && (
+          <section className="page-content access-page">
+            <div className="admin-heading"><div><div className="eyebrow"><span /> ACCOUNT × KNOWLEDGE BASE</div><h1>帳號與部門權限</h1><p>決定每個帳號可以進入、上傳、確認及管理哪些部門知識庫。</p></div><button className="primary-button" onClick={() => flash("已建立新帳號邀請草稿")}>＋ 新增帳號</button></div>
+            <div className="access-layout">
+              <aside className="account-list">
+                <div className="access-panel-title"><strong>公司帳號</strong><span>{accounts.length} 人</span></div>
+                {accounts.map((account) => {
+                  const accessCount = Object.values(account.permissions).filter((permissions) => permissions.includes("view")).length;
+                  return <button className={selectedAccessAccount.id === account.id ? "active" : ""} onClick={() => setSelectedAccessAccountId(account.id)} key={account.id}><span className="account-avatar">{account.initials}</span><span><strong>{account.name}</strong><small>{account.email}</small><em>{account.title} · {accessCount} 個知識庫</em></span><b>›</b></button>;
+                })}
+              </aside>
+              <div className="permission-panel">
+                <div className="permission-user"><span className="account-avatar large">{selectedAccessAccount.initials}</span><div><h2>{selectedAccessAccount.name}</h2><p>{selectedAccessAccount.email} · {selectedAccessAccount.title}</p></div><span className="account-state"><i />帳號啟用中</span></div>
+                <div className="permission-help"><span>i</span><p><strong>權限逐級包含</strong><small>上傳包含查看；審核包含上傳；管理員可維護成員與全部設定。</small></p></div>
+                <div className="permission-matrix">
+                  <div className="permission-row permission-head"><span>部門知識庫</span><span>目前權限</span><span>權限包含</span></div>
+                  {departments.map((department) => {
+                    const permissions = selectedAccessAccount.permissions[department.id] ?? [];
+                    const role: "none" | Permission = permissions.includes("admin") ? "admin" : permissions.includes("review") ? "review" : permissions.includes("upload") ? "upload" : permissions.includes("view") ? "view" : "none";
+                    return <div className="permission-row" key={department.id}>
+                      <div className="permission-department"><span className={`dept-avatar small ${department.color}`}>{department.short}</span><p><strong>{department.name}</strong><small>{department.description}</small></p></div>
+                      <select value={role} onChange={(event) => setDepartmentRole(selectedAccessAccount.id, department.id, event.target.value as "none" | Permission)} aria-label={`${department.name}權限`}><option value="none">無權限</option><option value="view">查看問答</option><option value="upload">上傳資料</option><option value="review">審核發布</option><option value="admin">知識庫管理員</option></select>
+                      <div className="permission-chips">{role === "none" ? <span className="none">不可進入</span> : permissions.map((permission) => <span className={permission} key={permission}>{permissionMeta[permission].label}</span>)}</div>
+                    </div>;
+                  })}
+                </div>
+                <div className="permission-footer"><span>所有異動都會保留帳號、時間與修改前後內容的稽核紀錄。</span><button className="primary-button" onClick={() => flash(`${selectedAccessAccount.name}的權限設定已儲存`)}>儲存權限設定</button></div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {view === "analytics" && (
+          <section className="page-content analytics-page">
+            <div className="analytics-heading">
+              <div><div className="eyebrow"><span /> KNOWLEDGE IMPACT</div><h1>使用分析</h1><p>掌握部門採用、問答品質、文件效益與節省工時。</p></div>
+              <div className="analytics-filters"><label>部門<select value={analyticsDepartment} onChange={(event) => setAnalyticsDepartment(event.target.value)}><option value="all">我的全部部門</option>{departments.filter((department) => accessibleDepartmentIds.includes(department.id)).map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select></label><label>統計期間<select value={analyticsPeriod} onChange={(event) => setAnalyticsPeriod(event.target.value as "7" | "30" | "90")}><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option></select></label><button className="secondary-button" onClick={() => flash("分析報表已匯出")}>⇩ 匯出報表</button></div>
+            </div>
+
+            <div className="analytics-kpis">
+              <article><div><span className="analytics-icon indigo">✦</span><small>知識問答次數</small></div><strong>{Math.round(analyticsSummary.questions * analyticsMultiplier).toLocaleString()}</strong><p><b>↑ 18.6%</b> 較前一期間</p></article>
+              <article><div><span className="analytics-icon blue">♙</span><small>活躍帳號</small></div><strong>{Math.round(analyticsSummary.users * Math.min(analyticsMultiplier, 1.45)).toLocaleString()}</strong><p><b>↑ 9.2%</b> 使用率持續成長</p></article>
+              <article><div><span className="analytics-icon teal">◎</span><small>附引用回答率</small></div><strong>{Math.round(analyticsSummary.citation / analyticsDivisor)}<em>%</em></strong><p>目標 95% · <b>品質穩定</b></p></article>
+              <article><div><span className="analytics-icon amber">◷</span><small>預估節省工時</small></div><strong>{Math.round(analyticsSummary.hours * analyticsMultiplier).toLocaleString()}<em> hr</em></strong><p><b>相當於 {Math.round(analyticsSummary.hours * analyticsMultiplier / 8)} 個工作日</b></p></article>
+            </div>
+
+            <div className="analytics-main-grid">
+              <article className="analytics-card trend-card">
+                <div className="analytics-card-head"><div><h2>問答使用趨勢</h2><p>依所選範圍彙整每日知識問答</p></div><span><i /> 問答次數</span></div>
+                <div className="bar-chart"><div className="chart-y"><span>1,200</span><span>900</span><span>600</span><span>300</span><span>0</span></div><div className="chart-bars">{trendValues.map((value, index) => <div className="bar-column" key={`${analyticsPeriod}-${index}`}><span className="bar-value">{Math.round(value * analyticsDepartments.length * analyticsMultiplier)}</span><i style={{ height: `${value}%` }} /><small>{analyticsPeriod === "7" ? ["一", "二", "三", "四", "五", "六", "日"][index] : `${index + 1}日`}</small></div>)}</div></div>
+              </article>
+              <article className="analytics-card quality-card">
+                <div className="analytics-card-head"><div><h2>回答品質</h2><p>使用者回饋與來源完整性</p></div></div>
+                <div className="quality-score"><div style={{ background: `conic-gradient(#625bd2 ${Math.round(analyticsSummary.helpful / analyticsDivisor) * 3.6}deg,#ececf4 0)` }}><span><strong>{Math.round(analyticsSummary.helpful / analyticsDivisor)}%</strong><small>有幫助</small></span></div></div>
+                <div className="quality-metrics"><p><span><i className="teal" />附引用回答</span><strong>{Math.round(analyticsSummary.citation / analyticsDivisor)}%</strong></p><p><span><i className="violet" />首次解決率</span><strong>87%</strong></p><p><span><i className="amber" />需要人工轉介</span><strong>6.4%</strong></p></div>
+              </article>
+            </div>
+
+            <div className="analytics-bottom-grid">
+              <article className="analytics-card adoption-card">
+                <div className="analytics-card-head"><div><h2>部門採用狀況</h2><p>僅顯示目前帳號有權查看的知識庫</p></div><button onClick={() => setAnalyticsDepartment("all")}>檢視全部</button></div>
+                <div className="adoption-table"><div className="adoption-row adoption-head"><span>部門</span><span>活躍帳號</span><span>問答次數</span><span>採用率</span><span>成效</span></div>{analyticsDepartments.sort((a, b) => departmentAnalytics[b.id].adoption - departmentAnalytics[a.id].adoption).map((department) => { const data = departmentAnalytics[department.id]; return <button className="adoption-row" onClick={() => setAnalyticsDepartment(department.id)} key={department.id}><span className="adoption-dept"><i className={department.color}>{department.short}</i><strong>{department.name}</strong></span><span>{Math.round(data.users * Math.min(analyticsMultiplier, 1.45))} 人</span><span>{Math.round(data.questions * analyticsMultiplier).toLocaleString()}</span><span className="adoption-rate"><i><b style={{ width: `${data.adoption}%` }} /></i><strong>{data.adoption}%</strong></span><em className={data.adoption >= 80 ? "excellent" : data.adoption >= 72 ? "steady" : "watch"}>{data.adoption >= 80 ? "表現優良" : data.adoption >= 72 ? "穩定採用" : "建議推廣"}</em></button>; })}</div>
+              </article>
+              <article className="analytics-card popular-card">
+                <div className="analytics-card-head"><div><h2>熱門知識問題</h2><p>最常被查詢的工作問題</p></div></div>
+                <div className="popular-list">{popularQuestions.filter((item) => accessibleDepartmentIds.includes(item.department) && (analyticsDepartment === "all" || item.department === analyticsDepartment)).slice(0, 5).map((item, index) => { const department = departments.find((entry) => entry.id === item.department)!; return <button onClick={() => openDepartment(item.department)} key={item.question}><span>{index + 1}</span><p><strong>{item.question}</strong><small>{department.name} · {Math.round(item.count * analyticsMultiplier)} 次提問</small></p><em>{item.helpful}% 有幫助</em></button>; })}</div>
+              </article>
+            </div>
+            <div className="analytics-note"><span>i</span><p><strong>Demo 數據說明</strong>目前為模擬分析資料；正式串接後將由 LLM Proxy、引用紀錄與使用者回饋即時彙整。</p></div>
           </section>
         )}
 
@@ -393,7 +581,7 @@ export default function Home() {
         <section className="upload-modal" role="dialog" aria-modal="true" aria-labelledby="upload-title">
           <div className="modal-header"><div><span className="stat-icon indigo">⇧</span><div><h2 id="upload-title">上傳知識文件</h2><p>支援 Excel、PDF、Word 與 CSV</p></div></div><button onClick={() => setUploadOpen(false)} aria-label="關閉">×</button></div>
           <div className="modal-body">
-            <label>發布至部門知識庫<select value={uploadDepartment} onChange={(event) => setUploadDepartment(event.target.value)}>{departments.map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select></label>
+            <label>發布至部門知識庫<select value={uploadDepartment} onChange={(event) => setUploadDepartment(event.target.value)}>{departments.filter((department) => uploadableDepartmentIds.includes(department.id)).map((department) => <option value={department.id} key={department.id}>{department.name}</option>)}</select></label>
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.pdf,.doc,.docx" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) inspectFile(file); }} />
             <button className={`dropzone ${selectedFile ? "has-file" : ""}`} onClick={() => fileRef.current?.click()}>
               {selectedFile ? <><span className="file-badge excel">XLS</span><strong>{selectedFile.name}</strong><small>{(selectedFile.size / 1024).toFixed(1)} KB · 點擊可更換檔案</small></> : <><span>⇧</span><strong>拖放檔案到這裡，或點擊選擇</strong><small>Excel 每個工作表都會建立欄位索引 · 單檔上限 25 MB</small></>}
