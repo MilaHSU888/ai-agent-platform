@@ -122,6 +122,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [type, setType] = useState<"全部" | "AI" | "非 AI">("全部");
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const [activeWorkspace, setActiveWorkspace] = useState<"vision" | null>(null);
 
   const department = departments.find((item) => item.id === activeDepartment) ?? departments[0];
   const visibleTools = useMemo(() => {
@@ -137,8 +138,8 @@ export default function Home() {
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
 
-  if (selectedTool?.id === "vision") {
-    return <VisionWorkspace onBack={() => setSelectedTool(null)} />;
+  if (activeWorkspace === "vision") {
+    return <VisionWorkspace onBack={() => setActiveWorkspace(null)} />;
   }
 
   return (
@@ -259,7 +260,10 @@ export default function Home() {
             </div>
             <div className="launch-panel">
               <div><strong>準備就緒</strong><span>{selectedTool.type === "AI" ? "由 LLM Proxy 套用公司資料政策" : "使用事件將寫入統一遙測服務"}</span></div>
-              <button onClick={() => setSelectedTool(null)}>進入工具 <span>↗</span></button>
+              <button onClick={() => {
+                if (selectedTool.id === "vision") setActiveWorkspace("vision");
+                setSelectedTool(null);
+              }}>進入工具 <span>↗</span></button>
             </div>
           </section>
         </div>
