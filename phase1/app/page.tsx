@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Department = {
   id: string;
@@ -27,18 +27,18 @@ type Tool = {
 };
 
 const departments: Department[] = [
-  { id: "shared", name: "全公司共用", short: "全", count: 328, active: 286, tools: 6, saved: 916 },
-  { id: "finance", name: "財務部", short: "財", count: 18, active: 16, tools: 4, saved: 138 },
-  { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 5, saved: 171 },
-  { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 4, saved: 96 },
-  { id: "general", name: "總務部", short: "總", count: 15, active: 11, tools: 3, saved: 72 },
-  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 6, saved: 384 },
-  { id: "purchase", name: "採購部", short: "採", count: 21, active: 18, tools: 4, saved: 142 },
-  { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 5, saved: 318 },
-  { id: "material", name: "資材部", short: "材", count: 26, active: 22, tools: 4, saved: 186 },
-  { id: "mfg1", name: "製造一部", short: "一", count: 52, active: 41, tools: 4, saved: 264 },
-  { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 4, saved: 247 },
-  { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 5, saved: 121 },
+  { id: "shared", name: "全公司共用", short: "全", count: 328, active: 286, tools: 7, saved: 916 },
+  { id: "finance", name: "財務部", short: "財", count: 18, active: 16, tools: 5, saved: 138 },
+  { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 6, saved: 171 },
+  { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 5, saved: 96 },
+  { id: "general", name: "總務部", short: "總", count: 15, active: 11, tools: 4, saved: 72 },
+  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 8, saved: 496 },
+  { id: "purchase", name: "採購部", short: "採", count: 21, active: 18, tools: 5, saved: 142 },
+  { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 6, saved: 318 },
+  { id: "material", name: "資材部", short: "材", count: 26, active: 22, tools: 5, saved: 186 },
+  { id: "mfg1", name: "製造一部", short: "一", count: 52, active: 41, tools: 5, saved: 264 },
+  { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 5, saved: 247 },
+  { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 6, saved: 121 },
 ];
 
 const tools: Tool[] = [
@@ -69,6 +69,7 @@ const tools: Tool[] = [
   { id: "contract", name: "合約摘要助手", description: "整理行政合約重點與到期日", department: "general", type: "AI", users: 8, runs: 49, saved: 22, color: "violet", icon: "約" },
   { id: "room", name: "會議室資源管理", description: "空間、設備與借用衝突查詢", department: "general", type: "非 AI", users: 9, runs: 88, saved: 13, color: "cyan", icon: "室" },
 
+  { id: "vision", name: "AI 識圖大師", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "rd", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
   { id: "spec", name: "規格文件助手", description: "摘要規格、比對版本與標示變更", department: "rd", type: "AI", badge: "熱門", users: 42, runs: 318, saved: 126, color: "violet", icon: "規" },
   { id: "patent", name: "專利檢索助手", description: "整理技術關鍵字與相似專利", department: "rd", type: "AI", users: 31, runs: 186, saved: 84, color: "blue", icon: "專" },
   { id: "testreport", name: "測試報告產生器", description: "彙整測試數據與報告格式", department: "rd", type: "非 AI", users: 38, runs: 241, saved: 71, color: "green", icon: "測" },
@@ -76,7 +77,7 @@ const tools: Tool[] = [
   { id: "risk", name: "設計風險檢查", description: "依歷史案例提示潛在設計風險", department: "rd", type: "AI", users: 24, runs: 127, saved: 41, color: "orange", icon: "險" },
   { id: "tech", name: "技術知識搜尋", description: "跨專案搜尋核准的技術文件", department: "rd", type: "AI", users: 35, runs: 223, saved: 68, color: "pink", icon: "知" },
 
-  { id: "quote", name: "報價比較助手", description: "彙整供應商報價與差異說明", department: "purchase", type: "AI", users: 17, runs: 164, saved: 58, color: "blue", icon: "價" },
+  { id: "quote", name: "採購報價匯整工具", description: "將不同格式的供應商報價檔匯整為統一比較表", department: "purchase", type: "AI", users: 17, runs: 164, saved: 58, color: "blue", icon: "價" },
   { id: "supplier", name: "供應商評核", description: "品質、交期與服務績效彙整", department: "purchase", type: "非 AI", users: 14, runs: 82, saved: 24, color: "green", icon: "供" },
   { id: "po", name: "採購單查詢", description: "依料號、廠商與日期查詢 PO", department: "purchase", type: "非 AI", users: 19, runs: 202, saved: 35, color: "cyan", icon: "購" },
   { id: "clause", name: "採購條款檢查", description: "提示付款、交期與責任條款", department: "purchase", type: "AI", users: 12, runs: 91, saved: 25, color: "violet", icon: "款" },
@@ -107,6 +108,20 @@ const tools: Tool[] = [
   { id: "benefit", name: "工具效益分析", description: "比較採用率、節省工時與任務成果", department: "management", type: "非 AI", users: 8, runs: 78, saved: 18, color: "blue", icon: "效" },
   { id: "project", name: "專案進度摘要", description: "跨部門彙整里程碑、風險與待決策", department: "management", type: "AI", users: 7, runs: 62, saved: 28, color: "orange", icon: "進" },
   { id: "decision", name: "決策資料搜尋", description: "搜尋歷次會議、決議與追蹤狀態", department: "management", type: "AI", users: 7, runs: 54, saved: 22, color: "cyan", icon: "決" },
+
+  ...departments.map((department) => ({
+    id: `knowledge-${department.id}`,
+    name: department.id === "shared" ? "企業知識庫問答" : `${department.name}知識庫問答`,
+    description: department.id === "shared" ? "查詢全公司核准的制度、流程與共用文件" : `依權限查詢${department.name}核准的規範、流程與知識文件`,
+    department: department.id,
+    type: "AI" as const,
+    badge: department.id === "shared" ? "全員可用" : "部門知識",
+    users: department.active,
+    runs: department.active * 7,
+    saved: Math.max(12, Math.round(department.active * 1.6)),
+    color: "violet",
+    icon: "知",
+  })),
 ];
 
 const trend = [42, 47, 51, 55, 59, 63, 68, 72, 76, 79, 82, 85];
@@ -121,6 +136,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [type, setType] = useState<"全部" | "AI" | "非 AI">("全部");
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const [activeWorkspace, setActiveWorkspace] = useState<"vision" | "quote" | "knowledge" | null>(null);
 
   const department = departments.find((item) => item.id === activeDepartment) ?? departments[0];
   const visibleTools = useMemo(() => {
@@ -135,6 +151,16 @@ export default function Home() {
 
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
+
+  if (activeWorkspace === "vision") {
+    return <VisionWorkspace onBack={() => setActiveWorkspace(null)} />;
+  }
+  if (activeWorkspace === "quote") {
+    return <QuoteWorkspace onBack={() => setActiveWorkspace(null)} />;
+  }
+  if (activeWorkspace === "knowledge") {
+    return <KnowledgeWorkspace department={department} onBack={() => setActiveWorkspace(null)} />;
+  }
 
   return (
     <div className="app-shell">
@@ -254,11 +280,536 @@ export default function Home() {
             </div>
             <div className="launch-panel">
               <div><strong>準備就緒</strong><span>{selectedTool.type === "AI" ? "由 LLM Proxy 套用公司資料政策" : "使用事件將寫入統一遙測服務"}</span></div>
-              <button onClick={() => setSelectedTool(null)}>進入工具 <span>↗</span></button>
+              <button onClick={() => {
+                if (selectedTool.id === "vision") setActiveWorkspace("vision");
+                if (selectedTool.id === "quote") setActiveWorkspace("quote");
+                if (selectedTool.id.startsWith("knowledge-")) setActiveWorkspace("knowledge");
+                setSelectedTool(null);
+              }}>進入工具 <span>↗</span></button>
             </div>
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+type KnowledgeMessage = { role: "user" | "assistant"; content: string; sources?: string[] };
+type SavedPrompt = { id: string; name: string; command: string; content: string; scope: "個人" | "部門共用" | "全公司共用" };
+type ManagedKnowledgeBase = { id: string; name: string; description: string; scope: "全公司" | "部門"; files: number; updated: string; attached: boolean; locked: boolean };
+
+const knowledgeSuggestions: Record<string, string[]> = {
+  shared: ["查詢出差補助規定", "資訊安全事件如何通報？", "會議室與公務車如何申請？", "請假與特休規定有哪些？"],
+  finance: ["請款憑證需要哪些資料？", "費用報銷的截止日是什麼時候？", "固定資產如何認列？", "付款條件變更需要誰核准？"],
+  it: ["資訊設備如何申請？", "帳號權限異動流程是什麼？", "資安事件如何通報？", "軟體安裝有哪些限制？"],
+  hr: ["特休假如何計算？", "加班申請的核准流程？", "新人報到需準備哪些資料？", "教育訓練補助規定？"],
+  general: ["修繕申請流程是什麼？", "公務車如何預約？", "門禁卡遺失如何處理？", "會議室使用規範？"],
+  rd: ["設計變更需要哪些審查？", "圖面版次如何命名？", "研發樣品如何申請採購？", "技術文件的保密等級？"],
+  purchase: ["新供應商如何申請建檔？", "詢比議價需要幾家廠商？", "採購單變更流程是什麼？", "交期異常如何處理？"],
+  sales: ["客戶報價的核准層級？", "RFQ 案件如何建檔？", "客訴案件如何通報？", "樣品申請需要哪些資料？"],
+  material: ["領料與退料流程是什麼？", "呆滯料如何判定？", "盤點差異如何處理？", "安全庫存如何設定？"],
+  mfg1: ["製造異常如何通報？", "換線前需要確認哪些項目？", "SOP 版次如何確認？", "交班紀錄要填哪些內容？"],
+  mfg2: ["設備點檢的頻率？", "生產異常如何分級？", "首件檢查流程是什麼？", "工單結案需要哪些資料？"],
+  management: ["月會資料的繳交期限？", "KPI 異常如何提出改善？", "專案風險如何分級？", "決策事項如何追蹤？"],
+};
+
+function getDefaultPrompts(department: Department): SavedPrompt[] {
+  return [
+    { id: "summary", name: "文件重點摘要", command: "/summary", content: "請依知識庫文件整理重點摘要，列出適用對象、辦理步驟、核准層級與注意事項，並在每項結論後標示引用來源。", scope: "全公司共用" },
+    { id: "compare", name: "規範版本比較", command: "/compare", content: "請比較知識庫中最新版本與前一版本的差異，依新增、刪除、修改分類整理，並說明對現行作業的影響。", scope: "全公司共用" },
+    { id: `department-${department.id}`, name: `${department.name}標準問答`, command: "/dept_qa", content: `請只根據${department.name}與全公司共用知識庫回答。先給結論，再列出辦理步驟、負責角色及引用文件；資料不足時請明確說明，不要自行推測。`, scope: department.id === "shared" ? "全公司共用" : "部門共用" },
+    { id: "my-checklist", name: "轉成執行清單", command: "/checklist", content: "請把查詢結果轉成可勾選的執行清單，包含負責人、必要文件、完成條件與可能風險。", scope: "個人" },
+  ];
+}
+
+function getDefaultKnowledgeBases(department: Department): ManagedKnowledgeBase[] {
+  const companyBase: ManagedKnowledgeBase = { id: "company-core", name: "全公司制度與共用流程", description: "人事、資訊安全、總務與跨部門共用規範", scope: "全公司", files: 42, updated: "今天 09:30", attached: true, locked: department.id !== "shared" };
+  const scopedBase: ManagedKnowledgeBase = department.id === "shared"
+    ? { id: "company-forms", name: "公司表單與申請指南", description: "常用表單、申請方式與核准權限說明", scope: "全公司", files: 28, updated: "昨天 16:20", attached: true, locked: false }
+    : { id: `${department.id}-primary`, name: `${department.name}作業知識庫`, description: `${department.name}核准的 SOP、作業辦法與常見問題`, scope: "部門", files: Math.max(12, Math.round(department.count * .7)), updated: "今天 10:15", attached: true, locked: false };
+  return [companyBase, scopedBase];
+}
+
+function KnowledgeWorkspace({ department, onBack }: { department: Department; onBack: () => void }) {
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<KnowledgeMessage[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [showPrompts, setShowPrompts] = useState(false);
+  const [showKnowledgeManager, setShowKnowledgeManager] = useState(false);
+  const [creatingPrompt, setCreatingPrompt] = useState(false);
+  const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
+  const [promptSearch, setPromptSearch] = useState("");
+  const [promptsLoaded, setPromptsLoaded] = useState(false);
+  const [knowledgeBasesLoaded, setKnowledgeBasesLoaded] = useState(false);
+  const [prompts, setPrompts] = useState<SavedPrompt[]>(() => getDefaultPrompts(department));
+  const [knowledgeBases, setKnowledgeBases] = useState<ManagedKnowledgeBase[]>(() => getDefaultKnowledgeBases(department));
+  const [newPrompt, setNewPrompt] = useState({ name: "", command: "", content: "", scope: "個人" as SavedPrompt["scope"] });
+  const [newKnowledgeBase, setNewKnowledgeBase] = useState({ name: "", description: "" });
+  const suggestions = knowledgeSuggestions[department.id] ?? knowledgeSuggestions.shared;
+  const scopeName = department.id === "shared" ? "全公司知識庫" : `${department.name}知識庫`;
+  const sourcePrefix = department.id === "shared" ? "公司共用" : department.name;
+  const visiblePrompts = prompts.filter((prompt) => !promptSearch.trim() || `${prompt.name}${prompt.command}${prompt.content}`.toLowerCase().includes(promptSearch.trim().toLowerCase()));
+  const attachedKnowledgeBases = knowledgeBases.filter((base) => base.attached);
+  const totalKnowledgeFiles = knowledgeBases.reduce((sum, base) => sum + base.files, 0);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(`workhub-prompts-${department.id}`);
+    if (saved) {
+      try { setPrompts(JSON.parse(saved) as SavedPrompt[]); } catch { setPrompts(getDefaultPrompts(department)); }
+    }
+    setPromptsLoaded(true);
+  }, [department]);
+
+  useEffect(() => {
+    if (promptsLoaded) window.localStorage.setItem(`workhub-prompts-${department.id}`, JSON.stringify(prompts));
+  }, [department.id, prompts, promptsLoaded]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(`workhub-knowledge-${department.id}`);
+    if (saved) {
+      try { setKnowledgeBases(JSON.parse(saved) as ManagedKnowledgeBase[]); } catch { setKnowledgeBases(getDefaultKnowledgeBases(department)); }
+    }
+    setKnowledgeBasesLoaded(true);
+  }, [department]);
+
+  useEffect(() => {
+    if (knowledgeBasesLoaded) window.localStorage.setItem(`workhub-knowledge-${department.id}`, JSON.stringify(knowledgeBases));
+  }, [department.id, knowledgeBases, knowledgeBasesLoaded]);
+
+  function submitQuestion(question = input) {
+    const raw = question.trim();
+    const matchedPrompt = prompts.find((prompt) => prompt.command.toLowerCase() === raw.toLowerCase());
+    const trimmed = matchedPrompt?.content ?? raw;
+    if (!trimmed) return;
+    setMessages((current) => [...current, { role: "user", content: trimmed }, {
+      role: "assistant",
+      content: `根據「${scopeName}」目前核准且有效的文件，這個問題需要依下列原則辦理：先確認申請條件與適用對象，再依文件所列核准層級完成申請；若案件涉及跨部門，系統會同時套用全公司共用規範。以下引用來源可開啟核對原文與版本日期。`,
+      sources: [`${sourcePrefix}作業管理辦法.pdf`, `${sourcePrefix}流程與權限一覽.xlsx`],
+    }]);
+    setInput("");
+    setSearching(false);
+  }
+
+  function savePrompt() {
+    const command = newPrompt.command.trim().replace(/^\/*/, "/");
+    if (!newPrompt.name.trim() || command === "/" || !newPrompt.content.trim()) return;
+    setPrompts((current) => [...current, { id: `custom-${Date.now()}`, name: newPrompt.name.trim(), command, content: newPrompt.content.trim(), scope: newPrompt.scope }]);
+    setNewPrompt({ name: "", command: "", content: "", scope: "個人" });
+    setCreatingPrompt(false);
+  }
+
+  function applyPrompt(prompt: SavedPrompt) {
+    setInput(prompt.content);
+    setShowPrompts(false);
+  }
+
+  function saveKnowledgeBase() {
+    if (!newKnowledgeBase.name.trim()) return;
+    setKnowledgeBases((current) => [...current, { id: `knowledge-${Date.now()}`, name: newKnowledgeBase.name.trim(), description: newKnowledgeBase.description.trim() || `${department.name}新增知識內容`, scope: department.id === "shared" ? "全公司" : "部門", files: 0, updated: "剛剛建立", attached: true, locked: false }]);
+    setNewKnowledgeBase({ name: "", description: "" });
+    setCreatingKnowledgeBase(false);
+  }
+
+  function addKnowledgeFiles(id: string, incoming: FileList | null) {
+    if (!incoming?.length) return;
+    setKnowledgeBases((current) => current.map((base) => base.id === id ? { ...base, files: base.files + incoming.length, updated: "剛剛更新" } : base));
+  }
+
+  function newChat() {
+    setMessages([]);
+    setInput("");
+    setSearching(false);
+  }
+
+  return (
+    <div className="knowledge-app">
+      <aside className="knowledge-sidebar">
+        <header><button className="knowledge-logo" onClick={onBack}>WH</button><strong>WorkHub AI</strong><button className="knowledge-collapse" onClick={onBack} aria-label="返回工具中心">◧</button></header>
+        <nav className="knowledge-main-nav">
+          <button onClick={newChat}><span>✎</span>新增對話</button>
+          <button className={searching ? "active" : ""} onClick={() => setSearching((value) => !value)}><span>⌕</span>搜尋</button>
+          <button><span>▣</span>筆記</button>
+          <button><span>⌘</span>工作區</button>
+        </nav>
+        {searching && <label className="knowledge-search"><span>⌕</span><input autoFocus placeholder="搜尋歷史對話…" /></label>}
+        <div className="knowledge-group"><strong>已自動附加的知識庫</strong><button onClick={() => { setShowPrompts(false); setShowKnowledgeManager(true); }} aria-label="管理知識庫">＋</button></div>
+        <div className="knowledge-scope-card"><span className={`dept-icon ${department.id === "shared" ? "shared" : ""}`}>{department.short}</span><div><strong>{scopeName}</strong><small>{attachedKnowledgeBases.length} 個知識庫・{totalKnowledgeFiles} 份文件・無需手動選擇</small></div><i>✓</i></div>
+        <div className="knowledge-history">
+          <p>近期對話</p>
+          <button className="active"><span></span>{messages[0]?.content ?? "新的知識庫查詢"}<small>現在</small></button>
+          <button><span></span>{suggestions[0]}<small>昨天</small></button>
+          <button><span></span>{suggestions[1]}<small>3 天前</small></button>
+          <button><span></span>整理本月常見問題<small>1 週前</small></button>
+        </div>
+        <div className="knowledge-user"><span>王</span><div><strong>王大明</strong><small>{department.id === "shared" ? "全公司權限" : department.name}</small></div><i></i></div>
+      </aside>
+
+      <main className="knowledge-main">
+        <header className="knowledge-topbar">
+          <div><strong>企業 AI 助理</strong><span>｜</span><b>{scopeName}查詢</b><button>⌄</button></div>
+          <div><button className={`knowledge-manage-trigger ${showKnowledgeManager ? "active" : ""}`} onClick={() => { setShowPrompts(false); setShowKnowledgeManager((value) => !value); }}><i>▣</i>管理知識庫<em>管理員</em></button><button className={`knowledge-prompt-trigger ${showPrompts ? "active" : ""}`} onClick={() => { setShowKnowledgeManager(false); setShowPrompts((value) => !value); }}><i>⌘</i>Prompt 範本<em>{prompts.length}</em></button><button title="資料政策">◌</button><button title="查詢設定">☷</button><span>王</span></div>
+        </header>
+
+        <section className={`knowledge-chat ${messages.length ? "has-messages" : ""}`}>
+          {messages.length === 0 ? (
+            <div className="knowledge-empty">
+              <div className="knowledge-title"><span>{department.short}</span><h1>企業 AI 助理 <i>｜</i> {scopeName}查詢</h1></div>
+              <p>依您的 AD 權限搜尋核准文件，回答會附上來源與版本，方便回到原文核對。</p>
+              <div className="auto-knowledge-badge"><span>✓</span><div><strong>知識庫已自動掛載</strong><small>{attachedKnowledgeBases.map((base) => base.name).join(" ＋ ")}</small></div><em>不需再按＋選擇</em></div>
+              <KnowledgeComposer input={input} setInput={setInput} submitQuestion={submitQuestion} onOpenPrompts={() => setShowPrompts(true)} prompts={prompts} knowledgeCount={attachedKnowledgeBases.length} />
+              <div className="knowledge-suggestions"><small>ϟ 建議問題</small>{suggestions.map((item) => <button key={item} onClick={() => submitQuestion(item)}>{item}<span>↗</span></button>)}</div>
+            </div>
+          ) : (
+            <div className="knowledge-conversation">
+              <div className="conversation-scope"><span>{department.short}</span><div><strong>{scopeName}</strong><small>已自動附加 {attachedKnowledgeBases.length} 個知識庫，僅檢索您有權限查看的核准文件</small></div><em>自動綁定 ✓</em></div>
+              {messages.map((message, index) => <article key={index} className={`knowledge-message ${message.role}`}>
+                <span>{message.role === "user" ? "王" : "AI"}</span><div><strong>{message.role === "user" ? "您" : "企業 AI 助理"}</strong><p>{message.content}</p>{message.sources && <div className="knowledge-sources"><small>引用來源</small>{message.sources.map((source, sourceIndex) => <button key={source}><b>{sourceIndex + 1}</b><span>{source}</span><em>開啟原文 ↗</em></button>)}</div>}</div>
+              </article>)}
+              <KnowledgeComposer input={input} setInput={setInput} submitQuestion={submitQuestion} onOpenPrompts={() => setShowPrompts(true)} prompts={prompts} knowledgeCount={attachedKnowledgeBases.length} compact />
+            </div>
+          )}
+        </section>
+
+        {showKnowledgeManager && <div className="kb-manager-backdrop" onMouseDown={() => setShowKnowledgeManager(false)}><aside className="kb-manager" onMouseDown={(event) => event.stopPropagation()}>
+          <header><div><span>▣</span><div><strong>{department.name}知識庫管理</strong><small>部門管理員專用・動態調整問答資料來源</small></div></div><button onClick={() => setShowKnowledgeManager(false)} aria-label="關閉知識庫管理">×</button></header>
+          <section className="kb-auto-policy"><span>✓</span><div><strong>自動綁定規則已啟用</strong><p>同仁從「{department.name}」入口提問時，系統會自動帶入下列已啟用知識庫，不需再按＋選擇。</p></div></section>
+          <div className="kb-manager-summary"><div><strong>{knowledgeBases.length}</strong><span>知識庫</span></div><div><strong>{totalKnowledgeFiles}</strong><span>文件總數</span></div><div><strong>{attachedKnowledgeBases.length}</strong><span>自動附加</span></div></div>
+          <div className="kb-manager-actions"><div><strong>目前資料來源</strong><small>異動後套用至下一次提問</small></div><button onClick={() => setCreatingKnowledgeBase(true)}>＋ 新增知識庫</button></div>
+          {creatingKnowledgeBase && <section className="kb-create-form"><div><strong>建立{department.id === "shared" ? "全公司" : department.name}知識庫</strong><button onClick={() => setCreatingKnowledgeBase(false)}>×</button></div><label>知識庫名稱<input value={newKnowledgeBase.name} onChange={(event) => setNewKnowledgeBase((current) => ({ ...current, name: event.target.value }))} placeholder={`例如：${department.name}品質作業規範`} /></label><label>用途說明<textarea value={newKnowledgeBase.description} onChange={(event) => setNewKnowledgeBase((current) => ({ ...current, description: event.target.value }))} placeholder="說明收錄哪些文件，幫助 AI 選擇正確資料來源" /></label><button disabled={!newKnowledgeBase.name.trim()} onClick={saveKnowledgeBase}>建立並自動附加</button></section>}
+          <div className="kb-list">
+            {knowledgeBases.map((base) => <article key={base.id} className={base.attached ? "active" : "inactive"}><div className="kb-card-head"><span>{base.scope === "全公司" ? "全" : department.short}</span><div><strong>{base.name}</strong><small>{base.description}</small></div><em>{base.scope}</em></div><div className="kb-card-stats"><span><b>{base.files}</b> 份文件</span><span>更新：{base.updated}</span><i>索引完成 ✓</i></div><div className="kb-card-actions"><label className={base.locked ? "locked" : ""}><input type="checkbox" checked={base.attached} disabled={base.locked} onChange={(event) => setKnowledgeBases((current) => current.map((item) => item.id === base.id ? { ...item, attached: event.target.checked, updated: "剛剛調整" } : item))} /><span></span>{base.locked ? "公司必備來源" : base.attached ? "自動附加中" : "已停用"}</label><label className={base.locked ? "disabled" : "upload"}>＋ 新增文件<input type="file" multiple disabled={base.locked} accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md" onChange={(event) => addKnowledgeFiles(base.id, event.target.files)} /></label></div></article>)}
+          </div>
+          <footer><span>權限說明</span><p>{department.id === "shared" ? "全公司知識庫由平台管理員維護。" : `您可維護${department.name}知識庫；全公司來源由平台管理員控管，部門管理員不可停用或修改。`}</p></footer>
+        </aside></div>}
+
+        {showPrompts && <div className="prompt-drawer-backdrop" onMouseDown={() => setShowPrompts(false)}><aside className="prompt-drawer" onMouseDown={(event) => event.stopPropagation()}>
+          <header><div><span>⌘</span><div><strong>Prompt 範本</strong><small>儲存一次，之後一鍵套用或輸入 / 指令</small></div></div><button onClick={() => setShowPrompts(false)} aria-label="關閉 Prompt 範本">×</button></header>
+          <div className="prompt-drawer-tools"><label><span>⌕</span><input value={promptSearch} onChange={(event) => setPromptSearch(event.target.value)} placeholder="搜尋名稱或 / 指令…" /></label><button onClick={() => setCreatingPrompt(true)}>＋ 新增 Prompt</button></div>
+          {creatingPrompt && <section className="prompt-create-form"><div><strong>新增 Prompt</strong><button onClick={() => setCreatingPrompt(false)}>×</button></div><label>名稱<input value={newPrompt.name} onChange={(event) => setNewPrompt((current) => ({ ...current, name: event.target.value }))} placeholder="例如：會議紀錄整理" /></label><label>指令<input value={newPrompt.command} onChange={(event) => setNewPrompt((current) => ({ ...current, command: event.target.value }))} placeholder="/meeting" /></label><label>使用範圍<select value={newPrompt.scope} onChange={(event) => setNewPrompt((current) => ({ ...current, scope: event.target.value as SavedPrompt["scope"] }))}><option>個人</option><option>部門共用</option><option>全公司共用</option></select></label><label>Prompt 內容<textarea value={newPrompt.content} onChange={(event) => setNewPrompt((current) => ({ ...current, content: event.target.value }))} placeholder="輸入要重複使用的完整指令，也可預留 {{變數}}…" /></label><button className="prompt-save" disabled={!newPrompt.name.trim() || !newPrompt.command.trim() || !newPrompt.content.trim()} onClick={savePrompt}>儲存 Prompt</button></section>}
+          <div className="prompt-list">
+            {visiblePrompts.map((prompt) => <article key={prompt.id}><div className="prompt-card-top"><span>{prompt.scope === "個人" ? "我" : prompt.scope === "部門共用" ? department.short : "全"}</span><div><strong>{prompt.name}</strong><code>{prompt.command}</code></div><em className={prompt.scope === "個人" ? "personal" : prompt.scope === "部門共用" ? "department" : "company"}>{prompt.scope}</em></div><p>{prompt.content}</p><div><small>支援變數與版本紀錄</small><button onClick={() => applyPrompt(prompt)}>套用到對話 →</button></div></article>)}
+            {visiblePrompts.length === 0 && <div className="prompt-empty">找不到符合的 Prompt</div>}
+          </div>
+          <footer><span>提示</span><p>也可以在輸入框直接輸入 <code>/summary</code> 等指令執行已儲存 Prompt。</p></footer>
+        </aside></div>}
+      </main>
+    </div>
+  );
+}
+
+function KnowledgeComposer({ input, setInput, submitQuestion, onOpenPrompts, prompts, knowledgeCount, compact = false }: { input: string; setInput: (value: string) => void; submitQuestion: (value?: string) => void; onOpenPrompts: () => void; prompts: SavedPrompt[]; knowledgeCount: number; compact?: boolean }) {
+  const [activePromptIndex, setActivePromptIndex] = useState(0);
+  const [dismissedValue, setDismissedValue] = useState("");
+  const slashQuery = input.trim().toLowerCase();
+  const slashMode = /^\/[^\s]*$/.test(slashQuery) && dismissedValue !== input;
+  const matchingPrompts = slashMode ? prompts.filter((prompt) => `${prompt.command} ${prompt.name}`.toLowerCase().includes(slashQuery.slice(1))) : [];
+  const safeActiveIndex = matchingPrompts.length ? Math.min(activePromptIndex, matchingPrompts.length - 1) : 0;
+
+  function choosePrompt(prompt: SavedPrompt) {
+    setInput(prompt.content);
+    setActivePromptIndex(0);
+    setDismissedValue("");
+  }
+
+  return <form className={`knowledge-composer ${compact ? "compact" : ""}`} onSubmit={(event) => { event.preventDefault(); submitQuestion(); }}>
+    {slashMode && <div className="slash-prompt-menu" role="listbox" aria-label="可用 Prompt">
+      <header><span>⌘</span><div><strong>可用的 Prompt</strong><small>{slashQuery === "/" ? `顯示全部 ${matchingPrompts.length} 個範本` : `依「${slashQuery}」篩選出 ${matchingPrompts.length} 個`}</small></div><kbd>↑↓ 選擇・Enter 套用</kbd></header>
+      <div>{matchingPrompts.map((prompt, index) => <button type="button" role="option" aria-selected={safeActiveIndex === index} className={safeActiveIndex === index ? "active" : ""} key={prompt.id} onMouseDown={(event) => { event.preventDefault(); choosePrompt(prompt); }} onMouseEnter={() => setActivePromptIndex(index)}><span>{prompt.scope === "個人" ? "我" : prompt.scope === "部門共用" ? "部" : "全"}</span><div><strong>{prompt.command}</strong><small>{prompt.name}</small></div><em>{prompt.scope}</em><i>↵</i></button>)}</div>
+      {matchingPrompts.length === 0 && <p>找不到相符的 Prompt，請換一個關鍵字或開啟範本庫。</p>}
+      <footer><button type="button" onMouseDown={(event) => { event.preventDefault(); onOpenPrompts(); }}>管理所有 Prompt →</button></footer>
+    </div>}
+    <textarea value={input} onChange={(event) => { setInput(event.target.value); setActivePromptIndex(0); setDismissedValue(""); }} onKeyDown={(event) => {
+      if (slashMode && matchingPrompts.length) {
+        if (event.key === "ArrowDown") { event.preventDefault(); setActivePromptIndex((value) => (value + 1) % matchingPrompts.length); return; }
+        if (event.key === "ArrowUp") { event.preventDefault(); setActivePromptIndex((value) => (value - 1 + matchingPrompts.length) % matchingPrompts.length); return; }
+        if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); choosePrompt(matchingPrompts[safeActiveIndex]); return; }
+      }
+      if (event.key === "Escape" && slashMode) { event.preventDefault(); setDismissedValue(input); return; }
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitQuestion(); }
+    }} placeholder="今天我能為您查詢什麼？輸入 / 可使用已儲存 Prompt" aria-label="輸入知識庫問題" aria-expanded={slashMode} />
+    <div><span><button type="button" aria-label="加入附件">＋</button><button type="button" onClick={onOpenPrompts} aria-label="開啟 Prompt 範本">⌘</button><small>已自動連接 {knowledgeCount} 個知識庫・輸入 / 搜尋 Prompt</small></span><button className="knowledge-send" type="submit" disabled={!input.trim()} aria-label="送出問題">↑</button></div>
+  </form>;
+}
+
+function QuoteWorkspace({ onBack }: { onBack: () => void }) {
+  const [section, setSection] = useState<"app" | "guide" | "history">("app");
+  const [projectCode, setProjectCode] = useState("");
+  const [quantityRanges, setQuantityRanges] = useState("2, 10, 20, 50, 100");
+  const [files, setFiles] = useState<File[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [attempted, setAttempted] = useState(false);
+  const [generated, setGenerated] = useState(false);
+
+  const canExport = projectCode.trim().length > 0 && files.length > 0;
+
+  function addFiles(incoming: FileList | null) {
+    if (!incoming) return;
+    setFiles((current) => {
+      const merged = [...current];
+      Array.from(incoming).forEach((file) => {
+        if (!merged.some((item) => item.name === file.name && item.size === file.size)) merged.push(file);
+      });
+      return merged;
+    });
+    setGenerated(false);
+  }
+
+  function buildComparison() {
+    setAttempted(true);
+    if (!canExport) return;
+    setGenerated(true);
+  }
+
+  return (
+    <div className="quote-app">
+      <div className="quote-accent" />
+      <aside className="quote-sidebar">
+        <button className="quote-close" onClick={onBack} aria-label="返回工具中心">×</button>
+        <nav aria-label="採購報價工具功能">
+          <button className={section === "app" ? "active" : ""} onClick={() => setSection("app")}><span>價</span>採購報價匯整</button>
+          <button className={section === "guide" ? "active" : ""} onClick={() => setSection("guide")}><span>?</span>使用說明</button>
+          <button className={section === "history" ? "active" : ""} onClick={() => setSection("history")}><span>時</span>歷史查價</button>
+        </nav>
+        <div className="quote-local-note"><span>✓</span><div><strong>本機安全執行</strong><small>報價檔不會上傳外部雲端</small></div></div>
+      </aside>
+
+      <main className="quote-main">
+        <header className="quote-top-actions"><button onClick={onBack}>返回 WorkHub</button><button aria-label="更多選項">⋮</button></header>
+
+        {section === "app" && (
+          <div className="quote-content">
+            <section className="quote-intro">
+              <p className="eyebrow">PURCHASE QUOTATION CONSOLIDATOR</p>
+              <h1>採購報價匯整工具</h1>
+              <p>把廠商雜亂的報價檔自動彙整成統一格式的比較表 <span>｜</span> 本機執行不上雲</p>
+            </section>
+
+            <section className="quote-form" aria-label="建立採購報價比較表">
+              <div className="quote-field-row">
+                <label htmlFor="project-code">專案號碼<small>必填</small></label>
+                <div>
+                  <input id="project-code" value={projectCode} onChange={(event) => { setProjectCode(event.target.value); setGenerated(false); }} placeholder="輸入採購案編號，例如 RFQ-2025-001" aria-invalid={attempted && !projectCode.trim()} />
+                  {attempted && !projectCode.trim() && <p className="quote-error">△ 必填，未填寫無法匯出比較表</p>}
+                </div>
+                <button className="quote-export" disabled={!canExport} onClick={buildComparison}>匯出比較表</button>
+              </div>
+
+              <div className="quote-field-row quantity-row">
+                <label htmlFor="quantity-ranges">數量區間</label>
+                <div><input id="quantity-ranges" value={quantityRanges} onChange={(event) => { setQuantityRanges(event.target.value); setGenerated(false); }} aria-describedby="quantity-help" /><p id="quantity-help">以逗號分隔，匯整時會依各數量級距比較單價。</p></div>
+                <span />
+              </div>
+
+              <div className="quote-divider" />
+
+              <div className="quote-upload-row">
+                <label
+                  className={`quote-dropzone ${dragging ? "dragging" : ""}`}
+                  onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={(event) => { event.preventDefault(); setDragging(false); addFiles(event.dataTransfer.files); }}
+                >
+                  <input type="file" multiple accept=".xlsx,.xls,.doc,.docx,.pdf,.eml,.msg" onChange={(event) => addFiles(event.target.files)} />
+                  <span className="quote-upload-icon">↥</span>
+                  <div><strong>將報價單檔案拖曳到此處</strong><p>或點擊選擇檔案・單檔上限 200MB</p><small>XLSX、XLS、DOC、DOCX、PDF、EML、MSG</small></div>
+                </label>
+                <button className="quote-clear" disabled={files.length === 0} onClick={() => { setFiles([]); setGenerated(false); }}>↻ 清空重來</button>
+              </div>
+
+              {files.length > 0 && (
+                <div className="quote-file-list">
+                  <div><strong>已加入 {files.length} 份報價檔</strong><small>系統將依檔名建立供應商來源，並保留原始檔案追溯資訊。</small></div>
+                  {files.map((file, index) => <span key={`${file.name}-${file.size}`}><b>{index + 1}</b><em>{file.name}</em><small>{file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : "待讀取"}</small><button onClick={() => { setFiles((current) => current.filter((item) => item !== file)); setGenerated(false); }} aria-label={`移除 ${file.name}`}>×</button></span>)}
+                </div>
+              )}
+
+              {attempted && projectCode.trim() && files.length === 0 && <p className="quote-error upload-error">△ 請至少加入一份供應商報價檔</p>}
+
+              {generated && (
+                <section className="quote-result" aria-live="polite">
+                  <div><span>✓</span><div><strong>比較表已建立</strong><p>{projectCode}・已匯整 {files.length} 份檔案・{quantityRanges.split(",").filter(Boolean).length} 個數量區間</p></div></div>
+                  <button>下載 Excel 比較表 ↓</button>
+                </section>
+              )}
+            </section>
+          </div>
+        )}
+
+        {section === "guide" && (
+          <div className="quote-secondary"><p className="eyebrow">使用說明</p><h1>三步驟完成報價匯整</h1><div className="quote-guide-grid"><article><span>1</span><strong>設定採購案</strong><p>輸入專案號碼與要比較的數量區間。</p></article><article><span>2</span><strong>加入廠商報價</strong><p>可混合上傳試算表、文件、PDF 或郵件。</p></article><article><span>3</span><strong>建立比較表</strong><p>統一料號、幣別、單價、交期與付款條件。</p></article></div></div>
+        )}
+
+        {section === "history" && (
+          <div className="quote-secondary"><p className="eyebrow">歷史查價</p><h1>近期採購案件</h1><div className="quote-history-table"><div><span>專案號碼</span><span>報價檔</span><span>建立日期</span><span>狀態</span></div><div><strong>RFQ-2026-018</strong><span>4 份</span><span>2026/08/12</span><em>已完成</em></div><div><strong>RFQ-2026-017</strong><span>3 份</span><span>2026/08/08</span><em>已完成</em></div><div><strong>RFQ-2026-016</strong><span>5 份</span><span>2026/08/03</span><em>已完成</em></div></div></div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+type ReviewStatus = "pending" | "confirmed" | "edited" | "flagged";
+
+type ReviewField = {
+  id: string;
+  marker: number;
+  label: string;
+  value: string;
+  original: string;
+  source: string;
+  group: string;
+  status: ReviewStatus;
+  sample: "S01" | "S02" | "S03" | "S04";
+  image: string;
+  imageSize: [number, number];
+  highlight: { left: number; top: number; width: number; height: number };
+};
+
+const initialReviewFields: ReviewField[] = [
+  { id: "balloon-1", marker: 1, label: "外徑尺寸", value: "70 ±0,1", original: "70 ±0,1", source: "70 ±0,1", group: "加工圖（一）・尺寸", status: "pending", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 25, top: 43, width: 25, height: 52 } },
+  { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", source: "2 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 43, top: 14, width: 29, height: 50 } },
+  { id: "balloon-2", marker: 2, label: "定位尺寸", value: "54 ±0,1", original: "54 ±0,1", source: "54 ±0,1", group: "加工圖（一）・尺寸", status: "pending", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 16, top: 43, width: 23, height: 51 } },
+  { id: "balloon-3", marker: 3, label: "定位尺寸", value: "42 ±0,1", original: "42 ±0,1", source: "42 ±0,1", group: "加工圖（一）・尺寸", status: "pending", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 24, top: 25, width: 22, height: 47 } },
+  { id: "balloon-4", marker: 4, label: "孔位尺寸", value: "28,4 ±0,05", original: "28,4 ±0,05", source: "28,4 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 43, top: 24, width: 31, height: 43 } },
+  { id: "balloon-5", marker: 5, label: "螺紋孔規格", value: "8-#4-40 UNJC 3B 深7.5 不可破孔", original: "8-#4-40 UNJC 3B 深7.5 不可破孔", source: "8-#4-40 UNJC 3B 深7.5 不可破孔", group: "加工圖（一）・螺紋", status: "pending", sample: "S03", image: "/ai-balloon-s03.png", imageSize: [445, 165], highlight: { left: 8, top: 22, width: 60, height: 48 } },
+  { id: "balloon-6", marker: 6, label: "內徑尺寸", value: "30,5 ±0,05", original: "30,5 ±0,05", source: "30,5 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S04", image: "/ai-balloon-s04.png", imageSize: [445, 195], highlight: { left: 25, top: 35, width: 39, height: 36 } },
+  { id: "balloon-7", marker: 7, label: "內徑尺寸", value: "31 ±0,05", original: "31 ±0,05", source: "31 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S04", image: "/ai-balloon-s04.png", imageSize: [445, 195], highlight: { left: 18, top: 60, width: 39, height: 36 } },
+];
+
+function VisionWorkspace({ onBack }: { onBack: () => void }) {
+  const [fields, setFields] = useState(initialReviewFields);
+  const [activeId, setActiveId] = useState(initialReviewFields[0].id);
+  const [filter, setFilter] = useState<"pending" | "confirmed" | "all">("pending");
+  const [zoom, setZoom] = useState(86);
+  const [uploadedName, setUploadedName] = useState("");
+  const [exported, setExported] = useState(false);
+  const [notice, setNotice] = useState("已載入真實報告範例：選取球標時，原圖與辨識值會同步定位");
+
+  const doneCount = fields.filter((field) => field.status === "confirmed" || field.status === "edited").length;
+  const activeField = fields.find((field) => field.id === activeId) ?? fields[0];
+  const visibleFields = fields.filter((field) => filter === "all" || (filter === "confirmed" ? field.status === "confirmed" || field.status === "edited" : field.status === "pending" || field.status === "flagged"));
+  const allDone = doneCount === fields.length;
+
+  function updateValue(id: string, value: string) {
+    setFields((current) => current.map((field) => field.id === id ? { ...field, value } : field));
+  }
+
+  function selectNext(id: string) {
+    const pending = fields.filter((field) => field.id !== id && field.status !== "confirmed" && field.status !== "edited");
+    if (pending.length) setActiveId(pending[0].id);
+  }
+
+  function confirmField(id: string) {
+    const target = fields.find((field) => field.id === id);
+    if (!target) return;
+    const wasEdited = target.value !== target.original;
+    setFields((current) => current.map((field) => field.id === id ? { ...field, status: wasEdited ? "edited" : "confirmed" } : field));
+    setNotice(wasEdited ? `已記錄「${target.label}」的人工修正` : `已確認「${target.label}」`);
+    selectNext(id);
+  }
+
+  function flagField(id: string) {
+    const target = fields.find((field) => field.id === id);
+    setFields((current) => current.map((field) => field.id === id ? { ...field, status: "flagged" } : field));
+    if (target) setNotice(`已將「${target.label}」標記為待釐清，不會進入匯出資料`);
+    selectNext(id);
+  }
+
+  function handleKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
+    const tag = (event.target as HTMLElement).tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (event.key.toLowerCase() === "a" || event.key === "Enter") {
+      event.preventDefault();
+      confirmField(activeId);
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const index = visibleFields.findIndex((field) => field.id === activeId);
+      const next = event.key === "ArrowDown" ? Math.min(index + 1, visibleFields.length - 1) : Math.max(index - 1, 0);
+      if (visibleFields[next]) setActiveId(visibleFields[next].id);
+    }
+  }
+
+  return (
+    <div className="vision-app" tabIndex={0} onKeyDown={handleKeyboard}>
+      <header className="vision-topbar">
+        <button className="vision-brand" onClick={onBack} aria-label="返回工具中心">
+          <span className="vision-brand-mark">AI</span>
+          <span><strong>AI 識圖大師</strong><small>昇達科技・加工圖球標辨識</small></span>
+        </button>
+        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>804LY0241001B0_加工檢驗規範.pdf</strong><small>加工圖（一）・局部裁圖辨識完成</small></span></div>
+        <div className="vision-actions"><button className="vision-history">版本紀錄</button><button className="vision-back" onClick={onBack}>返回工具中心</button></div>
+      </header>
+
+      <div className="vision-notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice("")} aria-label="關閉提示">×</button></div>
+
+      <main className="vision-layout">
+        <aside className="vision-queue">
+          <label className="new-drawing-button">＋ 新增工程圖<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => { const name = event.target.files?.[0]?.name ?? ""; setUploadedName(name); if (name) setNotice(`${name} 已加入辨識佇列`); }} /></label>
+          <div className="queue-heading"><strong>我的識圖任務</strong><span>5</span></div>
+          <div className="queue-filters"><button className="active">進行中 2</button><button>已完成 3</button></div>
+          <div className="drawing-list">
+            {uploadedName && <button className="drawing-item processing"><span className="file-thumb">PDF</span><span><strong>{uploadedName}</strong><small>AI 辨識處理中…</small><i><b style={{ width: "42%" }}></b></i></span></button>}
+            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>804LY0241001B0</strong><small>加工檢驗規範・加工圖（一）</small><em>待核對・{fields.length - doneCount} 項</em></span></button>
+            <button className="drawing-item"><span className="file-thumb muted">PDF</span><span><strong>SD-RF-2311_RevB</strong><small>毫米波耦合器</small><em className="reviewing">核對中・4 / 11</em></span></button>
+            <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1904_RevA</strong><small>射頻功率分配器</small><em className="complete">已完成・昨天</em></span></button>
+            <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1508_RevD</strong><small>同軸固定衰減器</small><em className="complete">已完成・08/12</em></span></button>
+          </div>
+          <div className="queue-tip"><span>⌨</span><p><strong>快速核對</strong>↑ ↓ 切換欄位、A 或 Enter 確認，減少滑鼠操作。</p></div>
+        </aside>
+
+        <section className="drawing-workspace">
+          <div className="drawing-toolbar">
+            <div><button aria-label="縮小" onClick={() => setZoom((value) => Math.max(55, value - 10))}>−</button><span>{zoom}%</span><button aria-label="放大" onClick={() => setZoom((value) => Math.min(125, value + 10))}>＋</button><i></i><button>適合頁面</button></div>
+            <div><span className="report-result">122B 全頁 39/46 → 局部覆核 44/46</span><button className="active">辨識框</button></div>
+          </div>
+          <div className="drawing-canvas">
+            <div className="drawing-sheet real-report-sheet" style={{ transform: `scale(${zoom / 100})`, aspectRatio: `${activeField.imageSize[0]} / ${activeField.imageSize[1]}` }}>
+              <img src={activeField.image} alt={`${activeField.sample} 球標 ${activeField.marker} 原圖局部`} />
+              <div className="real-source-highlight" style={{ left: `${activeField.highlight.left}%`, top: `${activeField.highlight.top}%`, width: `${activeField.highlight.width}%`, height: `${activeField.highlight.height}%` }}>
+                <span>正在核對 #{activeField.marker}</span>
+              </div>
+              <div className="match-caption"><span>{activeField.sample}・球標 {activeField.marker}</span><strong>{activeField.value}</strong><small>右側辨識值已與此框選區同步</small></div>
+            </div>
+          </div>
+          <div className="page-strip">
+            {(["S01", "S02", "S03", "S04"] as const).map((sample) => {
+              const first = fields.find((field) => field.sample === sample);
+              const markers = fields.filter((field) => field.sample === sample).map((field) => field.marker).join("/");
+              return <button key={sample} className={`sample-thumb ${activeField.sample === sample ? "active" : ""}`} onClick={() => first && setActiveId(first.id)}><i>{sample}</i><small>球標 {markers}</small></button>;
+            })}
+          </div>
+        </section>
+
+        <aside className="review-panel">
+          <div className="review-heading">
+            <div><p className="eyebrow">人工覆核</p><h2>辨識結果核對</h2></div>
+            <span>{doneCount} / {fields.length}</span>
+          </div>
+          <div className="review-progress"><i><b style={{ width: `${doneCount / fields.length * 100}%` }}></b></i><div><span>{allDone ? "全部核對完成" : `尚有 ${fields.length - doneCount} 項待核對`}</span><small>完成後才可匯出</small></div></div>
+          <div className="review-filter"><button className={filter === "pending" ? "active" : ""} onClick={() => setFilter("pending")}>待核對 <b>{fields.length - doneCount}</b></button><button className={filter === "confirmed" ? "active" : ""} onClick={() => setFilter("confirmed")}>已確認</button><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button></div>
+          {!allDone && filter === "pending" && <div className="priority-note report-note"><span>✓</span>真實報告成功案例・保留圖面逗號小數格式</div>}
+          <div className="review-list">
+            {visibleFields.map((field) => (
+              <article key={field.id} className={`review-card ${activeId === field.id ? "active" : ""} ${field.status}`} onClick={() => setActiveId(field.id)}>
+                <div className="review-card-summary"><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className="high">報告成功</em><i>{field.status === "confirmed" ? "✓" : field.status === "edited" ? "修" : field.status === "flagged" ? "!" : "›"}</i></div>
+                {activeId === field.id && (
+                  <div className="review-card-detail">
+                    <div className="source-compare"><div><span>原圖截圖</span><strong>{field.source}</strong></div><span>AI →</span><label><span>辨識結果</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => event.currentTarget.select()} /></label></div>
+                    <p><span>定位</span> {field.sample} 原圖已框選球標 {field.marker}；中間原圖、原圖讀值與 AI 結果為同一筆資料。</p>
+                    <div className="review-buttons"><button className="flag-button" onClick={(event) => { event.stopPropagation(); flagField(field.id); }}>標記問題</button><button className="confirm-button" onClick={(event) => { event.stopPropagation(); confirmField(field.id); }}>✓ 確認並下一筆 <kbd>A</kbd></button></div>
+                  </div>
+                )}
+              </article>
+            ))}
+            {visibleFields.length === 0 && <div className="review-empty"><span>✓</span><strong>這個分類沒有項目</strong><p>可切換至其他分類繼續核對。</p></div>}
+          </div>
+          <div className="review-footer">
+            <div><span>人工覆核紀錄</span><strong>{fields.filter((field) => field.status === "edited").length} 項修正・{fields.filter((field) => field.status === "flagged").length} 項待釐清</strong></div>
+            <button disabled={!allDone} className={allDone ? "ready" : ""} onClick={() => { setExported(true); setNotice("已匯出 RF 規格表，並保存辨識與人工修正紀錄"); }}>{exported ? "✓ 已匯出規格表" : allDone ? "匯出規格表 →" : `完成 ${fields.length - doneCount} 項後匯出`}</button>
+            <small>122B 全頁辨識後，以 6 倍局部裁圖逐筆覆核再匯出</small>
+          </div>
+        </aside>
+      </main>
     </div>
   );
 }
