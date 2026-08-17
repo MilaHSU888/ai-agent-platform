@@ -359,7 +359,7 @@ export default function Home() {
           <div className="breadcrumb"><button onClick={() => setView("departments")}>智匯</button><span>/</span><strong>{pageTitle}</strong></div>
           <div className="top-actions">
             <label className="account-switcher"><span>Demo 帳號</span><select value={currentAccount.id} onChange={(event) => switchAccount(event.target.value)} aria-label="切換展示帳號">{accounts.map((account) => <option value={account.id} key={account.id}>{account.name}｜{account.title}</option>)}</select></label>
-            <button className="icon-button" aria-label="說明" onClick={() => flash("這是依 Phase 2 規劃建立的知識問答平台")}>?</button>
+            <button className="icon-button" aria-label="說明" onClick={() => flash("這是保留供日後參考的舊版知識問答平台")}>?</button>
             <button className="icon-button notification" aria-label="通知" onClick={() => flash("有 3 份文件等待審核")}>♢<i>3</i></button>
           </div>
         </header>
