@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 type Department = {
   id: string;
@@ -130,13 +131,27 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-TW").format(value);
 }
 
+function getToolScenario(tool: Tool) {
+  const scenarios: Record<string, string> = {
+    meeting: "會議逐字稿、跨部門討論、決策與待辦追蹤",
+    translate: "客戶英文郵件、外文規格書、跨國往來文件",
+    document: "辦公文件轉檔、歸檔前格式統一、附件整理",
+    mail: "客戶回覆、內部通知、正式商務往來",
+    search: "查詢內規、申請流程、公司共用作業規範",
+    image: "郵件附件、報告插圖、網站素材批次瘦身",
+    vision: "RF 工程圖球標辨識、規格核對與校正匯出",
+    quote: "多家供應商報價整併、數量級距與價格比較",
+  };
+  return scenarios[tool.id] ?? (tool.type === "AI" ? "需要快速整理、比對或產生工作初稿時" : "需要快速完成日常資料處理與查詢時");
+}
+
 export default function Home() {
   const [activeDepartment, setActiveDepartment] = useState("shared");
   const [view, setView] = useState<"tools" | "analytics">("tools");
   const [query, setQuery] = useState("");
   const [type, setType] = useState<"全部" | "AI" | "非 AI">("全部");
-  const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
-  const [activeWorkspace, setActiveWorkspace] = useState<"vision" | "quote" | "knowledge" | null>(null);
+  const [activeTool, setActiveTool] = useState<Tool | null>(null);
+  const [selectedToolId, setSelectedToolId] = useState("");
 
   const department = departments.find((item) => item.id === activeDepartment) ?? departments[0];
   const visibleTools = useMemo(() => {
@@ -151,63 +166,56 @@ export default function Home() {
 
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
+  const selectedTool = visibleTools.find((tool) => tool.id === selectedToolId) ?? null;
 
-  if (activeWorkspace === "vision") {
-    return <VisionWorkspace onBack={() => setActiveWorkspace(null)} />;
+  useEffect(() => {
+    function focusSearch(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        document.getElementById("tool-search")?.focus();
+      }
+    }
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
+  if (activeTool?.id === "vision") {
+    return <VisionWorkspace onBack={() => setActiveTool(null)} />;
   }
-  if (activeWorkspace === "quote") {
-    return <QuoteWorkspace onBack={() => setActiveWorkspace(null)} />;
+  if (activeTool?.id === "quote") {
+    return <QuoteWorkspace onBack={() => setActiveTool(null)} />;
   }
-  if (activeWorkspace === "knowledge") {
-    return <KnowledgeWorkspace department={department} onBack={() => setActiveWorkspace(null)} />;
+  if (activeTool?.id.startsWith("knowledge-")) {
+    const toolDepartment = departments.find((item) => item.id === activeTool.department) ?? department;
+    return <KnowledgeWorkspace department={toolDepartment} onBack={() => setActiveTool(null)} />;
+  }
+  if (activeTool) {
+    return <GeneralToolWorkspace tool={activeTool} onBack={() => setActiveTool(null)} />;
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell branded-shell">
       <header className="topbar">
         <div className="brand" aria-label="企業工具平台首頁">
-          <div className="brand-mark"><span></span><span></span><span></span><span></span></div>
-          <div>
-            <strong>WorkHub</strong>
-            <small>企業智慧工具平台</small>
-          </div>
+          <div><strong>昇達<span>AI工具平台</span></strong><small>UMT INTERNAL TOOLS</small></div>
         </div>
         <nav className="topnav" aria-label="主要功能">
           <button className={view === "tools" ? "active" : ""} onClick={() => setView("tools")}>工具中心</button>
           <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>管理者後台</button>
         </nav>
         <div className="user-area">
-          <button className="icon-button" aria-label="通知"><span className="notification-dot"></span>◎</button>
+          <label className="department-switcher"><span>部門別</span><select value={activeDepartment} onChange={(event) => { setActiveDepartment(event.target.value); setView("tools"); setQuery(""); setSelectedToolId(""); }}>{departments.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
           <div className="avatar">王</div>
           <div className="user-copy"><strong>王大明</strong><small>資訊部・管理者</small></div>
           <span className="chevron">⌄</span>
         </div>
       </header>
 
-      <aside className="sidebar">
-        <div className="sidebar-heading"><span>部門工具</span><small>12 個分類</small></div>
-        <nav className="department-list" aria-label="部門分類">
-          {departments.map((item, index) => (
-            <button
-              key={item.id}
-              className={activeDepartment === item.id ? "active" : ""}
-              onClick={() => { setActiveDepartment(item.id); setView("tools"); setQuery(""); }}
-            >
-              <span className={`dept-icon ${index === 0 ? "shared" : ""}`}>{item.short}</span>
-              <span>{item.name}</span>
-              <small>{item.tools}</small>
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <div className="status-row"><span className="status-dot"></span><span>服務運作正常</span></div>
-          <p>最後更新 08/13 14:32</p>
-        </div>
-      </aside>
-
-      <main className="main-content">
+      <main className={`main-content ${view === "tools" ? "tool-center-main" : "admin-center-main"}`}>
         {view === "tools" ? (
-          <>
+          <div className="tool-center-stage">
+            <div className="orbit orbit-one" aria-hidden="true"></div><div className="orbit orbit-two" aria-hidden="true"></div><span className="orbit-beacon" aria-hidden="true"></span>
+            <div className="satellite-watermark" aria-hidden="true"><span className="satellite-panel left"></span><span className="satellite-body"></span><span className="satellite-panel right"></span><span className="satellite-dish"></span><span className="satellite-signal one"></span><span className="satellite-signal two"></span><i></i></div>
             <section className="welcome-row">
               <div>
                 <p className="eyebrow">工具中心</p>
@@ -217,19 +225,19 @@ export default function Home() {
               <div className="compact-metrics" aria-label="部門使用概況">
                 <div><strong>{department.count}</strong><span>部門人數</span></div>
                 <div><strong>{department.active}</strong><span>本月活躍</span></div>
-                <div><strong>{department.tools}</strong><span>可用工具</span></div>
+                <div><strong>{visibleTools.length}</strong><span>可用工具</span></div>
               </div>
             </section>
 
             <section className="toolbar" aria-label="工具搜尋與篩選">
               <label className="search-box">
                 <span>⌕</span>
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋工具名稱或用途…" aria-label="搜尋工具" />
+                <input id="tool-search" value={query} onChange={(event) => { setQuery(event.target.value); setSelectedToolId(""); }} placeholder="搜尋工具名稱或用途…" aria-label="搜尋工具" />
                 <kbd>⌘ K</kbd>
               </label>
               <div className="segmented" aria-label="工具類型">
                 {(["全部", "AI", "非 AI"] as const).map((item) => (
-                  <button key={item} className={type === item ? "active" : ""} onClick={() => setType(item)}>{item === "AI" ? "AI 工具" : item === "非 AI" ? "非 AI" : item}</button>
+                  <button key={item} className={type === item ? "active" : ""} onClick={() => { setType(item); setSelectedToolId(""); }}>{item === "AI" ? "AI 工具" : item === "非 AI" ? "非 AI" : item}</button>
                 ))}
               </div>
             </section>
@@ -241,60 +249,132 @@ export default function Home() {
 
             {visibleTools.length > 0 ? (
               <section className="tool-grid">
-                {visibleTools.map((tool) => (
-                  <article className="tool-card" key={tool.id}>
-                    <div className="tool-top">
-                      <div className={`tool-icon ${tool.color}`}>{tool.icon}</div>
-                      <div className="tool-tags"><span className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type}</span>{tool.badge && <span className="hot-tag">{tool.badge}</span>}</div>
-                    </div>
-                    <h3>{tool.name}</h3>
-                    <p>{tool.description}</p>
-                    <div className="tool-stats"><span><b>{tool.users}</b> 人使用</span><span><b>{formatNumber(tool.runs)}</b> 次執行</span></div>
-                    <button className="launch-button" onClick={() => setSelectedTool(tool)}>開啟工具 <span>→</span></button>
-                  </article>
+                {visibleTools.map((tool, index) => (
+                  <button className={`tool-card ${selectedToolId === tool.id ? "selected" : ""}`} key={tool.id} onClick={() => setSelectedToolId((current) => current === tool.id ? "" : tool.id)} aria-expanded={selectedToolId === tool.id}>
+                    <span className={`tool-icon metal-tile ${tool.color}`}><i className={`metal-symbol symbol-${index % 6}`}></i></span>
+                    <strong>{tool.name}</strong>
+                    <small>{tool.type === "AI" ? "AI" : "TOOL"}</small>
+                  </button>
                 ))}
               </section>
             ) : (
               <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
             )}
 
-            <section className="privacy-note"><span>盾</span><div><strong>資料安全由平台統一控管</strong><p>AI 請求依公司政策選用地端或核准的雲端模型；平台會記錄使用事件，不會顯示個人輸入內容給主管。</p></div></section>
-          </>
+            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small></div><button onClick={() => setActiveTool(selectedTool)}>開啟工具 <span>→</span></button></section>}
+          </div>
         ) : (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
         )}
       </main>
 
-      {selectedTool && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setSelectedTool(null)}>
-          <section className="tool-modal" role="dialog" aria-modal="true" aria-labelledby="tool-modal-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button className="modal-close" onClick={() => setSelectedTool(null)} aria-label="關閉">×</button>
-            <div className={`tool-icon ${selectedTool.color} large`}>{selectedTool.icon}</div>
-            <span className={selectedTool.type === "AI" ? "ai-tag" : "plain-tag"}>{selectedTool.type} 工具</span>
-            <h2 id="tool-modal-title">{selectedTool.name}</h2>
-            <p>{selectedTool.description}</p>
-            <div className="modal-kpis">
-              <div><strong>{selectedTool.users}</strong><span>本月使用者</span></div>
-              <div><strong>{formatNumber(selectedTool.runs)}</strong><span>執行次數</span></div>
-              <div><strong>{selectedTool.saved}h</strong><span>預估節省</span></div>
-            </div>
-            <div className="launch-panel">
-              <div><strong>準備就緒</strong><span>{selectedTool.type === "AI" ? "由 LLM Proxy 套用公司資料政策" : "使用事件將寫入統一遙測服務"}</span></div>
-              <button onClick={() => {
-                if (selectedTool.id === "vision") setActiveWorkspace("vision");
-                if (selectedTool.id === "quote") setActiveWorkspace("quote");
-                if (selectedTool.id.startsWith("knowledge-")) setActiveWorkspace("knowledge");
-                setSelectedTool(null);
-              }}>進入工具 <span>↗</span></button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }
 
-type KnowledgeMessage = { role: "user" | "assistant"; content: string; sources?: string[] };
+const toolInputHints: Record<string, string> = {
+  meeting: "貼上會議逐字稿、筆記或討論內容，系統會整理摘要、決策與待辦事項…",
+  translate: "貼上要翻譯的內容，並在開頭註明目標語言…",
+  mail: "輸入郵件情境、收件對象與希望傳達的重點…",
+  search: "輸入想查詢的公司規章、表單或流程問題…",
+};
+
+function WorkHubToolHeader({ onBack }: { onBack: () => void }) {
+  return (
+    <header className="direct-tool-topbar">
+      <button className="direct-tool-brand" onClick={onBack} aria-label="返回工具中心">
+        <span className="umt-wordmark"><strong>昇達<span>AI工具平台</span></strong><small>UMT INTERNAL TOOLS</small></span>
+      </button>
+      <button className="direct-tool-back" onClick={onBack}>← 返回工具中心</button>
+    </header>
+  );
+}
+
+function GeneralToolWorkspace({ tool, onBack }: { tool: Tool; onBack: () => void }) {
+  const [content, setContent] = useState("");
+  const [attachment, setAttachment] = useState("");
+  const [completed, setCompleted] = useState(false);
+  const canRun = Boolean(content.trim() || attachment);
+  const isMeetingTool = tool.id === "meeting";
+  const placeholder = toolInputHints[tool.id] ?? `輸入要交給「${tool.name}」處理的內容或需求…`;
+
+  function runTool() {
+    if (!canRun) return;
+    setCompleted(true);
+  }
+
+  return (
+    <div className="direct-tool-app">
+      <WorkHubToolHeader onBack={onBack} />
+
+      <main className="direct-tool-main">
+        <section className="direct-tool-intro">
+          <div className={`tool-icon metal-tile ${tool.color} large`}><i className="metal-symbol symbol-1"></i></div>
+          <div>
+            <span className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type} 工具</span>
+            <h1>{tool.name}</h1>
+            <p>{tool.description}</p>
+          </div>
+        </section>
+
+        <section className="direct-tool-workbench">
+          <div className="direct-tool-input-card">
+            <div className="direct-tool-card-heading">
+              <div><span>1</span><strong>{isMeetingTool ? "加入會議內容" : "加入處理內容"}</strong></div>
+              <small>可直接貼上文字或加入檔案</small>
+            </div>
+
+            <label className={`direct-tool-upload ${attachment ? "has-file" : ""}`}>
+              <input type="file" onChange={(event) => { setAttachment(event.target.files?.[0]?.name ?? ""); setCompleted(false); }} />
+              <span>{attachment ? "✓" : "＋"}</span>
+              <div><strong>{attachment || "加入檔案"}</strong><small>{attachment ? "檔案已準備完成，可開始執行" : "支援文件、試算表、PDF、圖片或音訊"}</small></div>
+            </label>
+
+            <label className="direct-tool-editor">
+              <span>{isMeetingTool ? "會議內容" : "工作內容"}</span>
+              <textarea value={content} onChange={(event) => { setContent(event.target.value); setCompleted(false); }} placeholder={placeholder} />
+              <small>{content.length} 字</small>
+            </label>
+
+            <button className="direct-tool-run" disabled={!canRun} onClick={runTool}>
+              {tool.type === "AI" ? "開始 AI 處理" : "開始執行"} <span>→</span>
+            </button>
+          </div>
+
+          <aside className="direct-tool-side">
+            <section>
+              <p className="eyebrow">使用提示</p>
+              <h2>打開後即可開始</h2>
+              <p>不需要再次確認或進入下一層。加入內容後直接執行，處理結果會顯示在同一頁面。</p>
+              <ul>
+                <li><span>✓</span>自動套用公司資料政策</li>
+                <li><span>✓</span>只記錄使用事件與成效</li>
+                <li><span>✓</span>主管不會看到輸入內容</li>
+              </ul>
+            </section>
+          </aside>
+        </section>
+
+        {completed && (
+          <section className="direct-tool-result" aria-live="polite">
+            <header><div><span>✓</span><div><strong>處理完成</strong><small>{tool.name} 已產生可供確認的結果</small></div></div><button onClick={() => setCompleted(false)}>重新處理</button></header>
+            {isMeetingTool ? (
+              <div className="meeting-result-grid">
+                <article><span>摘要</span><p>本次會議確認平台工具將改為點擊後直接開啟，減少一次不必要的操作。</p></article>
+                <article><span>決策</span><p>移除工具啟動前的成效彈窗，使用數據改由管理者後台統一查看。</p></article>
+                <article><span>待辦事項</span><p>完成所有工具入口檢查，並確認手機與桌面版皆可直接使用。</p></article>
+              </div>
+            ) : (
+              <div className="generic-tool-result"><span>完成</span><p>已根據你提供的內容完成「{tool.name}」處理。正式串接後，這裡會呈現實際系統輸出與下載選項。</p></div>
+            )}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+type KnowledgeMessage = { role: "user" | "assistant"; content: string };
 type SavedPrompt = { id: string; name: string; command: string; content: string; scope: "個人" | "部門共用" | "全公司共用" };
 type ManagedKnowledgeBase = { id: string; name: string; description: string; scope: "全公司" | "部門"; files: number; updated: string; attached: boolean; locked: boolean };
 
@@ -315,7 +395,7 @@ const knowledgeSuggestions: Record<string, string[]> = {
 
 function getDefaultPrompts(department: Department): SavedPrompt[] {
   return [
-    { id: "summary", name: "文件重點摘要", command: "/summary", content: "請依知識庫文件整理重點摘要，列出適用對象、辦理步驟、核准層級與注意事項，並在每項結論後標示引用來源。", scope: "全公司共用" },
+    { id: "summary", name: "文件重點摘要", command: "/summary", content: "請依目前核准的知識內容整理重點摘要，列出適用對象、辦理步驟、核准層級與注意事項。", scope: "全公司共用" },
     { id: "compare", name: "規範版本比較", command: "/compare", content: "請比較知識庫中最新版本與前一版本的差異，依新增、刪除、修改分類整理，並說明對現行作業的影響。", scope: "全公司共用" },
     { id: `department-${department.id}`, name: `${department.name}標準問答`, command: "/dept_qa", content: `請只根據${department.name}與全公司共用知識庫回答。先給結論，再列出辦理步驟、負責角色及引用文件；資料不足時請明確說明，不要自行推測。`, scope: department.id === "shared" ? "全公司共用" : "部門共用" },
     { id: "my-checklist", name: "轉成執行清單", command: "/checklist", content: "請把查詢結果轉成可勾選的執行清單，包含負責人、必要文件、完成條件與可能風險。", scope: "個人" },
@@ -335,22 +415,14 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
   const [messages, setMessages] = useState<KnowledgeMessage[]>([]);
   const [searching, setSearching] = useState(false);
   const [showPrompts, setShowPrompts] = useState(false);
-  const [showKnowledgeManager, setShowKnowledgeManager] = useState(false);
   const [creatingPrompt, setCreatingPrompt] = useState(false);
-  const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
   const [promptSearch, setPromptSearch] = useState("");
   const [promptsLoaded, setPromptsLoaded] = useState(false);
-  const [knowledgeBasesLoaded, setKnowledgeBasesLoaded] = useState(false);
   const [prompts, setPrompts] = useState<SavedPrompt[]>(() => getDefaultPrompts(department));
-  const [knowledgeBases, setKnowledgeBases] = useState<ManagedKnowledgeBase[]>(() => getDefaultKnowledgeBases(department));
   const [newPrompt, setNewPrompt] = useState({ name: "", command: "", content: "", scope: "個人" as SavedPrompt["scope"] });
-  const [newKnowledgeBase, setNewKnowledgeBase] = useState({ name: "", description: "" });
   const suggestions = knowledgeSuggestions[department.id] ?? knowledgeSuggestions.shared;
   const scopeName = department.id === "shared" ? "全公司知識庫" : `${department.name}知識庫`;
-  const sourcePrefix = department.id === "shared" ? "公司共用" : department.name;
   const visiblePrompts = prompts.filter((prompt) => !promptSearch.trim() || `${prompt.name}${prompt.command}${prompt.content}`.toLowerCase().includes(promptSearch.trim().toLowerCase()));
-  const attachedKnowledgeBases = knowledgeBases.filter((base) => base.attached);
-  const totalKnowledgeFiles = knowledgeBases.reduce((sum, base) => sum + base.files, 0);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(`workhub-prompts-${department.id}`);
@@ -364,18 +436,6 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
     if (promptsLoaded) window.localStorage.setItem(`workhub-prompts-${department.id}`, JSON.stringify(prompts));
   }, [department.id, prompts, promptsLoaded]);
 
-  useEffect(() => {
-    const saved = window.localStorage.getItem(`workhub-knowledge-${department.id}`);
-    if (saved) {
-      try { setKnowledgeBases(JSON.parse(saved) as ManagedKnowledgeBase[]); } catch { setKnowledgeBases(getDefaultKnowledgeBases(department)); }
-    }
-    setKnowledgeBasesLoaded(true);
-  }, [department]);
-
-  useEffect(() => {
-    if (knowledgeBasesLoaded) window.localStorage.setItem(`workhub-knowledge-${department.id}`, JSON.stringify(knowledgeBases));
-  }, [department.id, knowledgeBases, knowledgeBasesLoaded]);
-
   function submitQuestion(question = input) {
     const raw = question.trim();
     const matchedPrompt = prompts.find((prompt) => prompt.command.toLowerCase() === raw.toLowerCase());
@@ -383,8 +443,7 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
     if (!trimmed) return;
     setMessages((current) => [...current, { role: "user", content: trimmed }, {
       role: "assistant",
-      content: `根據「${scopeName}」目前核准且有效的文件，這個問題需要依下列原則辦理：先確認申請條件與適用對象，再依文件所列核准層級完成申請；若案件涉及跨部門，系統會同時套用全公司共用規範。以下引用來源可開啟核對原文與版本日期。`,
-      sources: [`${sourcePrefix}作業管理辦法.pdf`, `${sourcePrefix}流程與權限一覽.xlsx`],
+      content: `根據「${scopeName}」目前核准且有效的知識內容，這個問題需要依下列原則辦理：先確認申請條件與適用對象，再依核准層級完成申請；若案件涉及跨部門，系統會同時套用全公司共用規範。若現有資訊不足，系統會明確提示向管理窗口確認。`,
     }]);
     setInput("");
     setSearching(false);
@@ -403,18 +462,6 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
     setShowPrompts(false);
   }
 
-  function saveKnowledgeBase() {
-    if (!newKnowledgeBase.name.trim()) return;
-    setKnowledgeBases((current) => [...current, { id: `knowledge-${Date.now()}`, name: newKnowledgeBase.name.trim(), description: newKnowledgeBase.description.trim() || `${department.name}新增知識內容`, scope: department.id === "shared" ? "全公司" : "部門", files: 0, updated: "剛剛建立", attached: true, locked: false }]);
-    setNewKnowledgeBase({ name: "", description: "" });
-    setCreatingKnowledgeBase(false);
-  }
-
-  function addKnowledgeFiles(id: string, incoming: FileList | null) {
-    if (!incoming?.length) return;
-    setKnowledgeBases((current) => current.map((base) => base.id === id ? { ...base, files: base.files + incoming.length, updated: "剛剛更新" } : base));
-  }
-
   function newChat() {
     setMessages([]);
     setInput("");
@@ -422,9 +469,11 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
   }
 
   return (
-    <div className="knowledge-app">
+    <div className="knowledge-shell">
+      <WorkHubToolHeader onBack={onBack} />
+      <div className="knowledge-app">
       <aside className="knowledge-sidebar">
-        <header><button className="knowledge-logo" onClick={onBack}>WH</button><strong>WorkHub AI</strong><button className="knowledge-collapse" onClick={onBack} aria-label="返回工具中心">◧</button></header>
+        <header><button className="knowledge-logo" onClick={onBack}>知</button><strong>企業知識庫問答</strong><button className="knowledge-collapse" onClick={onBack} aria-label="返回工具中心">◧</button></header>
         <nav className="knowledge-main-nav">
           <button onClick={newChat}><span>✎</span>新增對話</button>
           <button className={searching ? "active" : ""} onClick={() => setSearching((value) => !value)}><span>⌕</span>搜尋</button>
@@ -432,8 +481,8 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
           <button><span>⌘</span>工作區</button>
         </nav>
         {searching && <label className="knowledge-search"><span>⌕</span><input autoFocus placeholder="搜尋歷史對話…" /></label>}
-        <div className="knowledge-group"><strong>已自動附加的知識庫</strong><button onClick={() => { setShowPrompts(false); setShowKnowledgeManager(true); }} aria-label="管理知識庫">＋</button></div>
-        <div className="knowledge-scope-card"><span className={`dept-icon ${department.id === "shared" ? "shared" : ""}`}>{department.short}</span><div><strong>{scopeName}</strong><small>{attachedKnowledgeBases.length} 個知識庫・{totalKnowledgeFiles} 份文件・無需手動選擇</small></div><i>✓</i></div>
+        <div className="knowledge-group"><strong>目前問答範圍</strong></div>
+        <div className="knowledge-scope-card"><span className={`dept-icon ${department.id === "shared" ? "shared" : ""}`}>{department.short}</span><div><strong>{scopeName}</strong><small>由管理者依部門權限預先設定</small></div><i>✓</i></div>
         <div className="knowledge-history">
           <p>近期對話</p>
           <button className="active"><span></span>{messages[0]?.content ?? "新的知識庫查詢"}<small>現在</small></button>
@@ -447,40 +496,28 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
       <main className="knowledge-main">
         <header className="knowledge-topbar">
           <div><strong>企業 AI 助理</strong><span>｜</span><b>{scopeName}查詢</b><button>⌄</button></div>
-          <div><button className={`knowledge-manage-trigger ${showKnowledgeManager ? "active" : ""}`} onClick={() => { setShowPrompts(false); setShowKnowledgeManager((value) => !value); }}><i>▣</i>管理知識庫<em>管理員</em></button><button className={`knowledge-prompt-trigger ${showPrompts ? "active" : ""}`} onClick={() => { setShowKnowledgeManager(false); setShowPrompts((value) => !value); }}><i>⌘</i>Prompt 範本<em>{prompts.length}</em></button><button title="資料政策">◌</button><button title="查詢設定">☷</button><span>王</span></div>
+          <div><button className={`knowledge-prompt-trigger ${showPrompts ? "active" : ""}`} onClick={() => setShowPrompts((value) => !value)}><i>⌘</i>Prompt 範本<em>{prompts.length}</em></button><button title="查詢設定">☷</button><button className="knowledge-back" onClick={onBack}>← 返回工具中心</button></div>
         </header>
 
         <section className={`knowledge-chat ${messages.length ? "has-messages" : ""}`}>
           {messages.length === 0 ? (
             <div className="knowledge-empty">
               <div className="knowledge-title"><span>{department.short}</span><h1>企業 AI 助理 <i>｜</i> {scopeName}查詢</h1></div>
-              <p>依您的 AD 權限搜尋核准文件，回答會附上來源與版本，方便回到原文核對。</p>
-              <div className="auto-knowledge-badge"><span>✓</span><div><strong>知識庫已自動掛載</strong><small>{attachedKnowledgeBases.map((base) => base.name).join(" ＋ ")}</small></div><em>不需再按＋選擇</em></div>
-              <KnowledgeComposer input={input} setInput={setInput} submitQuestion={submitQuestion} onOpenPrompts={() => setShowPrompts(true)} prompts={prompts} knowledgeCount={attachedKnowledgeBases.length} />
+              <p>系統會依您的部門與權限回答問題，直接輸入問題即可。</p>
+              <div className="auto-knowledge-badge"><span>✓</span><div><strong>問答範圍已由管理者設定</strong><small>系統會自動套用您有權限使用的核准知識內容</small></div><em>直接提問</em></div>
+              <KnowledgeComposer input={input} setInput={setInput} submitQuestion={submitQuestion} onOpenPrompts={() => setShowPrompts(true)} prompts={prompts} />
               <div className="knowledge-suggestions"><small>ϟ 建議問題</small>{suggestions.map((item) => <button key={item} onClick={() => submitQuestion(item)}>{item}<span>↗</span></button>)}</div>
             </div>
           ) : (
             <div className="knowledge-conversation">
-              <div className="conversation-scope"><span>{department.short}</span><div><strong>{scopeName}</strong><small>已自動附加 {attachedKnowledgeBases.length} 個知識庫，僅檢索您有權限查看的核准文件</small></div><em>自動綁定 ✓</em></div>
+              <div className="conversation-scope"><span>{department.short}</span><div><strong>{scopeName}</strong><small>已套用您的部門與權限範圍</small></div><em>權限套用 ✓</em></div>
               {messages.map((message, index) => <article key={index} className={`knowledge-message ${message.role}`}>
-                <span>{message.role === "user" ? "王" : "AI"}</span><div><strong>{message.role === "user" ? "您" : "企業 AI 助理"}</strong><p>{message.content}</p>{message.sources && <div className="knowledge-sources"><small>引用來源</small>{message.sources.map((source, sourceIndex) => <button key={source}><b>{sourceIndex + 1}</b><span>{source}</span><em>開啟原文 ↗</em></button>)}</div>}</div>
+                <span>{message.role === "user" ? "王" : "AI"}</span><div><strong>{message.role === "user" ? "您" : "企業 AI 助理"}</strong><p>{message.content}</p></div>
               </article>)}
-              <KnowledgeComposer input={input} setInput={setInput} submitQuestion={submitQuestion} onOpenPrompts={() => setShowPrompts(true)} prompts={prompts} knowledgeCount={attachedKnowledgeBases.length} compact />
+              <KnowledgeComposer input={input} setInput={setInput} submitQuestion={submitQuestion} onOpenPrompts={() => setShowPrompts(true)} prompts={prompts} compact />
             </div>
           )}
         </section>
-
-        {showKnowledgeManager && <div className="kb-manager-backdrop" onMouseDown={() => setShowKnowledgeManager(false)}><aside className="kb-manager" onMouseDown={(event) => event.stopPropagation()}>
-          <header><div><span>▣</span><div><strong>{department.name}知識庫管理</strong><small>部門管理員專用・動態調整問答資料來源</small></div></div><button onClick={() => setShowKnowledgeManager(false)} aria-label="關閉知識庫管理">×</button></header>
-          <section className="kb-auto-policy"><span>✓</span><div><strong>自動綁定規則已啟用</strong><p>同仁從「{department.name}」入口提問時，系統會自動帶入下列已啟用知識庫，不需再按＋選擇。</p></div></section>
-          <div className="kb-manager-summary"><div><strong>{knowledgeBases.length}</strong><span>知識庫</span></div><div><strong>{totalKnowledgeFiles}</strong><span>文件總數</span></div><div><strong>{attachedKnowledgeBases.length}</strong><span>自動附加</span></div></div>
-          <div className="kb-manager-actions"><div><strong>目前資料來源</strong><small>異動後套用至下一次提問</small></div><button onClick={() => setCreatingKnowledgeBase(true)}>＋ 新增知識庫</button></div>
-          {creatingKnowledgeBase && <section className="kb-create-form"><div><strong>建立{department.id === "shared" ? "全公司" : department.name}知識庫</strong><button onClick={() => setCreatingKnowledgeBase(false)}>×</button></div><label>知識庫名稱<input value={newKnowledgeBase.name} onChange={(event) => setNewKnowledgeBase((current) => ({ ...current, name: event.target.value }))} placeholder={`例如：${department.name}品質作業規範`} /></label><label>用途說明<textarea value={newKnowledgeBase.description} onChange={(event) => setNewKnowledgeBase((current) => ({ ...current, description: event.target.value }))} placeholder="說明收錄哪些文件，幫助 AI 選擇正確資料來源" /></label><button disabled={!newKnowledgeBase.name.trim()} onClick={saveKnowledgeBase}>建立並自動附加</button></section>}
-          <div className="kb-list">
-            {knowledgeBases.map((base) => <article key={base.id} className={base.attached ? "active" : "inactive"}><div className="kb-card-head"><span>{base.scope === "全公司" ? "全" : department.short}</span><div><strong>{base.name}</strong><small>{base.description}</small></div><em>{base.scope}</em></div><div className="kb-card-stats"><span><b>{base.files}</b> 份文件</span><span>更新：{base.updated}</span><i>索引完成 ✓</i></div><div className="kb-card-actions"><label className={base.locked ? "locked" : ""}><input type="checkbox" checked={base.attached} disabled={base.locked} onChange={(event) => setKnowledgeBases((current) => current.map((item) => item.id === base.id ? { ...item, attached: event.target.checked, updated: "剛剛調整" } : item))} /><span></span>{base.locked ? "公司必備來源" : base.attached ? "自動附加中" : "已停用"}</label><label className={base.locked ? "disabled" : "upload"}>＋ 新增文件<input type="file" multiple disabled={base.locked} accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md" onChange={(event) => addKnowledgeFiles(base.id, event.target.files)} /></label></div></article>)}
-          </div>
-          <footer><span>權限說明</span><p>{department.id === "shared" ? "全公司知識庫由平台管理員維護。" : `您可維護${department.name}知識庫；全公司來源由平台管理員控管，部門管理員不可停用或修改。`}</p></footer>
-        </aside></div>}
 
         {showPrompts && <div className="prompt-drawer-backdrop" onMouseDown={() => setShowPrompts(false)}><aside className="prompt-drawer" onMouseDown={(event) => event.stopPropagation()}>
           <header><div><span>⌘</span><div><strong>Prompt 範本</strong><small>儲存一次，之後一鍵套用或輸入 / 指令</small></div></div><button onClick={() => setShowPrompts(false)} aria-label="關閉 Prompt 範本">×</button></header>
@@ -493,11 +530,12 @@ function KnowledgeWorkspace({ department, onBack }: { department: Department; on
           <footer><span>提示</span><p>也可以在輸入框直接輸入 <code>/summary</code> 等指令執行已儲存 Prompt。</p></footer>
         </aside></div>}
       </main>
+      </div>
     </div>
   );
 }
 
-function KnowledgeComposer({ input, setInput, submitQuestion, onOpenPrompts, prompts, knowledgeCount, compact = false }: { input: string; setInput: (value: string) => void; submitQuestion: (value?: string) => void; onOpenPrompts: () => void; prompts: SavedPrompt[]; knowledgeCount: number; compact?: boolean }) {
+function KnowledgeComposer({ input, setInput, submitQuestion, onOpenPrompts, prompts, compact = false }: { input: string; setInput: (value: string) => void; submitQuestion: (value?: string) => void; onOpenPrompts: () => void; prompts: SavedPrompt[]; compact?: boolean }) {
   const [activePromptIndex, setActivePromptIndex] = useState(0);
   const [dismissedValue, setDismissedValue] = useState("");
   const slashQuery = input.trim().toLowerCase();
@@ -527,7 +565,7 @@ function KnowledgeComposer({ input, setInput, submitQuestion, onOpenPrompts, pro
       if (event.key === "Escape" && slashMode) { event.preventDefault(); setDismissedValue(input); return; }
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitQuestion(); }
     }} placeholder="今天我能為您查詢什麼？輸入 / 可使用已儲存 Prompt" aria-label="輸入知識庫問題" aria-expanded={slashMode} />
-    <div><span><button type="button" aria-label="加入附件">＋</button><button type="button" onClick={onOpenPrompts} aria-label="開啟 Prompt 範本">⌘</button><small>已自動連接 {knowledgeCount} 個知識庫・輸入 / 搜尋 Prompt</small></span><button className="knowledge-send" type="submit" disabled={!input.trim()} aria-label="送出問題">↑</button></div>
+    <div><span><button type="button" aria-label="加入附件">＋</button><button type="button" onClick={onOpenPrompts} aria-label="開啟 Prompt 範本">⌘</button><small>問答權限由管理者設定・輸入 / 搜尋 Prompt</small></span><button className="knowledge-send" type="submit" disabled={!input.trim()} aria-label="送出問題">↑</button></div>
   </form>;
 }
 
@@ -562,9 +600,8 @@ function QuoteWorkspace({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="quote-app">
-      <div className="quote-accent" />
+      <WorkHubToolHeader onBack={onBack} />
       <aside className="quote-sidebar">
-        <button className="quote-close" onClick={onBack} aria-label="返回工具中心">×</button>
         <nav aria-label="採購報價工具功能">
           <button className={section === "app" ? "active" : ""} onClick={() => setSection("app")}><span>價</span>採購報價匯整</button>
           <button className={section === "guide" ? "active" : ""} onClick={() => setSection("guide")}><span>?</span>使用說明</button>
@@ -574,8 +611,6 @@ function QuoteWorkspace({ onBack }: { onBack: () => void }) {
       </aside>
 
       <main className="quote-main">
-        <header className="quote-top-actions"><button onClick={onBack}>返回 WorkHub</button><button aria-label="更多選項">⋮</button></header>
-
         {section === "app" && (
           <div className="quote-content">
             <section className="quote-intro">
@@ -664,80 +699,89 @@ type ReviewField = {
   highlight: { left: number; top: number; width: number; height: number };
 };
 
+function escapeExcelXml(value: string | number) {
+  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+async function buildReviewWorkbook(fields: ReviewField[]) {
+  const response = await fetch("/ai-vision-export-template.xlsx", { cache: "no-store" });
+  if (!response.ok) throw new Error("無法載入 Excel 匯出範本");
+
+  const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
+  const replacements: Record<string, string> = {
+    "{{EXPORTED_AT}}": new Date().toLocaleString("zh-TW", { hour12: false }),
+  };
+
+  fields.forEach((field, index) => {
+    replacements[`{{MARKER_${index}}}`] = String(field.marker);
+    replacements[`{{SAMPLE_${index}}}`] = field.sample;
+    replacements[`{{GROUP_${index}}}`] = field.group;
+    replacements[`{{LABEL_${index}}}`] = field.label;
+    replacements[`{{VALUE_${index}}}`] = field.value;
+    replacements[`{{STATUS_${index}}}`] = field.status === "edited" ? "人工修正" : "人工確認";
+  });
+
+  Object.entries(files).forEach(([path, data]) => {
+    if (!path.endsWith(".xml")) return;
+    let xml = strFromU8(data);
+    Object.entries(replacements).forEach(([token, value]) => {
+      xml = xml.split(token).join(escapeExcelXml(value));
+    });
+    files[path] = strToU8(xml);
+  });
+
+  return zipSync(files, { level: 6 });
+}
+
+async function downloadReviewWorkbook(fields: ReviewField[]) {
+  const workbook = await buildReviewWorkbook(fields);
+  const workbookBuffer = workbook.buffer.slice(workbook.byteOffset, workbook.byteOffset + workbook.byteLength) as ArrayBuffer;
+  const url = URL.createObjectURL(new Blob([workbookBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "804LY0241001B0_RF規格校正結果.xlsx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 const initialReviewFields: ReviewField[] = [
-  { id: "balloon-1", marker: 1, label: "外徑尺寸", value: "70 ±0,1", original: "70 ±0,1", source: "70 ±0,1", group: "加工圖（一）・尺寸", status: "pending", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 25, top: 43, width: 25, height: 52 } },
-  { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", source: "2 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 43, top: 14, width: 29, height: 50 } },
-  { id: "balloon-2", marker: 2, label: "定位尺寸", value: "54 ±0,1", original: "54 ±0,1", source: "54 ±0,1", group: "加工圖（一）・尺寸", status: "pending", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 16, top: 43, width: 23, height: 51 } },
-  { id: "balloon-3", marker: 3, label: "定位尺寸", value: "42 ±0,1", original: "42 ±0,1", source: "42 ±0,1", group: "加工圖（一）・尺寸", status: "pending", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 24, top: 25, width: 22, height: 47 } },
-  { id: "balloon-4", marker: 4, label: "孔位尺寸", value: "28,4 ±0,05", original: "28,4 ±0,05", source: "28,4 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 43, top: 24, width: 31, height: 43 } },
-  { id: "balloon-5", marker: 5, label: "螺紋孔規格", value: "8-#4-40 UNJC 3B 深7.5 不可破孔", original: "8-#4-40 UNJC 3B 深7.5 不可破孔", source: "8-#4-40 UNJC 3B 深7.5 不可破孔", group: "加工圖（一）・螺紋", status: "pending", sample: "S03", image: "/ai-balloon-s03.png", imageSize: [445, 165], highlight: { left: 8, top: 22, width: 60, height: 48 } },
-  { id: "balloon-6", marker: 6, label: "內徑尺寸", value: "30,5 ±0,05", original: "30,5 ±0,05", source: "30,5 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S04", image: "/ai-balloon-s04.png", imageSize: [445, 195], highlight: { left: 25, top: 35, width: 39, height: 36 } },
-  { id: "balloon-7", marker: 7, label: "內徑尺寸", value: "31 ±0,05", original: "31 ±0,05", source: "31 ±0,05", group: "加工圖（一）・尺寸", status: "pending", sample: "S04", image: "/ai-balloon-s04.png", imageSize: [445, 195], highlight: { left: 18, top: 60, width: 39, height: 36 } },
+  { id: "balloon-1", marker: 1, label: "外徑尺寸", value: "70 ±0,1", original: "70 ±0,1", source: "70 ±0,1", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 25, top: 43, width: 25, height: 52 } },
+  { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", source: "2 ±0,05", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 43, top: 14, width: 29, height: 50 } },
+  { id: "balloon-2", marker: 2, label: "定位尺寸", value: "54 ±0,1", original: "54 ±0,1", source: "54 ±0,1", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 16, top: 43, width: 23, height: 51 } },
+  { id: "balloon-3", marker: 3, label: "定位尺寸", value: "42 ±0,7", original: "42 ±0,1", source: "42 ±0,1", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 24, top: 25, width: 22, height: 47 } },
+  { id: "balloon-4", marker: 4, label: "孔位尺寸", value: "28,4 ±0,5", original: "28,4 ±0,05", source: "28,4 ±0,05", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 43, top: 24, width: 31, height: 43 } },
 ];
 
 function VisionWorkspace({ onBack }: { onBack: () => void }) {
   const [fields, setFields] = useState(initialReviewFields);
   const [activeId, setActiveId] = useState(initialReviewFields[0].id);
-  const [filter, setFilter] = useState<"pending" | "confirmed" | "all">("pending");
   const [zoom, setZoom] = useState(86);
   const [uploadedName, setUploadedName] = useState("");
   const [exported, setExported] = useState(false);
-  const [notice, setNotice] = useState("已載入真實報告範例：選取球標時，原圖與辨識值會同步定位");
+  const [notice, setNotice] = useState("五筆辨識結果已全部展開；發現錯誤可直接修改，系統會自動記錄");
 
-  const doneCount = fields.filter((field) => field.status === "confirmed" || field.status === "edited").length;
   const activeField = fields.find((field) => field.id === activeId) ?? fields[0];
-  const visibleFields = fields.filter((field) => filter === "all" || (filter === "confirmed" ? field.status === "confirmed" || field.status === "edited" : field.status === "pending" || field.status === "flagged"));
-  const allDone = doneCount === fields.length;
 
   function updateValue(id: string, value: string) {
-    setFields((current) => current.map((field) => field.id === id ? { ...field, value } : field));
-  }
-
-  function selectNext(id: string) {
-    const pending = fields.filter((field) => field.id !== id && field.status !== "confirmed" && field.status !== "edited");
-    if (pending.length) setActiveId(pending[0].id);
-  }
-
-  function confirmField(id: string) {
     const target = fields.find((field) => field.id === id);
     if (!target) return;
-    const wasEdited = target.value !== target.original;
-    setFields((current) => current.map((field) => field.id === id ? { ...field, status: wasEdited ? "edited" : "confirmed" } : field));
-    setNotice(wasEdited ? `已記錄「${target.label}」的人工修正` : `已確認「${target.label}」`);
-    selectNext(id);
-  }
-
-  function flagField(id: string) {
-    const target = fields.find((field) => field.id === id);
-    setFields((current) => current.map((field) => field.id === id ? { ...field, status: "flagged" } : field));
-    if (target) setNotice(`已將「${target.label}」標記為待釐清，不會進入匯出資料`);
-    selectNext(id);
-  }
-
-  function handleKeyboard(event: React.KeyboardEvent<HTMLDivElement>) {
-    const tag = (event.target as HTMLElement).tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
-    if (event.key.toLowerCase() === "a" || event.key === "Enter") {
-      event.preventDefault();
-      confirmField(activeId);
-    }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const index = visibleFields.findIndex((field) => field.id === activeId);
-      const next = event.key === "ArrowDown" ? Math.min(index + 1, visibleFields.length - 1) : Math.max(index - 1, 0);
-      if (visibleFields[next]) setActiveId(visibleFields[next].id);
-    }
+    setFields((current) => current.map((field) => field.id === id ? { ...field, value, status: "edited" } : field));
+    setExported(false);
+    setNotice(`球標 ${target.marker} 的辨識值已修改並自動保存`);
   }
 
   return (
-    <div className="vision-app" tabIndex={0} onKeyDown={handleKeyboard}>
-      <header className="vision-topbar">
-        <button className="vision-brand" onClick={onBack} aria-label="返回工具中心">
+    <div className="vision-app">
+      <WorkHubToolHeader onBack={onBack} />
+      <header className="vision-contextbar">
+        <div className="vision-brand">
           <span className="vision-brand-mark">AI</span>
           <span><strong>AI 識圖大師</strong><small>昇達科技・加工圖球標辨識</small></span>
-        </button>
+        </div>
         <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>804LY0241001B0_加工檢驗規範.pdf</strong><small>加工圖（一）・局部裁圖辨識完成</small></span></div>
-        <div className="vision-actions"><button className="vision-history">版本紀錄</button><button className="vision-back" onClick={onBack}>返回工具中心</button></div>
+        <div className="vision-actions"><button className="vision-history">版本紀錄</button></div>
       </header>
 
       <div className="vision-notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice("")} aria-label="關閉提示">×</button></div>
@@ -749,12 +793,12 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
           <div className="queue-filters"><button className="active">進行中 2</button><button>已完成 3</button></div>
           <div className="drawing-list">
             {uploadedName && <button className="drawing-item processing"><span className="file-thumb">PDF</span><span><strong>{uploadedName}</strong><small>AI 辨識處理中…</small><i><b style={{ width: "42%" }}></b></i></span></button>}
-            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>804LY0241001B0</strong><small>加工檢驗規範・加工圖（一）</small><em>待核對・{fields.length - doneCount} 項</em></span></button>
+            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>804LY0241001B0</strong><small>加工檢驗規範・加工圖（一）</small><em>待人工確認・{fields.length} 項</em></span></button>
             <button className="drawing-item"><span className="file-thumb muted">PDF</span><span><strong>SD-RF-2311_RevB</strong><small>毫米波耦合器</small><em className="reviewing">核對中・4 / 11</em></span></button>
             <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1904_RevA</strong><small>射頻功率分配器</small><em className="complete">已完成・昨天</em></span></button>
             <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1508_RevD</strong><small>同軸固定衰減器</small><em className="complete">已完成・08/12</em></span></button>
           </div>
-          <div className="queue-tip"><span>⌨</span><p><strong>快速核對</strong>↑ ↓ 切換欄位、A 或 Enter 確認，減少滑鼠操作。</p></div>
+          <div className="queue-tip"><span>✎</span><p><strong>直接校正</strong>點選右側任一欄位即可定位原圖，有誤時直接修改辨識值。</p></div>
         </aside>
 
         <section className="drawing-workspace">
@@ -768,11 +812,11 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
               <div className="real-source-highlight" style={{ left: `${activeField.highlight.left}%`, top: `${activeField.highlight.top}%`, width: `${activeField.highlight.width}%`, height: `${activeField.highlight.height}%` }}>
                 <span>正在核對 #{activeField.marker}</span>
               </div>
-              <div className="match-caption"><span>{activeField.sample}・球標 {activeField.marker}</span><strong>{activeField.value}</strong><small>右側辨識值已與此框選區同步</small></div>
+              <div className="match-caption"><span>{activeField.sample}・球標 {activeField.marker}</span><strong>{activeField.source}</strong><small>AI 辨識：{activeField.value}・右側欄位已同步定位</small></div>
             </div>
           </div>
           <div className="page-strip">
-            {(["S01", "S02", "S03", "S04"] as const).map((sample) => {
+            {(["S01", "S02"] as const).map((sample) => {
               const first = fields.find((field) => field.sample === sample);
               const markers = fields.filter((field) => field.sample === sample).map((field) => field.marker).join("/");
               return <button key={sample} className={`sample-thumb ${activeField.sample === sample ? "active" : ""}`} onClick={() => first && setActiveId(first.id)}><i>{sample}</i><small>球標 {markers}</small></button>;
@@ -782,31 +826,34 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
 
         <aside className="review-panel">
           <div className="review-heading">
-            <div><p className="eyebrow">人工覆核</p><h2>辨識結果核對</h2></div>
-            <span>{doneCount} / {fields.length}</span>
+            <div><p className="eyebrow">直接校正</p><h2>辨識結果核對</h2></div>
+            <span>{fields.length} 筆</span>
           </div>
-          <div className="review-progress"><i><b style={{ width: `${doneCount / fields.length * 100}%` }}></b></i><div><span>{allDone ? "全部核對完成" : `尚有 ${fields.length - doneCount} 項待核對`}</span><small>完成後才可匯出</small></div></div>
-          <div className="review-filter"><button className={filter === "pending" ? "active" : ""} onClick={() => setFilter("pending")}>待核對 <b>{fields.length - doneCount}</b></button><button className={filter === "confirmed" ? "active" : ""} onClick={() => setFilter("confirmed")}>已確認</button><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button></div>
-          {!allDone && filter === "pending" && <div className="priority-note report-note"><span>✓</span>真實報告成功案例・保留圖面逗號小數格式</div>}
+          <div className="review-overview"><span>檢</span><div><strong>五筆辨識資料已全部展開</strong><small>有誤直接修改；人工確認內容後可隨時匯出 Excel。</small></div></div>
           <div className="review-list">
-            {visibleFields.map((field) => (
-              <article key={field.id} className={`review-card ${activeId === field.id ? "active" : ""} ${field.status}`} onClick={() => setActiveId(field.id)}>
-                <div className="review-card-summary"><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className="high">報告成功</em><i>{field.status === "confirmed" ? "✓" : field.status === "edited" ? "修" : field.status === "flagged" ? "!" : "›"}</i></div>
-                {activeId === field.id && (
+            {fields.map((field) => (
+                <article key={field.id} className={`review-card expanded ${activeId === field.id ? "active" : ""} ${field.status}`} onClick={() => setActiveId(field.id)}>
+                  <div className="review-card-summary"><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className="high">{field.status === "edited" ? "已修改" : "辨識完成"}</em></div>
                   <div className="review-card-detail">
-                    <div className="source-compare"><div><span>原圖截圖</span><strong>{field.source}</strong></div><span>AI →</span><label><span>辨識結果</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => event.currentTarget.select()} /></label></div>
-                    <p><span>定位</span> {field.sample} 原圖已框選球標 {field.marker}；中間原圖、原圖讀值與 AI 結果為同一筆資料。</p>
-                    <div className="review-buttons"><button className="flag-button" onClick={(event) => { event.stopPropagation(); flagField(field.id); }}>標記問題</button><button className="confirm-button" onClick={(event) => { event.stopPropagation(); confirmField(field.id); }}>✓ 確認並下一筆 <kbd>A</kbd></button></div>
+                    <div className="source-compare"><div><span>原圖標註</span><strong>{field.source}</strong></div><span>AI →</span><label><span>AI 辨識值（可直接修改）</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => { setActiveId(field.id); event.currentTarget.select(); }} aria-label={`球標 ${field.marker} AI 辨識值`} /></label></div>
+                    <p><span>定位</span>{field.sample} 原圖已框選球標 {field.marker}，中間原圖與此筆資料同步。</p>
                   </div>
-                )}
-              </article>
+                </article>
             ))}
-            {visibleFields.length === 0 && <div className="review-empty"><span>✓</span><strong>這個分類沒有項目</strong><p>可切換至其他分類繼續核對。</p></div>}
           </div>
           <div className="review-footer">
-            <div><span>人工覆核紀錄</span><strong>{fields.filter((field) => field.status === "edited").length} 項修正・{fields.filter((field) => field.status === "flagged").length} 項待釐清</strong></div>
-            <button disabled={!allDone} className={allDone ? "ready" : ""} onClick={() => { setExported(true); setNotice("已匯出 RF 規格表，並保存辨識與人工修正紀錄"); }}>{exported ? "✓ 已匯出規格表" : allDone ? "匯出規格表 →" : `完成 ${fields.length - doneCount} 項後匯出`}</button>
-            <small>122B 全頁辨識後，以 6 倍局部裁圖逐筆覆核再匯出</small>
+            <div><span>人工確認後即可匯出</span><strong>修改內容會自動保存</strong></div>
+            <button className="ready" onClick={async () => {
+              try {
+                await downloadReviewWorkbook(fields);
+                setExported(true);
+                setNotice("已匯出 Excel 規格表，並保存目前畫面上的辨識與人工修正資料");
+              } catch {
+                setExported(false);
+                setNotice("Excel 匯出失敗，請重新整理頁面後再試一次");
+              }
+            }}>{exported ? "✓ Excel 已匯出" : "確認後匯出"}</button>
+            <small>匯出內容以目前畫面上的最新資料為準。</small>
           </div>
         </aside>
       </main>
@@ -814,7 +861,91 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
   );
 }
 
+function KnowledgeAdminPanel() {
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState("shared");
+  const [knowledgeBases, setKnowledgeBases] = useState<ManagedKnowledgeBase[]>(() => getDefaultKnowledgeBases(departments[0]));
+  const [loadedDepartment, setLoadedDepartment] = useState("");
+  const [creatingKnowledgeBase, setCreatingKnowledgeBase] = useState(false);
+  const [newKnowledgeBase, setNewKnowledgeBase] = useState({ name: "", description: "" });
+  const selectedDepartment = departments.find((item) => item.id === selectedDepartmentId) ?? departments[0];
+  const enabledBases = knowledgeBases.filter((base) => base.attached);
+  const totalFiles = knowledgeBases.reduce((sum, base) => sum + base.files, 0);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(`workhub-knowledge-${selectedDepartmentId}`);
+    if (saved) {
+      try { setKnowledgeBases(JSON.parse(saved) as ManagedKnowledgeBase[]); } catch { setKnowledgeBases(getDefaultKnowledgeBases(selectedDepartment)); }
+    } else {
+      setKnowledgeBases(getDefaultKnowledgeBases(selectedDepartment));
+    }
+    setLoadedDepartment(selectedDepartmentId);
+    setCreatingKnowledgeBase(false);
+    setNewKnowledgeBase({ name: "", description: "" });
+  }, [selectedDepartmentId]);
+
+  useEffect(() => {
+    if (loadedDepartment === selectedDepartmentId) window.localStorage.setItem(`workhub-knowledge-${selectedDepartmentId}`, JSON.stringify(knowledgeBases));
+  }, [knowledgeBases, loadedDepartment, selectedDepartmentId]);
+
+  function saveKnowledgeBase() {
+    if (!newKnowledgeBase.name.trim()) return;
+    setKnowledgeBases((current) => [...current, {
+      id: `knowledge-${Date.now()}`,
+      name: newKnowledgeBase.name.trim(),
+      description: newKnowledgeBase.description.trim() || `${selectedDepartment.name}新增知識內容`,
+      scope: selectedDepartment.id === "shared" ? "全公司" : "部門",
+      files: 0,
+      updated: "剛剛建立",
+      attached: true,
+      locked: false,
+    }]);
+    setNewKnowledgeBase({ name: "", description: "" });
+    setCreatingKnowledgeBase(false);
+  }
+
+  function addKnowledgeFiles(id: string, incoming: FileList | null) {
+    if (!incoming?.length) return;
+    setKnowledgeBases((current) => current.map((base) => base.id === id ? { ...base, files: base.files + incoming.length, updated: "剛剛更新" } : base));
+  }
+
+  return (
+    <section className="knowledge-admin-view">
+      <header className="knowledge-admin-header">
+        <div><p className="eyebrow">知識治理</p><h2>知識庫管理</h2><p>集中維護全公司與各部門的問答內容；一般同仁只會看到問答介面。</p></div>
+        <label><span>管理範圍</span><select value={selectedDepartmentId} onChange={(event) => setSelectedDepartmentId(event.target.value)}>{departments.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+      </header>
+
+      <div className="knowledge-admin-summary">
+        <article><span>目前範圍</span><strong>{selectedDepartment.name}</strong><small>依入口與 AD 權限套用</small></article>
+        <article><span>知識庫</span><strong>{knowledgeBases.length}</strong><small>{enabledBases.length} 個已啟用</small></article>
+        <article><span>文件總數</span><strong>{totalFiles}</strong><small>支援 Office、PDF 與純文字</small></article>
+        <article><span>套用方式</span><strong>自動</strong><small>下一次提問立即生效</small></article>
+      </div>
+
+      <div className="knowledge-admin-layout">
+        <aside className="knowledge-admin-scopes">
+          <div><strong>權限範圍</strong><small>選擇要維護的入口</small></div>
+          <nav>{departments.map((item) => <button key={item.id} className={selectedDepartmentId === item.id ? "active" : ""} onClick={() => setSelectedDepartmentId(item.id)}><span className={`dept-icon ${item.id === "shared" ? "shared" : ""}`}>{item.short}</span><div><strong>{item.name}</strong><small>{item.id === "shared" ? "平台管理員" : "部門管理員"}</small></div><i>→</i></button>)}</nav>
+        </aside>
+
+        <div className="knowledge-admin-content">
+          <section className="knowledge-admin-policy"><span>✓</span><div><strong>前台與資料來源已分離</strong><p>一般使用者不會看到知識庫名稱、文件數或引用來源；管理者在此調整的啟用狀態與文件，會套用至下一次問答。</p></div></section>
+          <div className="knowledge-admin-actions"><div><strong>{selectedDepartment.name}知識內容</strong><small>共 {knowledgeBases.length} 個知識庫・{totalFiles} 份文件</small></div><button onClick={() => setCreatingKnowledgeBase(true)}>＋ 新增知識庫</button></div>
+
+          {creatingKnowledgeBase && <section className="kb-create-form admin-form"><div><strong>建立{selectedDepartment.id === "shared" ? "全公司" : selectedDepartment.name}知識庫</strong><button onClick={() => setCreatingKnowledgeBase(false)}>×</button></div><label>知識庫名稱<input value={newKnowledgeBase.name} onChange={(event) => setNewKnowledgeBase((current) => ({ ...current, name: event.target.value }))} placeholder={`例如：${selectedDepartment.name}品質作業規範`} /></label><label>用途說明<textarea value={newKnowledgeBase.description} onChange={(event) => setNewKnowledgeBase((current) => ({ ...current, description: event.target.value }))} placeholder="說明收錄的規範、SOP 或常見問題" /></label><button disabled={!newKnowledgeBase.name.trim()} onClick={saveKnowledgeBase}>建立並啟用</button></section>}
+
+          <div className="knowledge-admin-list">
+            {knowledgeBases.map((base) => <article key={base.id} className={base.attached ? "active" : "inactive"}><div className="kb-card-head"><span>{base.scope === "全公司" ? "全" : selectedDepartment.short}</span><div><strong>{base.name}</strong><small>{base.description}</small></div><em>{base.scope}</em></div><div className="kb-card-stats"><span><b>{base.files}</b> 份文件</span><span>更新：{base.updated}</span><i>索引完成 ✓</i></div><div className="kb-card-actions"><label className={base.locked ? "locked" : ""}><input type="checkbox" checked={base.attached} disabled={base.locked} onChange={(event) => setKnowledgeBases((current) => current.map((item) => item.id === base.id ? { ...item, attached: event.target.checked, updated: "剛剛調整" } : item))} /><span></span>{base.locked ? "公司必備內容" : base.attached ? "問答使用中" : "已停用"}</label><label className={base.locked ? "disabled" : "upload"}>＋ 新增文件<input type="file" multiple disabled={base.locked} accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md" onChange={(event) => addKnowledgeFiles(base.id, event.target.files)} /></label></div></article>)}
+          </div>
+          <footer className="knowledge-admin-footer"><span>權限說明</span><p>{selectedDepartment.id === "shared" ? "全公司知識內容由平台管理員維護，會套用至所有部門入口。" : `${selectedDepartment.name}管理員可維護部門內容；全公司必備內容僅能由平台管理員調整。`}</p></footer>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: number }) {
+  const [adminSection, setAdminSection] = useState<"usage" | "knowledge">("usage");
   const [period, setPeriod] = useState("本月");
   const [detailDepartment, setDetailDepartment] = useState("sales");
   const ranked = [...departments.slice(1)].sort((a, b) => b.active / b.count - a.active / a.count);
@@ -825,10 +956,16 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
   return (
     <div className="analytics-view">
       <section className="analytics-header">
-        <div><p className="eyebrow">管理者視角</p><h1>平台成效儀表板</h1><p>追蹤 300–350 位同仁的採用狀況與量化效益</p></div>
-        <label className="period-select"><span>期間</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option>本月</option><option>近 3 個月</option><option>本年度</option></select></label>
+        <div><p className="eyebrow">管理者視角</p><h1>{adminSection === "usage" ? "平台成效儀表板" : "知識庫管理後台"}</h1><p>{adminSection === "usage" ? "追蹤 300–350 位同仁的採用狀況與量化效益" : "集中維護全公司與各部門的問答內容、文件與啟用狀態"}</p></div>
+        {adminSection === "usage" && <label className="period-select"><span>期間</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option>本月</option><option>近 3 個月</option><option>本年度</option></select></label>}
       </section>
 
+      <nav className="admin-section-tabs" aria-label="管理者後台功能">
+        <button className={adminSection === "usage" ? "active" : ""} onClick={() => setAdminSection("usage")}><span>效</span><div><strong>使用成效</strong><small>採用率與節省工時</small></div></button>
+        <button className={adminSection === "knowledge" ? "active" : ""} onClick={() => setAdminSection("knowledge")}><span>知</span><div><strong>知識庫管理</strong><small>全公司與部門內容</small></div></button>
+      </nav>
+
+      {adminSection === "usage" ? <>
       <section className="kpi-grid">
         <article><div className="kpi-label"><span className="mini-icon blue">人</span>本月活躍使用者</div><strong>286 <small>/ 328 人</small></strong><p className="positive">↑ 12.4% <span>較上月</span></p></article>
         <article><div className="kpi-label"><span className="mini-icon violet">用</span>整體採用率</div><strong>87.2%</strong><p className="positive">↑ 5.8% <span>較上月</span></p></article>
@@ -851,7 +988,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
 
         <article className="panel type-share">
           <div className="panel-header"><div><h2>工具類型分布</h2><p>依本月執行次數</p></div></div>
-          <div className="donut" style={{ background: "conic-gradient(#615bd7 0 68%, #2fb6aa 68% 100%)" }}><div><strong>68%</strong><span>AI 工具</span></div></div>
+          <div className="donut" style={{ background: "conic-gradient(#1e2c49 0 68%, #93a5ba 68% 100%)" }}><div><strong>68%</strong><span>AI 工具</span></div></div>
           <div className="donut-legend"><div><span><i className="purple-dot"></i>AI 工具</span><strong>6,284 次</strong></div><div><span><i className="teal-dot"></i>非 AI 工具</span><strong>2,957 次</strong></div></div>
         </article>
       </section>
@@ -893,7 +1030,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
             const reach = Math.round(tool.users / detail.count * 100);
             const impact = tool.saved >= 60 ? "高效益" : tool.saved >= 30 ? "效益穩定" : reach < 45 ? "推廣中" : "持續觀察";
             return <div className="tool-detail-row" role="row" key={tool.id}>
-              <span className="detail-tool-name"><i className={`tool-icon ${tool.color}`}>{tool.icon}</i><span><strong>{tool.name}</strong><small>{tool.description}</small></span></span>
+              <span className="detail-tool-name"><i className="tool-icon metal-tile admin-tool-icon"><span className={`metal-symbol symbol-${index % 6}`}></span></i><span><strong>{tool.name}</strong><small>{tool.description}</small></span></span>
               <span><em className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type}</em></span>
               <span><b>{tool.users}</b> 人 <small>({reach}%)</small></span>
               <span><b>{formatNumber(tool.runs)}</b> 次</span>
@@ -907,6 +1044,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
       </section>
 
       <section className="measurement-note"><span>i</span><div><strong>效益估算方式</strong><p>由工具負責人設定每次成功任務的基準節省時間，平台只計入「完成」事件。實際效益可在第二階段加入任務成果與主管覆核。</p></div></section>
+      </> : <KnowledgeAdminPanel />}
     </div>
   );
 }

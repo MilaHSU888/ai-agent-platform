@@ -22,23 +22,23 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL(origin),
-    title: "WorkHub｜企業智慧工具平台",
-    description: "整合全公司與各部門小工具，追蹤平台採用率與實際效益。",
+    title: "昇達 AI 工具平台｜UMT Internal Tools",
+    description: "昇達科技全公司與各部門共用的企業 AI 工具入口。",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "WorkHub｜企業智慧工具平台",
-      description: "整合工具・衡量採用・量化效益",
+      title: "昇達 AI 工具平台｜UMT Internal Tools",
+      description: "航太級精密金屬風格的企業 AI 工具入口",
       type: "website",
       url: origin,
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "WorkHub 企業智慧工具平台" }],
+      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "昇達 AI 工具平台" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "WorkHub｜企業智慧工具平台",
-      description: "整合工具・衡量採用・量化效益",
+      title: "昇達 AI 工具平台｜UMT Internal Tools",
+      description: "航太級精密金屬風格的企業 AI 工具入口",
       images: [`${origin}/og.png`],
     },
   };
