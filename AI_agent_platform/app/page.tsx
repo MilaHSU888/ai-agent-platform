@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 type Department = {
@@ -33,12 +33,12 @@ const departments: Department[] = [
   { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 6, saved: 171 },
   { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 5, saved: 96 },
   { id: "general", name: "總務部", short: "總", count: 15, active: 11, tools: 4, saved: 72 },
-  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 8, saved: 496 },
+  { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 7, saved: 496 },
   { id: "purchase", name: "採購部", short: "採", count: 21, active: 18, tools: 5, saved: 142 },
   { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 6, saved: 318 },
   { id: "material", name: "資材部", short: "材", count: 26, active: 22, tools: 5, saved: 186 },
   { id: "mfg1", name: "製造一部", short: "一", count: 52, active: 41, tools: 5, saved: 264 },
-  { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 5, saved: 247 },
+  { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 6, saved: 247 },
   { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 6, saved: 121 },
 ];
 
@@ -70,7 +70,7 @@ const tools: Tool[] = [
   { id: "contract", name: "合約摘要助手", description: "整理行政合約重點與到期日", department: "general", type: "AI", users: 8, runs: 49, saved: 22, color: "violet", icon: "約" },
   { id: "room", name: "會議室資源管理", description: "空間、設備與借用衝突查詢", department: "general", type: "非 AI", users: 9, runs: 88, saved: 13, color: "cyan", icon: "室" },
 
-  { id: "vision", name: "AI 識圖大師", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "rd", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
+  { id: "vision", name: "AI 識圖大師", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "mfg2", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
   { id: "spec", name: "規格文件助手", description: "摘要規格、比對版本與標示變更", department: "rd", type: "AI", badge: "熱門", users: 42, runs: 318, saved: 126, color: "violet", icon: "規" },
   { id: "patent", name: "專利檢索助手", description: "整理技術關鍵字與相似專利", department: "rd", type: "AI", users: 31, runs: 186, saved: 84, color: "blue", icon: "專" },
   { id: "testreport", name: "測試報告產生器", description: "彙整測試數據與報告格式", department: "rd", type: "非 AI", users: 38, runs: 241, saved: 71, color: "green", icon: "測" },
@@ -690,7 +690,6 @@ type ReviewField = {
   label: string;
   value: string;
   original: string;
-  source: string;
   group: string;
   status: ReviewStatus;
   sample: "S01" | "S02" | "S03" | "S04";
@@ -739,7 +738,7 @@ async function downloadReviewWorkbook(fields: ReviewField[]) {
   const url = URL.createObjectURL(new Blob([workbookBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = "804LY0241001B0_RF規格校正結果.xlsx";
+  link.download = "804LY0241001B0_品質檢驗紀錄.xlsx";
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -747,22 +746,62 @@ async function downloadReviewWorkbook(fields: ReviewField[]) {
 }
 
 const initialReviewFields: ReviewField[] = [
-  { id: "balloon-1", marker: 1, label: "外徑尺寸", value: "70 ±0,1", original: "70 ±0,1", source: "70 ±0,1", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 25, top: 43, width: 25, height: 52 } },
-  { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", source: "2 ±0,05", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S01", image: "/ai-balloon-s01.png", imageSize: [430, 190], highlight: { left: 43, top: 14, width: 29, height: 50 } },
-  { id: "balloon-2", marker: 2, label: "定位尺寸", value: "54 ±0,1", original: "54 ±0,1", source: "54 ±0,1", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 16, top: 43, width: 23, height: 51 } },
-  { id: "balloon-3", marker: 3, label: "定位尺寸", value: "42 ±0,7", original: "42 ±0,1", source: "42 ±0,1", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 24, top: 25, width: 22, height: 47 } },
-  { id: "balloon-4", marker: 4, label: "孔位尺寸", value: "28,4 ±0,5", original: "28,4 ±0,05", source: "28,4 ±0,05", group: "加工圖（一）・尺寸", status: "confirmed", sample: "S02", image: "/ai-balloon-s02.png", imageSize: [445, 195], highlight: { left: 43, top: 24, width: 31, height: 43 } },
+  { id: "balloon-1", marker: 1, label: "外徑尺寸", value: "70 ±0,1", original: "70 ±0,1", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 63.7, top: 38.5, width: 7.2, height: 7.5 } },
+  { id: "balloon-2", marker: 2, label: "定位尺寸", value: "54 ±0,1", original: "54 ±0,1", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 67.6, top: 47.3, width: 7.5, height: 8.8 } },
+  { id: "balloon-3", marker: 3, label: "定位尺寸", value: "42 ±0,7", original: "42 ±0,7", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 70.7, top: 45.3, width: 7.2, height: 8.6 } },
+  { id: "balloon-4", marker: 4, label: "孔位尺寸", value: "28,4 ±0,5", original: "28,4 ±0,5", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 77.4, top: 43.2, width: 9.2, height: 8.2 } },
+  { id: "balloon-5", marker: 5, label: "螺紋孔規格", value: "8-#4-40 UNJC 3B・7.5 深", original: "8-#4-40 UNJC 3B・7.5 深", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 43.7, top: 34.3, width: 17.2, height: 7.4 } },
+  { id: "balloon-6", marker: 6, label: "定位尺寸", value: "30,5 ±0,05", original: "30,5 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 47.1, top: 44.3, width: 10.5, height: 7.1 } },
+  { id: "balloon-7", marker: 7, label: "定位尺寸", value: "31 ±0,05", original: "31 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 45.0, top: 48.4, width: 11.8, height: 7.4 } },
+  { id: "balloon-8", marker: 8, label: "通孔規格", value: "2-⌀1,6 +0,05/0・4 深", original: "2-⌀1,6 +0,05/0・4 深", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 27.0, top: 32.8, width: 14.2, height: 7.5 } },
+  { id: "balloon-9", marker: 9, label: "螺紋孔規格", value: "6-#4-40 UNJC 3B・8 深", original: "6-#4-40 UNJC 3B・8 深", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 24.0, top: 41.8, width: 16.0, height: 7.0 } },
+  { id: "balloon-10", marker: 10, label: "通孔規格", value: "3-⌀6 +0,03/0 THRU", original: "3-⌀6 +0,03/0 THRU", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 11.7, top: 20.6, width: 17.0, height: 8.3 } },
+  { id: "balloon-11", marker: 11, label: "螺紋孔規格", value: "8-M8×1.25 THRU", original: "8-M8×1.25 THRU", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 21.9, top: 15.6, width: 15.8, height: 6.2 } },
+  { id: "balloon-12", marker: 12, label: "總寬尺寸", value: "84 ±0,1", original: "84 ±0,1", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 76.7, top: 11.5, width: 12.7, height: 7.3 } },
+  { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 67.3, top: 33.4, width: 7.8, height: 7.2 } },
 ];
 
 function VisionWorkspace({ onBack }: { onBack: () => void }) {
   const [fields, setFields] = useState(initialReviewFields);
   const [activeId, setActiveId] = useState(initialReviewFields[0].id);
-  const [zoom, setZoom] = useState(86);
+  const [zoom, setZoom] = useState(60);
   const [uploadedName, setUploadedName] = useState("");
   const [exported, setExported] = useState(false);
-  const [notice, setNotice] = useState("五筆辨識結果已全部展開；發現錯誤可直接修改，系統會自動記錄");
+  const [focusRequest, setFocusRequest] = useState(0);
+  const [notice, setNotice] = useState("已載入一製程工程圖；可放大圖面，並在圖旁或右側直接修正辨識值");
+  const drawingCanvasRef = useRef<HTMLDivElement>(null);
+  const activeHighlightRef = useRef<HTMLDivElement>(null);
 
   const activeField = fields.find((field) => field.id === activeId) ?? fields[0];
+  const orderedReviewFields = useMemo(() => [...fields].sort((left, right) => left.marker - right.marker), [fields]);
+
+  useEffect(() => {
+    const canvas = drawingCanvasRef.current;
+    const highlight = activeHighlightRef.current;
+    if (!canvas || !highlight) return;
+    const frame = window.requestAnimationFrame(() => {
+      const canvasRect = canvas.getBoundingClientRect();
+      const highlightRect = highlight.getBoundingClientRect();
+      const targetCenterX = canvas.scrollLeft + highlightRect.left - canvasRect.left + highlightRect.width / 2;
+      const targetCenterY = canvas.scrollTop + highlightRect.top - canvasRect.top + highlightRect.height / 2;
+      canvas.scrollTo({
+        left: Math.max(0, targetCenterX - canvas.clientWidth / 2),
+        top: Math.max(0, targetCenterY - canvas.clientHeight / 2),
+        behavior: "auto",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeField.id, zoom, focusRequest]);
+
+  function selectReviewField(id: string) {
+    setActiveId(id);
+    setFocusRequest((current) => current + 1);
+  }
+
+  function changeZoom(update: (current: number) => number) {
+    setZoom(update);
+    setFocusRequest((current) => current + 1);
+  }
 
   function updateValue(id: string, value: string) {
     const target = fields.find((field) => field.id === id);
@@ -780,7 +819,7 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
           <span className="vision-brand-mark">AI</span>
           <span><strong>AI 識圖大師</strong><small>昇達科技・加工圖球標辨識</small></span>
         </div>
-        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>804LY0241001B0_加工檢驗規範.pdf</strong><small>加工圖（一）・局部裁圖辨識完成</small></span></div>
+        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>5.804LY0241001B0檢規.pdf</strong><small>一製程・全圖辨識完成</small></span></div>
         <div className="vision-actions"><button className="vision-history">版本紀錄</button></div>
       </header>
 
@@ -793,7 +832,7 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
           <div className="queue-filters"><button className="active">進行中 2</button><button>已完成 3</button></div>
           <div className="drawing-list">
             {uploadedName && <button className="drawing-item processing"><span className="file-thumb">PDF</span><span><strong>{uploadedName}</strong><small>AI 辨識處理中…</small><i><b style={{ width: "42%" }}></b></i></span></button>}
-            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>804LY0241001B0</strong><small>加工檢驗規範・加工圖（一）</small><em>待人工確認・{fields.length} 項</em></span></button>
+            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>804LY0241001B0</strong><small>加工檢驗規範・一製程</small><em>待人工確認・{fields.length} 項</em></span></button>
             <button className="drawing-item"><span className="file-thumb muted">PDF</span><span><strong>SD-RF-2311_RevB</strong><small>毫米波耦合器</small><em className="reviewing">核對中・4 / 11</em></span></button>
             <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1904_RevA</strong><small>射頻功率分配器</small><em className="complete">已完成・昨天</em></span></button>
             <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1508_RevD</strong><small>同軸固定衰減器</small><em className="complete">已完成・08/12</em></span></button>
@@ -803,24 +842,22 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
 
         <section className="drawing-workspace">
           <div className="drawing-toolbar">
-            <div><button aria-label="縮小" onClick={() => setZoom((value) => Math.max(55, value - 10))}>−</button><span>{zoom}%</span><button aria-label="放大" onClick={() => setZoom((value) => Math.min(125, value + 10))}>＋</button><i></i><button>適合頁面</button></div>
-            <div><span className="report-result">122B 全頁 39/46 → 局部覆核 44/46</span><button className="active">辨識框</button></div>
+            <div className="drawing-zoom-controls"><button aria-label="縮小工程圖" title="縮小工程圖" onClick={() => changeZoom((value) => Math.max(40, value - 10))}>− 縮小</button><span aria-live="polite">{zoom}%</span><button aria-label="放大工程圖" title="放大工程圖" onClick={() => changeZoom((value) => Math.min(180, value + 10))}>＋ 放大</button><button aria-label="以原始比例顯示工程圖" title="以原始比例顯示" onClick={() => changeZoom(() => 100)}>100%</button><i></i><button onClick={() => changeZoom(() => 60)}>適合頁面</button></div>
+            <div><span className="report-result">一製程・球標 1–13</span><button className="active">辨識框</button></div>
           </div>
-          <div className="drawing-canvas">
-            <div className="drawing-sheet real-report-sheet" style={{ transform: `scale(${zoom / 100})`, aspectRatio: `${activeField.imageSize[0]} / ${activeField.imageSize[1]}` }}>
-              <img src={activeField.image} alt={`${activeField.sample} 球標 ${activeField.marker} 原圖局部`} />
-              <div className="real-source-highlight" style={{ left: `${activeField.highlight.left}%`, top: `${activeField.highlight.top}%`, width: `${activeField.highlight.width}%`, height: `${activeField.highlight.height}%` }}>
-                <span>正在核對 #{activeField.marker}</span>
-              </div>
-              <div className="match-caption"><span>{activeField.sample}・球標 {activeField.marker}</span><strong>{activeField.source}</strong><small>AI 辨識：{activeField.value}・右側欄位已同步定位</small></div>
+          <div className="drawing-canvas" ref={drawingCanvasRef}>
+            <div className="drawing-sheet real-report-sheet" style={{ width: `${activeField.imageSize[0] * zoom / 100}px`, height: `${activeField.imageSize[1] * zoom / 100}px` }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={activeField.image} alt={`一製程工程圖，正在定位球標 ${activeField.marker}`} />
+              <div ref={activeHighlightRef} className="real-source-highlight" style={{ left: `calc(${activeField.highlight.left}% - 12px)`, top: `calc(${activeField.highlight.top}% - 12px)`, width: `calc(${activeField.highlight.width}% + 24px)`, height: `calc(${activeField.highlight.height}% + 24px)` }} title={`球標 ${activeField.marker} 的圖面位置`} />
+              <label className="drawing-inline-editor" style={{ left: `calc(${activeField.highlight.left}% - 30px)`, top: `${activeField.highlight.top + activeField.highlight.height / 2}%` }}>
+                <span>球標 {activeField.marker}・圖旁直接修正</span>
+                <input value={activeField.value} onChange={(event) => updateValue(activeField.id, event.target.value)} onFocus={(event) => event.currentTarget.select()} aria-label={`球標 ${activeField.marker} 圖旁修正值`} />
+              </label>
             </div>
           </div>
           <div className="page-strip">
-            {(["S01", "S02"] as const).map((sample) => {
-              const first = fields.find((field) => field.sample === sample);
-              const markers = fields.filter((field) => field.sample === sample).map((field) => field.marker).join("/");
-              return <button key={sample} className={`sample-thumb ${activeField.sample === sample ? "active" : ""}`} onClick={() => first && setActiveId(first.id)}><i>{sample}</i><small>球標 {markers}</small></button>;
-            })}
+            <button className="sample-thumb active" onClick={() => selectReviewField(fields[0].id)}><i>一製程</i><small>球標 1–13</small></button>
           </div>
         </section>
 
@@ -829,14 +866,13 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
             <div><p className="eyebrow">直接校正</p><h2>辨識結果核對</h2></div>
             <span>{fields.length} 筆</span>
           </div>
-          <div className="review-overview"><span>檢</span><div><strong>五筆辨識資料已全部展開</strong><small>有誤直接修改；人工確認內容後可隨時匯出 Excel。</small></div></div>
+          <div className="review-overview"><span>檢</span><div><strong>一製程 13 筆辨識資料已全部展開</strong><small>右側只顯示目前結果；有誤可在圖旁或本欄直接修改。</small></div></div>
           <div className="review-list">
-            {fields.map((field) => (
-                <article key={field.id} className={`review-card expanded ${activeId === field.id ? "active" : ""} ${field.status}`} onClick={() => setActiveId(field.id)}>
-                  <div className="review-card-summary"><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className="high">{field.status === "edited" ? "已修改" : "辨識完成"}</em></div>
+            {orderedReviewFields.map((field) => (
+                <article key={field.id} className={`review-card expanded ${activeId === field.id ? "active" : ""} ${field.status}`}>
+                  <button type="button" className="review-card-summary" onClick={() => selectReviewField(field.id)}><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className="high">{field.status === "edited" ? "已修改" : "辨識完成"}</em></button>
                   <div className="review-card-detail">
-                    <div className="source-compare"><div><span>原圖標註</span><strong>{field.source}</strong></div><span>AI →</span><label><span>AI 辨識值（可直接修改）</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => { setActiveId(field.id); event.currentTarget.select(); }} aria-label={`球標 ${field.marker} AI 辨識值`} /></label></div>
-                    <p><span>定位</span>{field.sample} 原圖已框選球標 {field.marker}，中間原圖與此筆資料同步。</p>
+                    <label className="single-result-field"><span>目前辨識結果（可直接修改）</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => { selectReviewField(field.id); event.currentTarget.select(); }} aria-label={`球標 ${field.marker} 目前辨識結果`} /></label>
                   </div>
                 </article>
             ))}
