@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import customerReviewRows from "./customer-review.json";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
@@ -925,6 +925,13 @@ function VisionReviewWorkspace({ onBack }: { onBack: () => void }) {
     }
   }
 
+  function confirmOnEnter(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && !event.repeat) {
+      event.preventDefault();
+      confirmAndAdvance();
+    }
+  }
+
   async function exportReview() {
     if (exporting) return;
     if (!allConfirmed) { setNotice("請完成全部製程的每一筆球標確認後，再匯出整份 Excel"); return; }
@@ -984,14 +991,14 @@ function VisionReviewWorkspace({ onBack }: { onBack: () => void }) {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={activeField.image} alt={`${processPages[currentPage - 1].name}工程圖，正在定位球標 ${activeField.marker}`} />
               <div ref={activeHighlightRef} className={`real-source-highlight ${activeField.unresolved ? "unresolved-highlight" : ""}`} style={{ left: `calc(${activeField.highlight.left}% - 12px)`, top: `calc(${activeField.highlight.top}% - 12px)`, width: `calc(${activeField.highlight.width}% + 24px)`, height: `calc(${activeField.highlight.height}% + 24px)` }} title={`球標 ${activeField.marker} 的圖面位置`} />
-              <div className="drawing-inline-editor" onKeyDown={(event) => { if (event.target instanceof HTMLInputElement && event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && !event.repeat) { event.preventDefault(); confirmAndAdvance(); } }} style={{ left: `max(390px, calc(${activeField.highlight.left}% - 30px))`, top: `calc(${activeField.highlight.top + activeField.highlight.height}% + 38px)` }}>
+              <div className="drawing-inline-editor" style={{ left: `max(390px, calc(${activeField.highlight.left}% - 30px))`, top: `calc(${activeField.highlight.top + activeField.highlight.height}% + 38px)` }}>
                 <label htmlFor="vision-inline-value">球標 {activeField.marker}・圖旁直接修正</label><span>{activeField.label} · {confirmedIds.includes(activeId) ? "已確認" : "待確認"}</span>
                 <div className="drawing-spec-grid"><span>類型</span><span>規格值</span><span>＋公差</span><span>－公差</span>
                   {activeField.details?.map((detail, index) => <div className="drawing-spec-row" key={detail.row}>
-                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項類型`} value={detail.unit} onChange={(event) => updateDetail(index, "unit", event.target.value)} />
-                    <input ref={index === 0 ? editorRef : undefined} id={index === 0 ? "vision-inline-value" : undefined} aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項規格`} value={detail.value} onChange={(event) => updateDetail(index, "value", event.target.value)} onFocus={(event) => event.currentTarget.select()} />
-                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項上公差`} value={detail.upper} onChange={(event) => updateDetail(index, "upper", event.target.value)} />
-                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項下公差`} value={detail.lower} onChange={(event) => updateDetail(index, "lower", event.target.value)} />
+                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項類型`} value={detail.unit} onChange={(event) => updateDetail(index, "unit", event.target.value)} onKeyDown={confirmOnEnter} />
+                    <input ref={index === 0 ? editorRef : undefined} id={index === 0 ? "vision-inline-value" : undefined} aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項規格`} value={detail.value} onChange={(event) => updateDetail(index, "value", event.target.value)} onFocus={(event) => event.currentTarget.select()} onKeyDown={confirmOnEnter} />
+                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項上公差`} value={detail.upper} onChange={(event) => updateDetail(index, "upper", event.target.value)} onKeyDown={confirmOnEnter} />
+                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項下公差`} value={detail.lower} onChange={(event) => updateDetail(index, "lower", event.target.value)} onKeyDown={confirmOnEnter} />
                   </div>)}
                 </div><button className="drawing-confirm-button" type="button" onClick={confirmAndAdvance}>✓ 確認此球標，前往下一個</button><small>Enter 確認 · {activeField.details?.length} 項規格對應客戶 Excel</small>
               </div>
