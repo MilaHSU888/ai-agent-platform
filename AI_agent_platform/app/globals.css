@@ -269,7 +269,7 @@ button { color: inherit; }
 .vision-notice:empty { display:none; }
 .vision-notice > span { width:17px; height:17px; display:grid; place-items:center; color:white; background:#3bb68e; border-radius:50%; font-size:8px; }
 .vision-notice button { margin-left:4px; border:0; color:#75a091; background:transparent; cursor:pointer; }
-.vision-layout { height:calc(100vh - 136px); min-height:0; display:grid; grid-template-columns:238px minmax(460px,1fr) 430px; }
+.vision-layout { height:calc(100vh - 136px); min-height:0; display:grid; grid-template-columns:238px minmax(0,1fr); }
 .vision-layout > * { min-height:0; }
 .vision-queue { min-width:0; display:flex; flex-direction:column; padding:16px 12px 12px; background:#f8f9fb; border-right:1px solid #d9dce5; }
 .new-drawing-button { height:38px; display:flex; align-items:center; justify-content:center; color:white; background:var(--vision-blue); border-radius:8px; font-size:10px; font-weight:900; cursor:pointer; box-shadow:0 5px 12px rgba(77,95,223,.2); }
@@ -300,7 +300,7 @@ button { color: inherit; }
 .queue-tip > span { font-size:13px; }
 .queue-tip p { margin:0; font-size:8px; line-height:1.5; }
 .queue-tip strong { display:block; color:#4e5770; font-size:8px; }
-.drawing-workspace { min-width:0; min-height:0; height:100%; display:grid; grid-template-rows:44px minmax(0,1fr) 73px; overflow:hidden; background:#dfe2e9; }
+.drawing-workspace { min-width:0; min-height:0; height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto; overflow:hidden; background:#dfe2e9; }
 .drawing-toolbar { display:flex; align-items:center; justify-content:space-between; padding:0 13px; background:#f9fafb; border-bottom:1px solid #d6d9e1; }
 .drawing-toolbar > div { display:flex; align-items:center; gap:4px; }
 .drawing-toolbar button { height:27px; min-width:27px; padding:0 8px; border:1px solid transparent; border-radius:5px; color:#667084; background:transparent; font-size:8px; font-weight:700; cursor:pointer; }
@@ -557,7 +557,7 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
   .quote-field-row { grid-template-columns:110px minmax(0,1fr) 128px; gap:12px; }
   .quote-upload-row { grid-template-columns:minmax(0,1fr) 128px; margin-left:122px; }
   .quote-file-list,.quote-error.upload-error,.quote-result { margin-left:122px; margin-right:140px; }
-  .vision-layout { grid-template-columns:190px minmax(420px,1fr) 370px; }
+  .vision-layout { grid-template-columns:190px minmax(0,1fr); }
   .vision-contextbar { grid-template-columns:1fr auto; }.vision-file-meta { display:none; }
   .knowledge-admin-layout { grid-template-columns:210px minmax(0,1fr); }
   .knowledge-admin-list { grid-template-columns:1fr; }
@@ -952,3 +952,71 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
   .satellite-watermark { opacity:1; }
   .orbit { clip-path:none; }
 }
+
+/* 圖面內逐筆確認 */
+.vision-excel-export { padding:10px 16px; border:1px solid #96ddc1; border-radius:7px; color:#123e31; background:#d9f7e9; font-size:14px; font-weight:700; white-space:nowrap; }
+.vision-excel-export:disabled { opacity:.6; cursor:wait; }
+.drawing-inline-editor { width:260px; transform:translate(-100%,0); padding:10px; gap:7px; }
+.drawing-inline-editor::after { top:-22px; right:20px; width:0; height:20px; border-top:0; border-left:2px solid #6670d8; }
+.drawing-inline-editor label { font-size:14px; font-weight:700; }
+.drawing-inline-editor span,.drawing-inline-editor small { font-size:12px; white-space:normal; }
+.drawing-inline-input { display:flex; gap:7px; }
+.drawing-inline-editor input { min-width:0; height:38px; font-size:16px; }
+.drawing-inline-input button { flex:0 0 38px; border:0; border-radius:5px; background:#34664f; color:#fff; font-size:22px; }
+.vision-marker-strip { height:auto; min-height:76px; display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:10px 16px; }
+.vision-marker-strip > strong { font-size:14px; white-space:nowrap; }
+.vision-marker-buttons { display:flex; flex-wrap:wrap; gap:6px; }
+.vision-marker-buttons button { min-width:36px; height:36px; border:1px solid #c5cbd8; border-radius:6px; background:white; font-size:14px; }
+.vision-marker-buttons button.active { color:white; background:#505ad0; border-color:#505ad0; }
+.vision-marker-buttons span { margin-left:3px; }
+.vision-marker-strip .sample-thumb { margin-left:auto; }
+.vision-excel-export:focus-visible,.vision-marker-buttons button:focus-visible,.drawing-inline-input button:focus-visible { outline:3px solid #8d9bff; outline-offset:3px; }
+@media(max-width:760px) { .vision-contextbar { padding:8px 12px; height:auto; min-height:60px; flex-wrap:wrap; gap:8px; } .vision-file-meta { display:none; } .vision-actions { margin-left:auto; } .drawing-toolbar { flex-wrap:wrap; height:auto; gap:8px; padding:8px; } }
+
+.vision-marker-buttons button.confirmed { color:#166534; background:#dcfce7; border-color:#228447; }
+.vision-marker-buttons button.confirmed.active { color:#fff; background:#166534; border-color:#166534; box-shadow:0 0 0 2px #fff,0 0 0 4px #505ad0; }
+.vision-marker-buttons button.edited { color:#991b1b; background:#fee2e2; border-color:#dc2626; }
+.vision-marker-buttons button.edited.active { color:#fff; background:#991b1b; border-color:#991b1b; box-shadow:0 0 0 2px #fff,0 0 0 4px #505ad0; }
+.vision-confirmed-legend { color:#166534; font-size:14px; white-space:nowrap; }
+.vision-edited-legend { color:#991b1b; font-size:14px; white-space:nowrap; }
+
+/* 多頁 PDF 製程核對 */
+.vision-layout { grid-template-columns:250px minmax(0,1fr); }
+.vision-queue { overflow-y:auto; }
+.process-document { display:grid; gap:10px; padding:20px 16px; border-bottom:1px solid #d8dfea; }
+.process-document strong { font-size:16px; }.process-document small { font-size:12px; overflow-wrap:anywhere; color:#536078; }.process-document b { font-size:20px; color:#243755; }
+.process-document progress,.process-page progress { width:100%; height:7px; accent-color:#228447; }
+.process-page-list { display:grid; gap:12px; padding:16px; }
+.process-page { display:grid; gap:9px; padding:10px; text-align:left; border:1px solid #c9d2df; border-radius:9px; background:white; color:#26334a; }
+.process-page.active { border:2px solid #505ad0; padding:9px; background:#f2f4ff; }
+.process-page img { width:100%; aspect-ratio:1800/1273; object-fit:contain; border:1px solid #e2e6ed; }
+.process-page strong { display:flex; justify-content:space-between; font-size:16px; }.process-page strong span,.process-page small { font-size:12px; font-weight:400; }
+.process-source-note { padding:0 16px 20px; font-size:12px; line-height:1.7; color:#725219; }
+.vision-marker-strip { max-height:180px; overflow-y:auto; align-content:start; }
+.vision-marker-buttons { flex:1 1 65%; }
+.process-navigation { display:flex; align-items:center; gap:12px; margin-left:auto; font-size:14px; }
+.process-navigation button { padding:8px 10px; border:1px solid #c5cbd8; border-radius:5px; background:white; color:#243755; font-size:14px; }
+.process-navigation button:disabled { opacity:.4; }
+.unresolved-highlight { visibility:hidden; }
+.vision-excel-export:disabled { cursor:not-allowed; }
+@media(max-width:760px) { .vision-layout { grid-template-columns:1fr; } .vision-queue { display:block; } .process-document,.process-source-note { display:none; } .process-page-list { display:flex; padding:8px; }.process-page { flex:1; }.process-page img,.process-page progress { display:none; } .drawing-workspace { height:720px; }.vision-marker-strip { max-height:220px; } }
+
+.drawing-inline-editor { width:370px; }
+.drawing-spec-grid { display:grid; grid-template-columns:60px minmax(0,1fr) 60px 60px; gap:5px; }
+.drawing-spec-row { display:contents; }
+.drawing-spec-grid input { padding:0 5px; font-size:14px; }
+.drawing-confirm-button { padding:9px; border:0; border-radius:5px; background:#34664f; color:white; font-size:14px; }
+
+/* PDF 匯入入口 */
+.vision-import-app { overflow:auto; }
+.vision-import-main { max-width:1440px; margin:0 auto; padding:26px 32px 32px; }
+.vision-flow { display:flex; gap:32px; list-style:none; padding:0; margin:0 0 24px; color:#64748b; font-size:14px; }
+.vision-flow li { display:flex; align-items:center; gap:9px; }.vision-flow b { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:#e4eaf2; }.vision-flow .active { color:#243755; font-weight:700; }.vision-flow .active b { background:#243755; color:#fff; }
+.vision-file-input { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.vision-upload-card { min-height:430px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:40px 24px; text-align:center; border:2px dashed #a6b7ce; border-radius:14px; background:#f8fbff; }
+.vision-upload-card.dragging { border-color:#505ad0; background:#eef0ff; }.vision-upload-symbol { font-size:40px; color:#344968; }.vision-upload-card h1 { margin:0; font-size:26px; color:#243755; }.vision-upload-card p { margin:0; font-size:16px; color:#536078; }.vision-upload-card small { font-size:14px; color:#536078; }
+.vision-import-primary,.vision-import-secondary { padding:12px 20px; border-radius:7px; border:1px solid #243755; font-size:14px; cursor:pointer; }.vision-import-primary { color:white; background:#243755; }.vision-import-secondary { background:white; color:#243755; border-color:#b9c5d6; }.vision-import-primary:disabled,.vision-import-secondary:disabled { opacity:.5; cursor:wait; }
+.vision-example-link { display:block; margin:18px auto 0; border:0; padding:8px; background:transparent; color:#526582; font-size:14px; text-decoration:underline; }
+.vision-import-error { padding:14px 18px; margin-bottom:16px; background:#fff3e0; border:1px solid #e1bf87; color:#76470c; border-radius:7px; font-size:14px; }
+.vision-pdf-preview { overflow:hidden; border:1px solid #c5cfdd; border-radius:12px; background:#fff; }.vision-pdf-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:18px; }.vision-pdf-heading > div:first-child { display:grid; gap:6px; min-width:0; }.vision-pdf-heading strong { font-size:16px; overflow-wrap:anywhere; }.vision-pdf-heading small { font-size:14px; color:#64748b; }.vision-pdf-heading > div:last-child { display:flex; gap:10px; flex-shrink:0; }.vision-pdf-preview iframe { display:block; border:0; width:100%; height:calc(100vh - 360px); min-height:400px; background:#dfe2e9; }.vision-pdf-help { display:flex; justify-content:space-between; gap:12px; padding:12px 18px; margin:0; font-size:14px; color:#536078; }.vision-pdf-help a { white-space:nowrap; color:#344968; }
+@media(max-width:760px) { .vision-import-main { padding:20px 12px; }.vision-flow { gap:12px; flex-wrap:wrap; }.vision-pdf-heading { align-items:stretch; flex-direction:column; }.vision-pdf-help { flex-direction:column; } }

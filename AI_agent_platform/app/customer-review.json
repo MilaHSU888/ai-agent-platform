@@ -1,0 +1,464 @@
+{
+  "balloon-1": [
+    {
+      "row": 26,
+      "unit": "距離",
+      "value": "70",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "balloon-2": [
+    {
+      "row": 27,
+      "unit": "距離",
+      "value": "54",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "balloon-3": [
+    {
+      "row": 28,
+      "unit": "距離",
+      "value": "42",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "balloon-4": [
+    {
+      "row": 29,
+      "unit": "深度",
+      "value": "28.4",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    }
+  ],
+  "balloon-5": [
+    {
+      "row": 30,
+      "unit": "#",
+      "value": "4-40 UNJC-3B",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    },
+    {
+      "row": 31,
+      "unit": "牙深",
+      "value": "7.5",
+      "suffix": "",
+      "upper": "0.5",
+      "lower": "0.1"
+    },
+    {
+      "row": 32,
+      "unit": "",
+      "value": "檢查不可破孔",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    }
+  ],
+  "balloon-6": [
+    {
+      "row": 33,
+      "unit": "距離",
+      "value": "30.5",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.02"
+    }
+  ],
+  "balloon-7": [
+    {
+      "row": 34,
+      "unit": "",
+      "value": "31",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    }
+  ],
+  "balloon-8": [
+    {
+      "row": 35,
+      "unit": "Ø",
+      "value": "1.6",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0"
+    }
+  ],
+  "balloon-9": [
+    {
+      "row": 36,
+      "unit": "#",
+      "value": "4-40 UNJC-3B",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    },
+    {
+      "row": 37,
+      "unit": "牙深",
+      "value": "8",
+      "suffix": "",
+      "upper": "0.5",
+      "lower": "0.1"
+    }
+  ],
+  "balloon-10": [
+    {
+      "row": 38,
+      "unit": "Ø",
+      "value": "6",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    },
+    {
+      "row": 39,
+      "unit": "",
+      "value": "THRU",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    }
+  ],
+  "balloon-11": [
+    {
+      "row": 40,
+      "unit": "M",
+      "value": "8X1.25",
+      "suffix": "",
+      "upper": "0.01",
+      "lower": "0.01"
+    },
+    {
+      "row": 41,
+      "unit": "",
+      "value": "THRU",
+      "suffix": "",
+      "upper": "0.01",
+      "lower": "0.01"
+    }
+  ],
+  "balloon-12": [
+    {
+      "row": 42,
+      "unit": "距離",
+      "value": "84",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "balloon-13": [
+    {
+      "row": 43,
+      "unit": "距離",
+      "value": "2",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    }
+  ],
+  "p2-balloon-15": [
+    {
+      "row": 44,
+      "unit": "Ø",
+      "value": "383.5",
+      "suffix": "",
+      "upper": "0.02",
+      "lower": "0.02"
+    }
+  ],
+  "p2-balloon-16": [
+    {
+      "row": 45,
+      "unit": "#",
+      "value": "4-40 UNJC-3B",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    },
+    {
+      "row": 46,
+      "unit": "",
+      "value": "7",
+      "suffix": "D.P.",
+      "upper": "0.5",
+      "lower": "0.1"
+    },
+    {
+      "row": 47,
+      "unit": "",
+      "value": "檢查不可破孔",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    }
+  ],
+  "p2-balloon-17": [
+    {
+      "row": 48,
+      "unit": "厚度",
+      "value": "7",
+      "suffix": "",
+      "upper": "3",
+      "lower": "0"
+    }
+  ],
+  "p2-balloon-18": [
+    {
+      "row": 49,
+      "unit": "厚度",
+      "value": "13",
+      "suffix": "",
+      "upper": "0.2",
+      "lower": "0.2"
+    }
+  ],
+  "p2-balloon-19": [
+    {
+      "row": 50,
+      "unit": "距離",
+      "value": "2.05",
+      "suffix": "",
+      "upper": "0.02",
+      "lower": "0.02"
+    }
+  ],
+  "p2-balloon-20": [
+    {
+      "row": 51,
+      "unit": "距離",
+      "value": "8",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    },
+    {
+      "row": 52,
+      "unit": "距離",
+      "value": "16",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-21": [
+    {
+      "row": 53,
+      "unit": "距離",
+      "value": "8",
+      "suffix": "",
+      "upper": "0.03",
+      "lower": "0.03"
+    }
+  ],
+  "p2-balloon-22": [
+    {
+      "row": 54,
+      "unit": "距離",
+      "value": "8",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0"
+    }
+  ],
+  "p2-balloon-23": [
+    {
+      "row": 55,
+      "unit": "距離",
+      "value": "45.05",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0"
+    }
+  ],
+  "p2-balloon-24": [
+    {
+      "row": 56,
+      "unit": "距離",
+      "value": "16",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-25": [
+    {
+      "row": 57,
+      "unit": "距離",
+      "value": "187.5",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-26": [
+    {
+      "row": 58,
+      "unit": "距離",
+      "value": "183.5",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    }
+  ],
+  "p2-balloon-27": [
+    {
+      "row": 59,
+      "unit": "距離",
+      "value": "3",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    }
+  ],
+  "p2-balloon-28": [
+    {
+      "row": 60,
+      "unit": "距離",
+      "value": "17.5",
+      "suffix": "",
+      "upper": "0.03",
+      "lower": "0.03"
+    }
+  ],
+  "p2-balloon-29": [
+    {
+      "row": 61,
+      "unit": "距離",
+      "value": "17",
+      "suffix": "",
+      "upper": "0.05",
+      "lower": "0.05"
+    }
+  ],
+  "p2-balloon-30": [
+    {
+      "row": 62,
+      "unit": "#",
+      "value": "4-40 UNJC-3B",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    },
+    {
+      "row": 63,
+      "unit": "",
+      "value": "THRU",
+      "suffix": "",
+      "upper": "-",
+      "lower": "-"
+    }
+  ],
+  "p2-balloon-31": [
+    {
+      "row": 64,
+      "unit": "距離",
+      "value": "8",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-32": [
+    {
+      "row": 65,
+      "unit": "距離",
+      "value": "2.05",
+      "suffix": "",
+      "upper": "0.02",
+      "lower": "0.02"
+    }
+  ],
+  "p2-balloon-33": [
+    {
+      "row": 66,
+      "unit": "距離",
+      "value": "2.05",
+      "suffix": "",
+      "upper": "0.02",
+      "lower": "0.02"
+    }
+  ],
+  "p2-balloon-34": [
+    {
+      "row": 67,
+      "unit": "距離",
+      "value": "8",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-35": [
+    {
+      "row": 68,
+      "unit": "距離",
+      "value": "380",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-36": [
+    {
+      "row": 69,
+      "unit": "距離",
+      "value": "2.98",
+      "suffix": "",
+      "upper": "0",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-37": [
+    {
+      "row": 70,
+      "unit": "高度",
+      "value": "77.11",
+      "suffix": "",
+      "upper": "1",
+      "lower": "1"
+    }
+  ],
+  "p2-balloon-38": [
+    {
+      "row": 71,
+      "unit": "距離",
+      "value": "3.5",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-39": [
+    {
+      "row": 72,
+      "unit": "距離",
+      "value": "10",
+      "suffix": "",
+      "upper": "0.1",
+      "lower": "0.1"
+    }
+  ],
+  "p2-balloon-40": [
+    {
+      "row": 73,
+      "unit": "距離",
+      "value": "94",
+      "suffix": "",
+      "upper": "0.15",
+      "lower": "0.15"
+    }
+  ]
+}

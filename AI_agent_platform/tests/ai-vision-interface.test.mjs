@@ -39,7 +39,6 @@ test("AI 識圖使用一製程全圖並提供縮放與不遮擋的就近修正",
   assert.match(page, /behavior: "auto"/);
   assert.match(page, /calc\(\$\{activeField\.highlight\.left\}% - 12px\)/);
   assert.match(page, /calc\(\$\{activeField\.highlight\.width\}% \+ 24px\)/);
-  assert.match(page, /calc\(\$\{activeField\.highlight\.left\}% - 30px\)/);
   assert.match(css, /\.drawing-inline-editor[^}]*transform:translate\(-100%,-50%\)/);
   assert.match(css, /\.drawing-inline-editor::after/);
   assert.match(css, /\.real-source-highlight[^}]*border:0[^}]*outline:2px solid[^}]*outline-offset:5px[^}]*background:transparent/);
@@ -56,36 +55,17 @@ test("AI 識圖使用一製程全圖並提供縮放與不遮擋的就近修正",
   assert.equal(image.readUInt32BE(20), 1273);
 });
 
-test("人工核對區只顯示一欄目前結果並保留初始辨識值", async () => {
+test("中央圖框修正與 Enter 確認、右上角保留 Excel 匯出", async () => {
   const page = await readFile(new URL("app/page.tsx", projectRoot), "utf8");
-
-  assert.match(page, /single-result-field/);
-  assert.match(page, /目前辨識結果（可直接修改）/);
-  assert.doesNotMatch(page, /原圖標註|AI →/);
-  assert.doesNotMatch(page, /\{field\.original\}/);
-
-  assert.match(page, /value: "42 ±0,7", original: "42 ±0,7"/);
-  assert.match(page, /value: "28,4 ±0,5", original: "28,4 ±0,5"/);
-});
-
-test("右側核對資料依球標編號由小到大排列", async () => {
-  const page = await readFile(new URL("app/page.tsx", projectRoot), "utf8");
-
-  assert.match(page, /orderedReviewFields = useMemo\(\(\) => \[\.\.\.fields\]\.sort\(\(left, right\) => left\.marker - right\.marker\)/);
-  assert.match(page, /orderedReviewFields\.map\(\(field\)/);
-  assert.doesNotMatch(page, /review-pinned-final|orderedReviewFields\.at\(-1\)/);
-  assert.match(page, /一製程 13 筆辨識資料已全部展開/);
-  assert.match(page, /className="ready"/);
-
-  const css = await readFile(new URL("app/globals.css", projectRoot), "utf8");
-  assert.match(css, /\.vision-app[^}]*height:100vh[^}]*overflow:hidden/);
-  assert.match(css, /\.vision-layout[^}]*height:calc\(100vh - 136px\)/);
-  assert.match(css, /\.review-panel[^}]*height:calc\(100vh - 136px\)[^}]*grid-template-rows:auto auto minmax\(0,1fr\) auto/);
-  assert.match(css, /\.review-list[^}]*overflow-y:auto/);
-  assert.match(css, /\.review-footer[^}]*position:relative/);
-
-  const markers = [...page.matchAll(/id: "balloon-(\d+)", marker: (\d+)/g)].map((match) => Number(match[1]));
-  assert.deepEqual(markers, Array.from({ length: 13 }, (_, index) => index + 1));
+  assert.doesNotMatch(page, /className="review-panel"|辨識結果核對/);
+  assert.match(page, /confirmAndAdvance/);
+  assert.match(page, /event.nativeEvent.isComposing/);
+  assert.match(page, /!event.repeat/);
+  assert.match(page, /orderedReviewFields\[index \+ 1\]/);
+  assert.match(page, /vision-marker-buttons/);
+  assert.match(page, /vision-excel-export/);
+  assert.match(page, /匯出全部製程 Excel/);
+  assert.match(page, /editorRef.current\?\.focus/);
 });
 
 test("Excel 匯出保留客戶版型、僅製程 001，量測欄留白且判定為待檢", async () => {

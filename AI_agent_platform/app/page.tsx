@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import customerReviewRows from "./customer-review.json";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 type Department = {
@@ -684,9 +685,14 @@ function QuoteWorkspace({ onBack }: { onBack: () => void }) {
 
 type ReviewStatus = "pending" | "confirmed" | "edited" | "flagged";
 
+type ReviewDetail = { row: number; unit: string; value: string; suffix: string; upper: string; lower: string };
+
 type ReviewField = {
+  details?: ReviewDetail[];
   id: string;
   marker: number;
+  page?: number;
+  unresolved?: boolean;
   label: string;
   value: string;
   original: string;
@@ -703,32 +709,42 @@ function escapeExcelXml(value: string | number) {
 }
 
 async function buildReviewWorkbook(fields: ReviewField[]) {
-  const response = await fetch("/ai-vision-export-template.xlsx", { cache: "no-store" });
-  if (!response.ok) throw new Error("無法載入 Excel 匯出範本");
-
+  const response = await fetch("/ai-vision-customer-template.xlsx", { cache: "no-store" });
+  if (!response.ok) throw new Error("無法載入客戶 Excel 範本");
   const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
-  const replacements: Record<string, string> = {
-    "{{EXPORTED_AT}}": new Date().toLocaleString("zh-TW", { hour12: false }),
-  };
-
-  fields.forEach((field, index) => {
-    replacements[`{{MARKER_${index}}}`] = String(field.marker);
-    replacements[`{{SAMPLE_${index}}}`] = field.sample;
-    replacements[`{{GROUP_${index}}}`] = field.group;
-    replacements[`{{LABEL_${index}}}`] = field.label;
-    replacements[`{{VALUE_${index}}}`] = field.value;
-    replacements[`{{STATUS_${index}}}`] = field.status === "edited" ? "人工修正" : "人工確認";
-  });
-
-  Object.entries(files).forEach(([path, data]) => {
-    if (!path.endsWith(".xml")) return;
-    let xml = strFromU8(data);
-    Object.entries(replacements).forEach(([token, value]) => {
-      xml = xml.split(token).join(escapeExcelXml(value));
+  let sheet = strFromU8(files["xl/worksheets/sheet1.xml"]);
+  function replaceCell(reference: string, value: string) {
+    const pattern = new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*?)(?:\\/>|>[\\s\\S]*?<\\/c>)`);
+    if (!pattern.test(sheet)) {
+      // Empty cells in the template may not be serialized; keep cell order.
+      const row = reference.replace(/[A-Z]/g, "");
+      sheet = sheet.replace(new RegExp(`(<row\\b[^>]*r="${row}"[^>]*>)([\\s\\S]*?)(<\\/row>)`), (_match, opening, contents, closing) => {
+        const column = reference.replace(/\d/g, "");
+        const rank = (letters: string) => Array.from(letters).reduce((n, letter) => n * 26 + letter.charCodeAt(0) - 64, 0);
+        const target = new RegExp(`<c\\b[^>]*r="([A-Z]+)${row}"`);
+        let inserted = false;
+        const updated = contents.replace(/<c\b[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g, (cell: string) => {
+          const match = cell.match(target);
+          if (!inserted && match && rank(match[1]) > rank(column)) { inserted = true; return `<c r="${reference}"/>` + cell; }
+          return cell;
+        });
+        return opening + updated + (inserted ? "" : `<c r="${reference}"/>`) + closing;
+      });
+    }
+    if (!pattern.test(sheet)) throw new Error(`範本缺少 ${reference}`);
+    sheet = sheet.replace(pattern, (_match, attributes: string) => {
+      const style = attributes.match(/\bs="[^"]*"/)?.[0] ?? "";
+      const number = value.replace(",", ".");
+      return /^-?\d+(?:\.\d+)?$/.test(number)
+        ? `<c r="${reference}" ${style}><v>${number}</v></c>`
+        : `<c r="${reference}" ${style} t="inlineStr"><is><t xml:space="preserve">${escapeExcelXml(value)}</t></is></c>`;
     });
-    files[path] = strToU8(xml);
-  });
-
+  }
+  fields.forEach((field) => field.details?.forEach((detail) => {
+    for (const [column, value] of [["D", detail.unit], ["E", detail.value], ["F", detail.suffix], ["H", detail.upper], ["J", detail.lower]]) replaceCell(`${column}${detail.row}`, value);
+  }));
+  files["xl/worksheets/sheet1.xml"] = strToU8(sheet);
+  files["xl/workbook.xml"] = strToU8(strFromU8(files["xl/workbook.xml"]).replace(/<calcPr[^>]*\/>/, '<calcPr calcId="0" fullCalcOnLoad="1" forceFullCalc="1"/>'));
   return zipSync(files, { level: 6 });
 }
 
@@ -761,19 +777,96 @@ const initialReviewFields: ReviewField[] = [
   { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 67.3, top: 33.4, width: 7.8, height: 7.2 } },
 ];
 
+const processPages = [{ page: 1, name: "一製程", image: "/ai-vision-process1.png" }, { page: 2, name: "二製程", image: "/ai-vision-process2.png" }];
+const secondProcessFields: ReviewField[] = [{"id": "p2-balloon-15", "marker": 15, "page": 2, "label": "尺寸／規格", "value": "⌀383,5 ±0,05", "original": "⌀383,5 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 21, "top": 28, "width": 9, "height": 5}}, {"id": "p2-balloon-16", "marker": 16, "page": 2, "label": "尺寸／規格", "value": "6-#4-40 UNJC-3B・TAP 7 D.P.・底部不可破孔", "original": "6-#4-40 UNJC-3B・TAP 7 D.P.・底部不可破孔", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 24, "top": 25, "width": 9, "height": 5}}, {"id": "p2-balloon-17", "marker": 17, "page": 2, "label": "尺寸／規格", "value": "7 +3/0", "original": "7 +3/0", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 28, "top": 21, "width": 6, "height": 5}}, {"id": "p2-balloon-18", "marker": 18, "page": 2, "label": "尺寸／規格", "value": "13 ±0,2", "original": "13 ±0,2", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 37, "top": 20, "width": 8, "height": 4}}, {"id": "p2-balloon-19", "marker": 19, "page": 2, "label": "尺寸／規格", "value": "2,05 ±0,02", "original": "2,05 ±0,02", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 37, "top": 24, "width": 9, "height": 4}}, {"id": "p2-balloon-20", "marker": 20, "page": 2, "label": "尺寸／規格", "value": "8 ±0,1", "original": "8 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 38, "top": 27, "width": 8, "height": 4}}, {"id": "p2-balloon-21", "marker": 21, "page": 2, "label": "尺寸／規格", "value": "3-8 ±0,03", "original": "3-8 ±0,03", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 45, "top": 26, "width": 8, "height": 5}}, {"id": "p2-balloon-22", "marker": 22, "page": 2, "label": "尺寸／規格", "value": "8 +0,05/0", "original": "8 +0,05/0", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 60, "top": 45, "width": 5, "height": 7}}, {"id": "p2-balloon-23", "marker": 23, "page": 2, "label": "尺寸／規格", "value": "45,05 +0,05/0", "original": "45,05 +0,05/0", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 54, "top": 46, "width": 6, "height": 8}}, {"id": "p2-balloon-24", "marker": 24, "page": 2, "label": "尺寸／規格", "value": "16 ±0,1", "original": "16 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 31, "top": 31, "width": 6, "height": 4}}, {"id": "p2-balloon-25", "marker": 25, "page": 2, "label": "尺寸／規格", "value": "2-187,5 ±0,1", "original": "2-187,5 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 39, "top": 37, "width": 8, "height": 5}}, {"id": "p2-balloon-26", "marker": 26, "page": 2, "label": "尺寸／規格", "value": "183,5 ±0,05", "original": "183,5 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 36, "top": 41, "width": 8, "height": 4}}, {"id": "p2-balloon-27", "marker": 27, "page": 2, "label": "尺寸／規格", "value": "3 ±0,05", "original": "3 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 36, "top": 45, "width": 6, "height": 5}}, {"id": "p2-balloon-28", "marker": 28, "page": 2, "label": "尺寸／規格", "value": "17,5 ±0,05", "original": "17,5 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 27, "top": 46, "width": 7, "height": 4}}, {"id": "p2-balloon-29", "marker": 29, "page": 2, "label": "尺寸／規格", "value": "17 ±0,05", "original": "17 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 38, "top": 53, "width": 6, "height": 4}}, {"id": "p2-balloon-30", "marker": 30, "page": 2, "label": "尺寸／規格", "value": "6-#4-40 UNJC-3B・TAP THRU", "original": "6-#4-40 UNJC-3B・TAP THRU", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 27, "top": 55, "width": 8, "height": 5}}, {"id": "p2-balloon-31", "marker": 31, "page": 2, "label": "尺寸／規格", "value": "8 ±0,1", "original": "8 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 41, "top": 60, "width": 6, "height": 4}}, {"id": "p2-balloon-32", "marker": 32, "page": 2, "label": "尺寸／規格", "value": "2,05 ±0,02", "original": "2,05 ±0,02", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 42, "top": 64, "width": 7, "height": 4}}, {"id": "p2-balloon-33", "marker": 33, "page": 2, "label": "尺寸／規格", "value": "2,05 ±0,02", "original": "2,05 ±0,02", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 16, "top": 56, "width": 7, "height": 5}}, {"id": "p2-balloon-34", "marker": 34, "page": 2, "label": "尺寸／規格", "value": "8 ±0,1", "original": "8 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 16, "top": 60, "width": 6, "height": 4}}, {"id": "p2-balloon-35", "marker": 35, "page": 2, "label": "尺寸／規格", "value": "380 ±0,1", "original": "380 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 32, "top": 75, "width": 8, "height": 5}}, {"id": "p2-balloon-36", "marker": 36, "page": 2, "label": "尺寸／規格", "value": "2-298 0/-0,1", "original": "2-298 0/-0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 27, "top": 83, "width": 8, "height": 5}}, {"id": "p2-balloon-37", "marker": 37, "page": 2, "label": "尺寸／規格", "value": "77,11 ±1", "original": "77,11 ±1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 35, "top": 84, "width": 7, "height": 5}}, {"id": "p2-balloon-38", "marker": 38, "page": 2, "label": "尺寸／規格", "value": "3,5 ±0,1", "original": "3,5 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 28, "top": 87, "width": 8, "height": 5}}, {"id": "p2-balloon-39", "marker": 39, "page": 2, "label": "尺寸／規格", "value": "10 ±0,1", "original": "10 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 16, "top": 70, "width": 6, "height": 5}}, {"id": "p2-balloon-40", "marker": 40, "page": 2, "label": "尺寸／規格", "value": "94 ±0,15", "original": "94 ±0,15", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 9, "top": 73, "width": 7, "height": 5}}, {"id": "p2-balloon-41", "marker": 41, "page": 2, "unresolved": true, "label": "待補資料（原圖未定位）", "value": "", "original": "", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 8, "top": 12, "width": 10, "height": 5}}, {"id": "p2-balloon-42", "marker": 42, "page": 2, "unresolved": true, "label": "待補資料（原圖未定位）", "value": "", "original": "", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 8, "top": 12, "width": 10, "height": 5}}];
+
 function VisionWorkspace({ onBack }: { onBack: () => void }) {
-  const [fields, setFields] = useState(initialReviewFields);
+  const [file, setFile] = useState<File | null>(null);
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState("");
+  const [showExample, setShowExample] = useState(false);
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const importRequest = useRef(0);
+
+  useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
+  useEffect(() => () => { importRequest.current += 1; }, []);
+
+  async function importPdf(files: FileList | null) {
+    if (!files?.length) return;
+    const request = ++importRequest.current;
+    setError("");
+    if (files.length !== 1) { setImporting(false); setError("請一次匯入一份 PDF，可包含多個製程頁面。"); return; }
+    setImporting(true);
+    try {
+      const candidate = files[0];
+      const header = new TextDecoder().decode(await candidate.slice(0, 1024).arrayBuffer());
+      if (request !== importRequest.current) return;
+      if (!candidate.name.toLowerCase().endsWith(".pdf") || !header.includes("%PDF-")) {
+        setError("請選擇有效的 PDF 工程圖檔案。");
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([candidate], { type: "application/pdf" }));
+      setFile(candidate);
+      setPdfUrl(url);
+    } catch {
+      if (request === importRequest.current) setError("無法讀取檔案，請重新選擇 PDF。");
+    } finally {
+      if (request === importRequest.current) setImporting(false);
+      if (uploadRef.current) uploadRef.current.value = "";
+    }
+  }
+
+  if (showExample) return <VisionReviewWorkspace onBack={() => setShowExample(false)} />;
+  return <div className="vision-app vision-import-app">
+    <WorkHubToolHeader onBack={onBack} />
+    <header className="vision-contextbar">
+      <div className="vision-brand"><span className="vision-brand-mark">AI</span><span><strong>AI 識圖大師</strong><small>工程圖辨識與核對</small></span></div>
+      <div className="vision-actions"><button className="vision-excel-export" disabled title="完成辨識並逐筆確認後即可匯出">匯出 Excel ↓</button></div>
+    </header>
+    <main className="vision-import-main">
+      <ol className="vision-flow" aria-label="識圖流程"><li className="active"><b>1</b>匯入 PDF</li><li><b>2</b>AI 辨識</li><li><b>3</b>逐筆確認</li><li><b>4</b>匯出 Excel</li></ol>
+      <input ref={uploadRef} className="vision-file-input" type="file" accept=".pdf,application/pdf" aria-label="選擇 PDF 工程圖" onChange={(event) => { void importPdf(event.currentTarget.files); }} />
+      {error && <div className="vision-import-error" role="alert">{error}</div>}
+      {!file ? <section className={`vision-upload-card ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void importPdf(event.dataTransfer.files); }}>
+        <span className="vision-upload-symbol" aria-hidden="true">↥</span><h1>匯入 PDF 工程圖</h1><p>將檔案拖曳到這裡，或選擇電腦中的 PDF</p><button className="vision-import-primary" disabled={importing} onClick={() => uploadRef.current?.click()}>{importing ? "讀取檔案中…" : "＋ 選擇 PDF"}</button><small>支援多頁工程圖，辨識後依製程逐頁核對球標數字與文字。</small>
+      </section> : <section className="vision-pdf-preview">
+        <div className="vision-pdf-heading"><div><strong>{file.name}</strong><small>{(file.size / 1024 / 1024).toFixed(2)} MB · 已匯入，待辨識</small></div><div><button className="vision-import-secondary" disabled={importing} onClick={() => uploadRef.current?.click()}>重新選擇 PDF</button><button className="vision-import-primary" disabled={importing} onClick={() => setError("目前先提供介面預覽，AI 辨識功能將於後續串接後啟用。")}>開始 AI 辨識 →</button></div></div>
+        <iframe title={`PDF 工程圖預覽：${file.name}`} src={pdfUrl} />
+        <p className="vision-pdf-help">先確認圖面內容，再開始辨識各頁球標的數字、文字與公差。<a href={pdfUrl} target="_blank" rel="noreferrer">另開 PDF 預覽 ↗</a></p>
+      </section>}
+      {!file && <button className="vision-example-link" onClick={() => setShowExample(true)}>查看範例確認流程 →</button>}
+    </main>
+  </div>;
+}
+
+function VisionReviewWorkspace({ onBack }: { onBack: () => void }) {
+  const [fields, setFields] = useState<ReviewField[]>([...initialReviewFields.map((field) => ({ ...field, page: 1, status: "pending" as ReviewStatus })), ...secondProcessFields.filter((field) => !field.unresolved)].map((field) => { const details = (customerReviewRows as Record<string, ReviewDetail[]>)[field.id]; return { ...field, details: details.map((detail) => ({ ...detail })), value: details.map((detail) => detail.value).join("・") }; }));
   const [activeId, setActiveId] = useState(initialReviewFields[0].id);
   const [zoom, setZoom] = useState(60);
-  const [uploadedName, setUploadedName] = useState("");
+
   const [exported, setExported] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
-  const [notice, setNotice] = useState("已載入一製程工程圖；可放大圖面，並在圖旁或右側直接修正辨識值");
+  const [notice, setNotice] = useState("請對照原圖逐筆核對，按 ✓ 或 Enter 確認並前往下一個球標。");
+  const editorRef = useRef<HTMLInputElement>(null);
+  const [confirmedIds, setConfirmedIds] = useState<string[]>([]);
+  const [exporting, setExporting] = useState(false);
   const drawingCanvasRef = useRef<HTMLDivElement>(null);
   const activeHighlightRef = useRef<HTMLDivElement>(null);
 
   const activeField = fields.find((field) => field.id === activeId) ?? fields[0];
   const orderedReviewFields = useMemo(() => [...fields].sort((left, right) => left.marker - right.marker), [fields]);
+
+  const currentPage = activeField.page ?? 1;
+  const pageFields = orderedReviewFields.filter((field) => field.page === currentPage);
+  const pageConfirmed = pageFields.filter((field) => confirmedIds.includes(field.id)).length;
+  const allConfirmed = fields.every((field) => confirmedIds.includes(field.id) && field.value.trim());
+  function selectProcess(page: number) {
+    const candidates = fields.filter((field) => field.page === page);
+    const target = candidates.find((field) => !confirmedIds.includes(field.id)) ?? candidates[0];
+    if (target) selectReviewField(target.id);
+  }
 
   useEffect(() => {
     const canvas = drawingCanvasRef.current;
@@ -784,6 +877,7 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
       const highlightRect = highlight.getBoundingClientRect();
       const targetCenterX = canvas.scrollLeft + highlightRect.left - canvasRect.left + highlightRect.width / 2;
       const targetCenterY = canvas.scrollTop + highlightRect.top - canvasRect.top + highlightRect.height / 2;
+      editorRef.current?.focus({ preventScroll: true });
       canvas.scrollTo({
         left: Math.max(0, targetCenterX - canvas.clientWidth / 2),
         top: Math.max(0, targetCenterY - canvas.clientHeight / 2),
@@ -803,12 +897,53 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
     setFocusRequest((current) => current + 1);
   }
 
-  function updateValue(id: string, value: string) {
-    const target = fields.find((field) => field.id === id);
-    if (!target) return;
-    setFields((current) => current.map((field) => field.id === id ? { ...field, value, status: "edited" } : field));
+  function updateDetail(rowIndex: number, key: keyof Omit<ReviewDetail, "row">, value: string) {
+    setFields((current) => current.map((field) => {
+      if (field.id !== activeId) return field;
+      const details = field.details!.map((detail, index) => index === rowIndex ? { ...detail, [key]: value } : detail);
+      return { ...field, details, value: details.map((detail) => detail.value).join("・"), status: "edited" };
+    }));
+    setConfirmedIds((current) => current.filter((id) => id !== activeId));
     setExported(false);
-    setNotice(`球標 ${target.marker} 的辨識值已修改並自動保存`);
+    setNotice(`球標 ${activeField.marker} 已修改，請再次確認`);
+  }
+
+  function confirmAndAdvance() {
+    if (activeField.details?.some((detail) => !detail.value.trim() || ![detail.upper, detail.lower].every((value) => /^(?:-|\d+(?:[.,]\d+)?)$/.test(value.trim())))) {
+      setNotice("請填寫規格值與有效公差（數值或 -），再確認此球標");
+      editorRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    setConfirmedIds((current) => current.includes(activeId) ? current : [...current, activeId]);
+    const index = orderedReviewFields.findIndex((field) => field.id === activeId);
+    const next = orderedReviewFields[index + 1];
+    if (next) {
+      selectReviewField(next.id);
+      setNotice(next.page !== activeField.page ? `一製程已核對至末筆，切換二製程・球標 ${next.marker}` : `球標 ${activeField.marker} 已確認，請確認球標 ${next.marker}`);
+    } else {
+      setNotice("已到最後一個球標，可回選檢查，並於右上角確認後匯出 Excel");
+    }
+  }
+
+  async function exportReview() {
+    if (exporting) return;
+    if (!allConfirmed) { setNotice("請完成全部製程的每一筆球標確認後，再匯出整份 Excel"); return; }
+    if (fields.some((field) => !field.value.trim())) {
+      setNotice("仍有空白辨識值，請補齊後再匯出");
+      selectReviewField(fields.find((field) => !field.value.trim())!.id);
+      return;
+    }
+    setExporting(true);
+    try {
+      await downloadReviewWorkbook(fields);
+      setExported(true);
+      setNotice("已依客戶範本匯出一、二製程；規格填回原列，保留量測與判定公式");
+    } catch {
+      setExported(false);
+      setNotice("Excel 匯出失敗，請稍後重試");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -819,79 +954,56 @@ function VisionWorkspace({ onBack }: { onBack: () => void }) {
           <span className="vision-brand-mark">AI</span>
           <span><strong>AI 識圖大師</strong><small>昇達科技・加工圖球標辨識</small></span>
         </div>
-        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>5.804LY0241001B0檢規.pdf</strong><small>一製程・全圖辨識完成</small></span></div>
-        <div className="vision-actions"><button className="vision-history">版本紀錄</button></div>
+        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>5.804LY0241001B0檢規.pdf</strong><small>2 頁製程・已確認 {confirmedIds.length} / {fields.length} 項</small></span></div>
+        <div className="vision-actions"><button className="vision-history">版本紀錄</button><button className="vision-excel-export" disabled={exporting || !allConfirmed} title={allConfirmed ? "匯出所有製程到同一份 Excel" : `尚有 ${fields.length - confirmedIds.length} 項待確認`} onClick={exportReview}>{exporting ? "匯出中…" : exported ? "✓ Excel 已匯出" : "匯出全部製程 Excel ↓"}</button></div>
       </header>
 
       <div className="vision-notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice("")} aria-label="關閉提示">×</button></div>
 
       <main className="vision-layout">
         <aside className="vision-queue">
-          <label className="new-drawing-button">＋ 新增工程圖<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => { const name = event.target.files?.[0]?.name ?? ""; setUploadedName(name); if (name) setNotice(`${name} 已加入辨識佇列`); }} /></label>
-          <div className="queue-heading"><strong>我的識圖任務</strong><span>5</span></div>
-          <div className="queue-filters"><button className="active">進行中 2</button><button>已完成 3</button></div>
-          <div className="drawing-list">
-            {uploadedName && <button className="drawing-item processing"><span className="file-thumb">PDF</span><span><strong>{uploadedName}</strong><small>AI 辨識處理中…</small><i><b style={{ width: "42%" }}></b></i></span></button>}
-            <button className="drawing-item active"><span className="file-thumb">PDF</span><span><strong>804LY0241001B0</strong><small>加工檢驗規範・一製程</small><em>待人工確認・{fields.length} 項</em></span></button>
-            <button className="drawing-item"><span className="file-thumb muted">PDF</span><span><strong>SD-RF-2311_RevB</strong><small>毫米波耦合器</small><em className="reviewing">核對中・4 / 11</em></span></button>
-            <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1904_RevA</strong><small>射頻功率分配器</small><em className="complete">已完成・昨天</em></span></button>
-            <button className="drawing-item"><span className="file-thumb done">PDF</span><span><strong>SD-RF-1508_RevD</strong><small>同軸固定衰減器</small><em className="complete">已完成・08/12</em></span></button>
-          </div>
-          <div className="queue-tip"><span>✎</span><p><strong>直接校正</strong>點選右側任一欄位即可定位原圖，有誤時直接修改辨識值。</p></div>
+          <div className="process-document"><strong>這份 PDF 的製程</strong><small>5.804LY0241001B0檢規.pdf</small><b>{confirmedIds.length} / {fields.length} 項已確認</b><progress value={confirmedIds.length} max={fields.length} /><small>全部確認後，填回同一張計測統計表</small></div>
+          <nav className="process-page-list" aria-label="PDF 製程頁面">{processPages.map((process) => {
+            const rows = fields.filter((field) => field.page === process.page);
+            const done = rows.filter((field) => confirmedIds.includes(field.id)).length;
+            return <button key={process.page} className={`process-page ${currentPage === process.page ? "active" : ""}`} onClick={() => selectProcess(process.page)} aria-current={currentPage === process.page ? "page" : undefined}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={process.image} alt={`第 ${process.page} 頁・${process.name}縮圖`} /><strong>{process.name}<span>第 {process.page} 頁</span></strong><small>{done === rows.length ? "✓ 全部確認" : `待確認 ${rows.length - done} 項`} · {done} / {rows.length}</small><progress value={done} max={rows.length} />
+            </button>;
+          })}</nav>
+
         </aside>
 
         <section className="drawing-workspace">
           <div className="drawing-toolbar">
             <div className="drawing-zoom-controls"><button aria-label="縮小工程圖" title="縮小工程圖" onClick={() => changeZoom((value) => Math.max(40, value - 10))}>− 縮小</button><span aria-live="polite">{zoom}%</span><button aria-label="放大工程圖" title="放大工程圖" onClick={() => changeZoom((value) => Math.min(180, value + 10))}>＋ 放大</button><button aria-label="以原始比例顯示工程圖" title="以原始比例顯示" onClick={() => changeZoom(() => 100)}>100%</button><i></i><button onClick={() => changeZoom(() => 60)}>適合頁面</button></div>
-            <div><span className="report-result">一製程・球標 1–13</span><button className="active">辨識框</button></div>
+            <div><span className="report-result">{processPages[currentPage - 1].name} · 第 {currentPage} / 2 頁</span><button className="active">辨識框</button></div>
           </div>
           <div className="drawing-canvas" ref={drawingCanvasRef}>
             <div className="drawing-sheet real-report-sheet" style={{ width: `${activeField.imageSize[0] * zoom / 100}px`, height: `${activeField.imageSize[1] * zoom / 100}px` }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={activeField.image} alt={`一製程工程圖，正在定位球標 ${activeField.marker}`} />
-              <div ref={activeHighlightRef} className="real-source-highlight" style={{ left: `calc(${activeField.highlight.left}% - 12px)`, top: `calc(${activeField.highlight.top}% - 12px)`, width: `calc(${activeField.highlight.width}% + 24px)`, height: `calc(${activeField.highlight.height}% + 24px)` }} title={`球標 ${activeField.marker} 的圖面位置`} />
-              <label className="drawing-inline-editor" style={{ left: `calc(${activeField.highlight.left}% - 30px)`, top: `${activeField.highlight.top + activeField.highlight.height / 2}%` }}>
-                <span>球標 {activeField.marker}・圖旁直接修正</span>
-                <input value={activeField.value} onChange={(event) => updateValue(activeField.id, event.target.value)} onFocus={(event) => event.currentTarget.select()} aria-label={`球標 ${activeField.marker} 圖旁修正值`} />
-              </label>
+              <img src={activeField.image} alt={`${processPages[currentPage - 1].name}工程圖，正在定位球標 ${activeField.marker}`} />
+              <div ref={activeHighlightRef} className={`real-source-highlight ${activeField.unresolved ? "unresolved-highlight" : ""}`} style={{ left: `calc(${activeField.highlight.left}% - 12px)`, top: `calc(${activeField.highlight.top}% - 12px)`, width: `calc(${activeField.highlight.width}% + 24px)`, height: `calc(${activeField.highlight.height}% + 24px)` }} title={`球標 ${activeField.marker} 的圖面位置`} />
+              <div className="drawing-inline-editor" onKeyDown={(event) => { if (event.target instanceof HTMLInputElement && event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && !event.repeat) { event.preventDefault(); confirmAndAdvance(); } }} style={{ left: `max(390px, calc(${activeField.highlight.left}% - 30px))`, top: `calc(${activeField.highlight.top + activeField.highlight.height}% + 38px)` }}>
+                <label htmlFor="vision-inline-value">球標 {activeField.marker}・圖旁直接修正</label><span>{activeField.label} · {confirmedIds.includes(activeId) ? "已確認" : "待確認"}</span>
+                <div className="drawing-spec-grid"><span>類型</span><span>規格值</span><span>＋公差</span><span>－公差</span>
+                  {activeField.details?.map((detail, index) => <div className="drawing-spec-row" key={detail.row}>
+                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項類型`} value={detail.unit} onChange={(event) => updateDetail(index, "unit", event.target.value)} />
+                    <input ref={index === 0 ? editorRef : undefined} id={index === 0 ? "vision-inline-value" : undefined} aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項規格`} value={detail.value} onChange={(event) => updateDetail(index, "value", event.target.value)} onFocus={(event) => event.currentTarget.select()} />
+                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項上公差`} value={detail.upper} onChange={(event) => updateDetail(index, "upper", event.target.value)} />
+                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項下公差`} value={detail.lower} onChange={(event) => updateDetail(index, "lower", event.target.value)} />
+                  </div>)}
+                </div><button className="drawing-confirm-button" type="button" onClick={confirmAndAdvance}>✓ 確認此球標，前往下一個</button><small>Enter 確認 · {activeField.details?.length} 項規格對應客戶 Excel</small>
+              </div>
             </div>
           </div>
-          <div className="page-strip">
-            <button className="sample-thumb active" onClick={() => selectReviewField(fields[0].id)}><i>一製程</i><small>球標 1–13</small></button>
+          <div className="page-strip vision-marker-strip" aria-label="球標確認進度"><strong aria-live="polite">{processPages[currentPage - 1].name}：{pageConfirmed} / {pageFields.length} 已確認</strong><div className="vision-marker-buttons">{pageFields.map((field) => <button key={field.id} className={`${activeId === field.id ? "active" : ""} ${field.status === "edited" ? "edited" : confirmedIds.includes(field.id) ? "confirmed" : ""}`} title={field.status === "edited" ? "人工已修正" : confirmedIds.includes(field.id) ? "已確認無誤" : "待確認"} aria-current={activeId === field.id ? "step" : undefined} aria-label={`球標 ${field.marker}，${field.status === "edited" ? "人工已修正，" : ""}${confirmedIds.includes(field.id) ? "已確認" : "待確認"}`} onClick={() => selectReviewField(field.id)}>{field.marker}{field.status === "edited" && <span aria-hidden="true">✎</span>}{confirmedIds.includes(field.id) && <span>✓</span>}</button>)}</div>
+            <span className="vision-confirmed-legend">✓ 綠色：確認無誤</span><span className="vision-edited-legend">✎ 紅色：人工已修正</span>
+            <div className="process-navigation"><button disabled={currentPage === 1} onClick={() => selectProcess(currentPage - 1)}>← 上一製程</button><span>第 {currentPage} / 2 頁</span><button disabled={currentPage === 2} onClick={() => selectProcess(currentPage + 1)}>下一製程 →</button></div>
           </div>
         </section>
 
-        <aside className="review-panel">
-          <div className="review-heading">
-            <div><p className="eyebrow">直接校正</p><h2>辨識結果核對</h2></div>
-            <span>{fields.length} 筆</span>
-          </div>
-          <div className="review-overview"><span>檢</span><div><strong>一製程 13 筆辨識資料已全部展開</strong><small>右側只顯示目前結果；有誤可在圖旁或本欄直接修改。</small></div></div>
-          <div className="review-list">
-            {orderedReviewFields.map((field) => (
-                <article key={field.id} className={`review-card expanded ${activeId === field.id ? "active" : ""} ${field.status}`}>
-                  <button type="button" className="review-card-summary" onClick={() => selectReviewField(field.id)}><span className="marker-mini">{field.marker}</span><span><small>{field.group}</small><strong>{field.label}</strong></span><em className="high">{field.status === "edited" ? "已修改" : "辨識完成"}</em></button>
-                  <div className="review-card-detail">
-                    <label className="single-result-field"><span>目前辨識結果（可直接修改）</span><input value={field.value} onChange={(event) => updateValue(field.id, event.target.value)} onFocus={(event) => { selectReviewField(field.id); event.currentTarget.select(); }} aria-label={`球標 ${field.marker} 目前辨識結果`} /></label>
-                  </div>
-                </article>
-            ))}
-          </div>
-          <div className="review-footer">
-            <div><span>人工確認後即可匯出</span><strong>修改內容會自動保存</strong></div>
-            <button className="ready" onClick={async () => {
-              try {
-                await downloadReviewWorkbook(fields);
-                setExported(true);
-                setNotice("已匯出 Excel 規格表，並保存目前畫面上的辨識與人工修正資料");
-              } catch {
-                setExported(false);
-                setNotice("Excel 匯出失敗，請重新整理頁面後再試一次");
-              }
-            }}>{exported ? "✓ Excel 已匯出" : "確認後匯出"}</button>
-            <small>匯出內容以目前畫面上的最新資料為準。</small>
-          </div>
-        </aside>
+
       </main>
     </div>
   );
