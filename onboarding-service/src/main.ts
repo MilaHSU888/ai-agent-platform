@@ -7,6 +7,7 @@ import { Secrets } from './secrets.ts';
 import { JobQueue } from './queue.ts';
 import { createApp } from './server.ts';
 import { runReleaseJob } from './releases.ts';
+import { relayEnv, syncRelay } from './relay.ts';
 
 const cfg = loadConfig();
 mkdirSync(cfg.dataDir, { recursive: true, mode: 0o700 });
@@ -21,6 +22,10 @@ queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secret
 const { server } = createApp(store, cfg, queue, rt, secrets);
 
 const avail = await rt.available();
+// 模型轉接服務：設定改變（例如換金鑰）時重新套用；尚未有工具使用模型時不啟動
+const relay = avail.docker && relayEnv(cfg, secrets) && Object.keys(secrets.relayTokens()).length
+  ? await syncRelay(cfg, rt, secrets).catch((e: Error) => ({ ok: false, detail: e.message }))
+  : { ok: false, detail: relayEnv(cfg, secrets) ? '尚無工具使用模型，第一次預覽或發布時啟動' : '核准模型端點尚未設定（雙擊「設定模型端點.command」）' };
 server.listen(cfg.port, cfg.host, () => {
   const line = '─'.repeat(56);
   console.log(line);
@@ -29,6 +34,8 @@ server.listen(cfg.port, cfg.host, () => {
   console.log(` 環境      ${cfg.environment}　操作者 ${cfg.operator}`);
   console.log(` 資料目錄  ${cfg.dataDir}`);
   console.log(` 容器      ${avail.docker ? '可用' : '不可用'}　漏洞掃描 ${avail.trivy ? '可用' : '不可用'}（${avail.detail}）`);
+  console.log(` 模型轉接  ${relay.detail}`);
+  console.log(` 工具網路  ${cfg.toolNetworkInternal ? '隔離（工具只能連模型轉接服務）' : '可連外（ONBOARDING_TOOL_NETWORK=open）'}`);
   if (interrupted) console.log(` 注意      上次關閉時有 ${interrupted} 個工作在執行，已標為「中斷」，可在網站重試`);
   console.log('');
   console.log('  請開啟 WorkHub 網站 → 開發者中心 上傳 ZIP（網站代理會自動帶入本機通行碼，不需登入）');

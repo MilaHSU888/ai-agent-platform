@@ -10,6 +10,7 @@ import { makeMasker } from './exec.ts';
 import { memoryToBytes, type Manifest } from './manifest.ts';
 import { freePort, portInUse, type Ctx, type Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
+import { prepareModelAccess, toolNetwork } from './relay.ts';
 
 type Sub = { id: string; tool_id: string; version: string; revision: number; source_hash: string; manifest_json: string };
 
@@ -96,13 +97,6 @@ export async function waitHealthy(rt: Runtime, url: string, expect: number, time
   return { ok: false, status, seconds: Math.round((Date.now() - t0) / 1000) };
 }
 
-export function modelEnv(m: Manifest, secrets: Secrets): Record<string, string> {
-  if (!m.model.uses || !m.model.approvedEndpoint) return {};
-  const ep = secrets.endpoint(m.model.approvedEndpoint);
-  if (!ep) return {};
-  const wanted = new Set([...m.env.required, ...m.env.optional].map((e) => e.name));
-  return Object.fromEntries(Object.entries(ep.env).filter(([k]) => wanted.has(k)));
-}
 
 export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, jobId: string, signal: AbortSignal) {
   const job = store.get<{ submission_id: string }>('SELECT submission_id FROM jobs WHERE id=?', jobId)!;
@@ -180,7 +174,9 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
     const ptVol = `${ptName}-data`;
     const ptPort = await freePort();
     const ptCtx = ctxFor('platform_test');
-    const st = await rt.start({ image: tag, name: ptName, labels: { ...labels, 'workhub.kind': 'platform-test' }, hostPort: ptPort, containerPort: m.run.port, volume: mount ? ptVol : undefined, mountPath: mount, env: {}, memoryBytes, cpus: m.run.resources.cpu, command: m.run.command, network: 'bridge' }, ptCtx);
+    const ptNet = toolNetwork(m.tool.id);
+    if (!(await rt.ensureNetwork(ptNet, cfg.toolNetworkInternal, ptCtx))) throw new Error(`無法建立工具隔離網路 ${ptNet}`);
+    const st = await rt.start({ image: tag, name: ptName, labels: { ...labels, 'workhub.kind': 'platform-test' }, hostPort: ptPort, containerPort: m.run.port, volume: mount ? ptVol : undefined, mountPath: mount, env: {}, memoryBytes, cpus: m.run.resources.cpu, command: m.run.command, network: ptNet }, ptCtx);
     let health = { ok: false, status: null as number | null, seconds: 0 };
     if (st.code === 0) {
       health = await waitHealthy(rt, `http://127.0.0.1:${ptPort}${m.run.healthCheck.path}`, m.run.healthCheck.expectStatus, (m.run.healthCheck.startPeriodSeconds * 1000) + cfg.timeouts.healthMs, signal);
@@ -225,15 +221,16 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
     const pvName = `wh-preview-${m.tool.id}`;
     const pvVol = `wh-preview-${m.tool.id}-r${sub.revision}-data`;
     const port = await allocatePort(store, cfg.ports.previewStart, cfg.ports.previewEnd, 'preview_port');
-    const env = modelEnv(m, secrets);
-    const pst = await rt.start({ image: tag, name: pvName, labels: { ...labels, 'workhub.kind': 'preview' }, hostPort: port, containerPort: m.run.port, volume: mount ? pvVol : undefined, mountPath: mount, env, memoryBytes, cpus: m.run.resources.cpu, command: m.run.command, network: 'bridge' }, pvCtx);
+    const access = await prepareModelAccess(cfg, rt, secrets, m, m.tool.id, pvCtx);
+    const env = access.env;
+    const pst = await rt.start({ image: tag, name: pvName, labels: { ...labels, 'workhub.kind': 'preview' }, hostPort: port, containerPort: m.run.port, volume: mount ? pvVol : undefined, mountPath: mount, env, memoryBytes, cpus: m.run.resources.cpu, command: m.run.command, network: access.network }, pvCtx);
     const ph = pst.code === 0
       ? await waitHealthy(rt, `http://127.0.0.1:${port}${m.run.healthCheck.path}`, m.run.healthCheck.expectStatus, (m.run.healthCheck.startPeriodSeconds * 1000) + cfg.timeouts.healthMs, signal)
       : { ok: false, status: null, seconds: 0 };
     results.preview = ph.ok ? 'passed' : 'failed';
     if (ph.ok) store.run('UPDATE submissions SET preview_port=?, preview_container=?, updated_at=? WHERE id=?', port, pvName, now(), sub.id);
     else { await rt.logs(pvName, pvCtx); await rt.remove(pvName, pvCtx); }
-    set('preview', results.preview, { url: ph.ok ? `http://127.0.0.1:${port}/` : null, volume: mount ? pvVol : null, modelEnvInjected: Object.keys(env), modelConfigured: m.model.uses ? Object.keys(env).length > 0 : null });
+    set('preview', results.preview, { url: ph.ok ? `http://127.0.0.1:${port}/` : null, volume: mount ? pvVol : null, modelEnvInjected: Object.keys(env), modelConfigured: m.model.uses ? Object.keys(env).length > 0 : null, model: access.note, network: access.network });
   } catch (e) {
     const current = store.get<{ current_step: StepName }>('SELECT current_step FROM jobs WHERE id=?', jobId)?.current_step ?? 'validate';
     results[current] = 'failed';

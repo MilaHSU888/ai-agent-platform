@@ -50,7 +50,7 @@ async function setup(opts: FakeOpts = {}) {
   const login = async () => { token = TOKEN; };
   const runQueue = async () => { await queue.tick(); await queue.idle; };
   const close = () => new Promise<void>((r) => app.server.close(() => r()));
-  return { cfg, store, rt, queue, call, login, runQueue, close, base, setToken: (v: string) => { token = v; } };
+  return { cfg, store, rt, queue, secrets, call, login, runQueue, close, base, setToken: (v: string) => { token = v; } };
 }
 
 const upload = (call: Awaited<ReturnType<typeof setup>>['call'], buf: Buffer, q = 'department=purchase&owner=Mila&filename=demo.zip') =>
@@ -401,6 +401,59 @@ test('下架與重新上架：停止容器、入口顯示下架、資料與埠�
     const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
     assert.deepEqual(hist.map((r) => r.status), ['active', 'superseded']);
     assert.equal(hist[1].detail.offline.reason, '供應商格式調整，暫停使用');
+  } finally { await t.close(); }
+});
+
+const AI_MANIFEST = MANIFEST.replace('  optional: []\nmodel:\n  uses: false', `  optional:
+    - name: OPENAI_BASE_URL
+      purpose: 端點
+      secret: false
+    - name: OPENAI_API_KEY
+      purpose: 憑證
+      secret: true
+    - name: OPENAI_MODEL
+      purpose: 模型
+      secret: false
+model:
+  uses: true
+  provider: openai-compatible
+  approvedEndpoint: wisely-5090
+  fallback: none`);
+
+test('模型轉接：工具只拿到轉接網址與工具專用通行碼、跑在隔離網路；真正金鑰只給轉接服務；業務測試仍斷網', async () => {
+  const t = await setup();
+  try {
+    assert.ok(AI_MANIFEST.includes('uses: true'));
+    // 尚未設定端點：預覽照常啟動，但沒有模型設定
+    await upload(t.call, validZip([], AI_MANIFEST)); await t.runQueue();
+    let pv = t.rt.started.find((s) => s.labels['workhub.kind'] === 'preview')!;
+    assert.deepEqual(pv.env, {});
+    assert.equal(pv.network, 'wh-net-demo-tool');
+    assert.equal(t.rt.networks.get('wh-net-demo-tool'), true);
+    assert.equal(t.rt.relays.length, 0);
+    const real = 'real-upstream-key-abcdefghijklmnop';
+    t.secrets.set('wisely-5090', { OPENAI_BASE_URL: 'https://llm.example/v1', OPENAI_API_KEY: real, OPENAI_MODEL: 'vision-model' }, ['OPENAI_API_KEY']);
+    const v2 = (await upload(t.call, validZip([], AI_MANIFEST.replace('version: 1.0.0', 'version: 1.0.1')), 'department=purchase&owner=Mila&filename=demo.zip&mode=update&expectedToolId=demo-tool')).data.submission as Record<string, any>;
+    assert.ok(v2, 'update upload accepted');
+    await t.runQueue();
+    pv = t.rt.started.filter((s) => s.labels['workhub.kind'] === 'preview').at(-1)!;
+    assert.equal(pv.env.OPENAI_BASE_URL, 'http://llm-relay:8080/v1');
+    assert.match(pv.env.OPENAI_API_KEY, /^whr_/);
+    assert.equal(pv.env.OPENAI_MODEL, 'vision-model');
+    assert.ok(!Object.values(pv.env).includes(real));
+    assert.equal(pv.network, 'wh-net-demo-tool');
+    const relay = t.rt.relays.at(-1)!;
+    assert.equal(relay.env.RELAY_UPSTREAM_KEY, real);
+    assert.deepEqual(JSON.parse(relay.env.RELAY_TOKENS), { [pv.env.OPENAI_API_KEY]: 'demo-tool' });
+    assert.deepEqual(relay.networks, ['wh-net-demo-tool']);
+    const bt = t.rt.ran.at(-1)!;
+    assert.equal(bt.network, 'none');
+    assert.deepEqual(bt.env, {});
+    const pt = t.rt.started.filter((s) => s.labels['workhub.kind'] === 'platform-test').at(-1)!;
+    assert.deepEqual(pt.env, {});
+    assert.equal(pt.network, 'wh-net-demo-tool');
+    // 日誌遮罩包含工具通行碼
+    assert.ok(t.secrets.allSecretValues().includes(pv.env.OPENAI_API_KEY));
   } finally { await t.close(); }
 });
 

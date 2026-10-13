@@ -3,6 +3,8 @@
  * 送審容器一律：不掛主機目錄、不掛 Docker socket、cap-drop ALL、no-new-privileges、只綁 127.0.0.1。
  */
 import { createServer } from 'node:net';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { run, type ExecResult } from './exec.ts';
 import type { Config } from './config.ts';
 
@@ -20,7 +22,8 @@ export type ServiceSpec = {
   memoryBytes: number;
   cpus: string;
   command?: string[];
-  network: 'none' | 'bridge';
+  /** none＝完全斷網（業務測試）；wh-net-<tool>＝工具專屬隔離網路，只連得到模型轉接服務 */
+  network: string;
   /** 正式發布：Docker 重啟後自動恢復 */
   restart?: boolean;
 };
@@ -39,7 +42,13 @@ export interface Runtime {
   removeVolume(name: string, ctx?: Ctx): Promise<void>;
   logs(name: string, ctx: Ctx): Promise<void>;
   probe(url: string): Promise<number | null>;
+  /** 建立隔離網路（--internal：無對外路由） */
+  ensureNetwork(name: string, internal: boolean, ctx?: Ctx): Promise<boolean>;
+  /** 確保模型轉接服務容器在跑、設定一致，並接上所有工具的隔離網路 */
+  ensureRelay(spec: RelaySpec, ctx?: Ctx): Promise<{ ok: boolean; detail: string }>;
 }
+
+export type RelaySpec = { name: string; image: string; script: string; logsDir: string; env: Record<string, string>; hash: string; networks: string[]; alias: string };
 
 export function freePort(): Promise<number> {
   return new Promise((res, rej) => {
@@ -59,6 +68,11 @@ export function portInUse(port: number): Promise<boolean> {
     s.listen(port, '127.0.0.1', () => s.close(() => res(false)));
   });
 }
+
+const GATEWAY_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'relay', 'tcp_gateway.py');
+/** 隔離網路上的工具由入口轉接容器 <name>-gw 開放本機埠 */
+export const gatewayName = (name: string) => `${name}-gw`;
+const isolated = (network: string) => network !== 'none' && network !== 'bridge';
 
 function hardening(): string[] {
   return ['--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '512'];
@@ -115,16 +129,32 @@ export class DockerRuntime implements Runtime {
 
   async start(spec: ServiceSpec, ctx: Ctx) {
     await this.remove(spec.name);
-    const args = ['run', '-d', ...this.baseArgs(spec), '-p', `127.0.0.1:${spec.hostPort}:${spec.containerPort}`, spec.image, ...(spec.command ?? [])];
-    return run(this.cfg.docker, args, { timeoutMs: 120000, signal: ctx.signal, logFile: ctx.logFile, mask: ctx.mask, env: { ...process.env, ...spec.env } });
+    const opts = { timeoutMs: 120000, signal: ctx.signal, logFile: ctx.logFile, mask: ctx.mask };
+    if (!isolated(spec.network)) {
+      const args = ['run', '-d', ...this.baseArgs(spec), '-p', `127.0.0.1:${spec.hostPort}:${spec.containerPort}`, spec.image, ...(spec.command ?? [])];
+      return run(this.cfg.docker, args, { ...opts, env: { ...process.env, ...spec.env } });
+    }
+    // 隔離網路：工具本身不開埠；由平台的入口轉接容器（一邊本機埠、一邊工具網路）只做 TCP 轉送
+    if (!(await this.ensureImage(this.cfg.relay.image, ctx))) return { code: 1, timedOut: false, cancelled: false, stdout: '', stderr: `無法取得入口轉接映像 ${this.cfg.relay.image}` };
+    const tool = await run(this.cfg.docker, ['run', '-d', ...this.baseArgs(spec), spec.image, ...(spec.command ?? [])], { ...opts, env: { ...process.env, ...spec.env } });
+    if (tool.code !== 0) return tool;
+    const gw = gatewayName(spec.name);
+    const g = await run(this.cfg.docker, ['run', '-d', '--name', gw, ...hardening(), '--read-only', '--user', '10001:10001', '--memory', '64m', '--cpus', '0.25',
+      '--network', 'bridge', '-p', `127.0.0.1:${spec.hostPort}:8000`, '--label', 'workhub.kind=gateway', '--label', `workhub.for=${spec.name}`,
+      ...(spec.restart ? ['--restart', 'unless-stopped'] : []), '-v', `${GATEWAY_SCRIPT}:/app/tcp_gateway.py:ro`,
+      this.cfg.relay.image, 'python', '-I', '/app/tcp_gateway.py', spec.name, String(spec.containerPort)], opts);
+    if (g.code !== 0) return { ...g, stderr: `入口轉接啟動失敗：${g.stderr}` };
+    const c = await run(this.cfg.docker, ['network', 'connect', spec.network, gw], opts);
+    if (c.code !== 0) return { ...c, stderr: `入口轉接無法接上 ${spec.network}：${c.stderr}` };
+    return tool;
   }
 
   async remove(name: string, ctx?: Ctx) {
-    await run(this.cfg.docker, ['rm', '-f', name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
+    await run(this.cfg.docker, ['rm', '-f', gatewayName(name), name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
   }
 
   async stop(name: string, ctx?: Ctx) {
-    await run(this.cfg.docker, ['stop', '-t', '20', name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
+    await run(this.cfg.docker, ['stop', '-t', '20', gatewayName(name), name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
   }
 
   async backupVolume(volume: string, file: string, ctx: Ctx) {
@@ -149,6 +179,53 @@ export class DockerRuntime implements Runtime {
 
   async logs(name: string, ctx: Ctx) {
     await run(this.cfg.docker, ['logs', '--tail', '200', name], { timeoutMs: 30000, logFile: ctx.logFile, mask: ctx.mask });
+  }
+
+  async ensureNetwork(name: string, internal: boolean, ctx?: Ctx) {
+    const ins = await run(this.cfg.docker, ['network', 'inspect', '--format', '{{.Internal}}', name], { timeoutMs: 20000 });
+    if (ins.code === 0) {
+      if ((ins.stdout.trim() === 'true') === internal) return true;
+      // 設定改變（隔離 ↔ 可連外）：網路上沒有容器時重建
+      await run(this.cfg.docker, ['network', 'rm', name], { timeoutMs: 30000, logFile: ctx?.logFile, mask: ctx?.mask });
+    }
+    const r = await run(this.cfg.docker, ['network', 'create', ...(internal ? ['--internal'] : []), '--label', 'workhub.kind=tool-network', name], { timeoutMs: 30000, logFile: ctx?.logFile, mask: ctx?.mask });
+    return r.code === 0;
+  }
+
+  /** 平台自己用的映像（轉接服務、入口轉接）不在本機時先下載 */
+  private async ensureImage(image: string, ctx?: Ctx) {
+    const ins = await run(this.cfg.docker, ['image', 'inspect', '--format', '{{.Id}}', image], { timeoutMs: 20000 });
+    if (ins.code === 0) return true;
+    const p = await run(this.cfg.docker, ['pull', image], { timeoutMs: 10 * 60 * 1000, logFile: ctx?.logFile, mask: ctx?.mask });
+    return p.code === 0;
+  }
+
+  async ensureRelay(spec: RelaySpec, ctx?: Ctx) {
+    const d = this.cfg.docker;
+    const opts = { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask };
+    if (!(await this.ensureImage(spec.image, ctx))) return { ok: false, detail: `無法取得轉接服務映像 ${spec.image}` };
+    const ins = await run(d, ['inspect', '--format', '{{index .Config.Labels "workhub.relay-hash"}} {{.State.Running}}', spec.name], { timeoutMs: 20000 });
+    const [hash, running] = ins.stdout.trim().split(' ');
+    if (ins.code !== 0 || hash !== spec.hash || running !== 'true') {
+      await run(d, ['rm', '-f', spec.name], opts);
+      const { mkdirSync } = await import('node:fs');
+      mkdirSync(spec.logsDir, { recursive: true });
+      const args = ['run', '-d', '--name', spec.name, '--restart', 'unless-stopped', ...hardening(), '--read-only', '--user', '10001:10001',
+        '--memory', '256m', '--cpus', '0.5', '--network', 'bridge', '--label', 'workhub.kind=llm-relay', '--label', `workhub.relay-hash=${spec.hash}`,
+        '-v', `${spec.script}:/app/llm_relay.py:ro`, '-v', `${spec.logsDir}:/logs`];
+      for (const k of Object.keys(spec.env)) args.push('-e', k); // 金鑰經子程序環境傳入，不出現在命令列
+      args.push(spec.image, 'python', '-I', '/app/llm_relay.py');
+      const r = await run(d, args, { ...opts, env: { ...process.env, ...spec.env } });
+      if (r.code !== 0) return { ok: false, detail: `轉接服務啟動失敗：${r.stderr.slice(0, 200)}` };
+    }
+    const nets = await run(d, ['inspect', '--format', '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}', spec.name], { timeoutMs: 20000 });
+    const joined = new Set(nets.stdout.trim().split(/\s+/));
+    for (const n of spec.networks) {
+      if (joined.has(n)) continue;
+      const c = await run(d, ['network', 'connect', '--alias', spec.alias, n, spec.name], opts);
+      if (c.code !== 0) return { ok: false, detail: `轉接服務無法接上 ${n}：${c.stderr.slice(0, 200)}` };
+    }
+    return { ok: true, detail: `轉接服務運作中（${spec.networks.length} 個工具網路）` };
   }
 
   async probe(url: string) {

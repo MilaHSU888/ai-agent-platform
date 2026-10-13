@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/main.ts",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test test/*.test.ts",
-    "typecheck": "tsc -p tsconfig.check.json"
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test:relay": "python3 -m unittest relay/test_llm_relay.py"
   },
   "dependencies": {
     "yaml": "2.8.1"

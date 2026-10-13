@@ -50,6 +50,10 @@ export type Config = {
   };
   ports: { previewStart: number; previewEnd: number; releaseStart: number; releaseEnd: number };
   sessionHours: number;
+  /** 模型轉接服務：使用本機已有的 Python 映像跑標準函式庫腳本，不另外下載 */
+  relay: { image: string; timeoutSeconds: number };
+  /** 工具網路是否隔離（無對外路由）。true：工具只連得到模型轉接服務 */
+  toolNetworkInternal: boolean;
 };
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
@@ -82,6 +86,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     },
     ports: { previewStart: 18600, previewEnd: 18699, releaseStart: 18700, releaseEnd: 18799 },
     sessionHours: 12,
+    relay: { image: process.env.ONBOARDING_RELAY_IMAGE ?? 'python:3.14-slim-trixie', timeoutSeconds: 125 },
+    toolNetworkInternal: process.env.ONBOARDING_TOOL_NETWORK !== 'open',
   };
   return { ...base, ...overrides };
 }

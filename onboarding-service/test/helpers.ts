@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, type Config } from '../src/config.ts';
 import type { ExecResult } from '../src/exec.ts';
-import type { Ctx, Runtime, ServiceSpec } from '../src/runtime.ts';
+import type { Ctx, RelaySpec, Runtime, ServiceSpec } from '../src/runtime.ts';
 
 export type ZipFile = { name: string; data?: string | Buffer; symlink?: boolean; store?: boolean; lieSize?: number };
 
@@ -101,6 +101,8 @@ export class FakeRuntime implements Runtime {
   stopped: string[] = [];
   backups: string[] = [];
   restores: string[] = [];
+  networks = new Map<string, boolean>();
+  relays: RelaySpec[] = [];
   constructor(opts: FakeOpts = {}) { this.opts = { build: true, trivy: 'clean', healthy: true, businessExit: 0, badImages: new Set(), backupOk: true, ...opts }; }
   async available() { return { docker: true, trivy: this.opts.trivy !== 'missing', detail: 'fake' }; }
   async build(_c: string, _d: string, tag: string, _l: Record<string, string>, _p: string, _t: number, ctx: Ctx) {
@@ -128,6 +130,8 @@ export class FakeRuntime implements Runtime {
   async restoreVolume(volume: string, file: string) { this.restores.push(file); return true; }
   async removeVolume(name: string) { this.removed.push(name); }
   async logs() { /* noop */ }
+  async ensureNetwork(name: string, internal: boolean) { this.networks.set(name, internal); return true; }
+  async ensureRelay(spec: RelaySpec) { this.relays.push(spec); return { ok: true, detail: 'fake relay' }; }
   async probe(url: string) {
     const port = Number(new URL(url).port);
     const spec = [...this.running.values()].find((s) => s.hostPort === port);

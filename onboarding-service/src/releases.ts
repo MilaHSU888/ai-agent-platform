@@ -14,7 +14,8 @@ import { newId, now, type Store } from './db.ts';
 import { GateError } from './approvals.ts';
 import { makeMasker } from './exec.ts';
 import { memoryToBytes, type Manifest } from './manifest.ts';
-import { allocatePort, modelEnv, waitHealthy } from './pipeline.ts';
+import { allocatePort, waitHealthy } from './pipeline.ts';
+import { prepareModelAccess } from './relay.ts';
 import type { Ctx, Runtime, ServiceSpec } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
@@ -125,15 +126,16 @@ export async function takeOffline(store: Store, cfg: Config, rt: Runtime, toolId
   return { releaseId: current.id };
 }
 
-function specFor(cfg: Config, secrets: Secrets, sub: Sub, port: number): ServiceSpec {
+async function specFor(cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx): Promise<ServiceSpec> {
   const m = JSON.parse(sub.manifest_json) as Manifest;
   const mount = m.run.persistentData[0]?.path;
+  const access = await prepareModelAccess(cfg, rt, secrets, m, sub.tool_id, ctx);
   return {
     image: sub.image_digest!, name: containerName(sub.tool_id),
     labels: { 'workhub.tool': sub.tool_id, 'workhub.submission': sub.id, 'workhub.kind': 'release', 'workhub.version': sub.version },
     hostPort: port, containerPort: m.run.port, volume: mount ? volumeName(sub.tool_id) : undefined, mountPath: mount,
-    env: modelEnv(m, secrets), memoryBytes: memoryToBytes(m.run.resources.memory) ?? 1024 ** 3, cpus: m.run.resources.cpu,
-    command: m.run.command, network: 'bridge', restart: true,
+    env: access.env, memoryBytes: memoryToBytes(m.run.resources.memory) ?? 1024 ** 3, cpus: m.run.resources.cpu,
+    command: m.run.command, network: access.network, restart: true,
   };
 }
 
@@ -176,7 +178,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
       const restored = await rt.restoreVolume(volumeName(sub.tool_id), backup, ctx);
       step('還原資料', restored ? 'passed' : 'failed', restored ? `已還原 ${why}前的備份` : '備份還原失敗，請人工處理');
     }
-    const r = await rt.start(specFor(cfg, secrets, currentSub, port), ctx);
+    const r = await rt.start(await specFor(cfg, rt, secrets, currentSub, port, ctx), ctx);
     const h = r.code === 0 ? await healthy(rt, cfg, currentSub, port, new AbortController().signal) : { ok: false };
     step('恢復前一版', h.ok ? 'passed' : 'failed', `${currentSub.version}${h.ok ? ' 已恢復服務' : ' 恢復失敗，入口暫停'}`);
     if (!h.ok) store.run("UPDATE releases SET status='failed', updated_at=? WHERE id=?", now(), current.id);
@@ -205,7 +207,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
 
     // 2. 部署同一份已測試 image
     await rt.remove(containerName(sub.tool_id), ctx);
-    const st = await rt.start(specFor(cfg, secrets, sub, port), ctx);
+    const st = await rt.start(await specFor(cfg, rt, secrets, sub, port, ctx), ctx);
     if (st.code !== 0) { step('啟動容器', 'failed', st.stderr.slice(0, 300)); throw new Error('容器啟動失敗'); }
     step('啟動容器', 'passed', `image ${sub.image_digest!.slice(0, 19)}… · 127.0.0.1:${port}`);
 
