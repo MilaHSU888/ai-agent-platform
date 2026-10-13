@@ -8,10 +8,17 @@ export type Submission = {
   previewUrl: string | null; warnings: Issue[]; createdBy: string; createdAt: string; updatedAt: string;
   job: { id: string; status: string; current_step: string | null; error: string | null } | null;
   steps: Record<string, StepState>; approvals: Approval[]; pendingExceptions: string[]; releaseBlockers: string[];
+  release: { id: string; status: string; updated_at: string } | null;
 };
 export type VulnItem = {
   id: string; severity: string; category: string; title: string; description: string; url: string | null;
   published: string | null; fixable: boolean; packages: { name: string; installed: string; fixed: string | null }[];
+};
+export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; usesModel: boolean; releasedAt: string };
+export type ReleaseStep = { name: string; status: 'passed' | 'failed' | 'skipped'; at: string; detail?: string };
+export type ReleaseRecord = {
+  id: string; toolId: string; submissionId: string; name: string; version: string; status: string; url: string | null; createdAt: string; updatedAt: string; previousReleaseId: string | null;
+  detail: { kind: 'release' | 'rollback' | 'redeploy'; steps: ReleaseStep[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; error?: string; reason?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
 };
 export type Session = { authenticated: boolean; actor?: string; environment?: string };
 
@@ -61,6 +68,16 @@ export const onboardingApi = {
     return r.text();
   },
   vulns: (id: string) => call<{ scannedAt: string; items: VulnItem[] }>('GET', `/submissions/${id}/vulnerabilities`),
+  release: (id: string) => call<{ releaseId: string }>('POST', `/submissions/${id}/release`),
+  rollback: (toolId: string, reason: string, dataMode: 'keep' | 'restore') => call<{ releaseId: string }>('POST', `/tools/${toolId}/rollback`, { reason, dataMode }),
+  redeploy: (toolId: string, releaseId: string, reason: string) => call<{ releaseId: string }>('POST', `/tools/${toolId}/redeploy`, { releaseId, reason }),
+  offline: (toolId: string, reason: string) => call<{ releaseId: string }>('POST', `/tools/${toolId}/offline`, { reason }),
+  online: (toolId: string, reason: string) => call<{ releaseId: string }>('POST', `/tools/${toolId}/online`, { reason }),
+  releases: (toolId?: string) => call<{ releases: ReleaseRecord[] }>('GET', `/releases${toolId ? `?toolId=${encodeURIComponent(toolId)}` : ''}`).then((r) => r.releases),
+  releaseLog: async (id: string) => (await fetch(`${BASE}/releases/${id}/log`, { credentials: 'same-origin' })).text(),
+  catalog: () => call<{ tools: CatalogTool[] }>('GET', '/catalog').then((r) => r.tools),
+  entryEvent: (e: { clientEventId: string; toolId: string; kind: 'click' | 'blocked'; reason?: string }) => call<{ recorded: boolean }>('POST', '/entry-events', e),
+  withdraw: (id: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/withdraw`, { reason }),
   confirm: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/confirmations`, { note }),
   exception: (id: string, cveId: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/exceptions`, { cveId, reason }),
   approve: (id: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/approvals`, { reason }),

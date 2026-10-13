@@ -33,6 +33,8 @@ export type Config = {
   hostPlatform: string;
   docker: string;
   trivy: string;
+  /** 備份／還原資料卷用的平台輔助映像（固定版本） */
+  helperImage: string;
   limits: {
     uploadBytes: number;
     entries: number;
@@ -64,6 +66,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     hostPlatform: process.arch === 'arm64' ? 'linux/arm64' : 'linux/amd64',
     docker: findBinary('docker'),
     trivy: findBinary('trivy'),
+    helperImage: process.env.ONBOARDING_HELPER_IMAGE ?? 'busybox:1.36.1',
     limits: {
       uploadBytes: 100 * 1024 * 1024,
       entries: 5000,

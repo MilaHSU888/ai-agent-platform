@@ -90,14 +90,18 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
 
 const ok = (stdout = ''): ExecResult => ({ code: 0, timedOut: false, cancelled: false, stdout, stderr: '' });
 
-export type FakeOpts = { build?: boolean; trivy?: 'clean' | 'critical' | 'missing'; healthy?: boolean; businessExit?: number; slowBuildMs?: number };
+export type FakeOpts = { build?: boolean; trivy?: 'clean' | 'critical' | 'missing'; healthy?: boolean; businessExit?: number; slowBuildMs?: number; badImages?: Set<string>; backupOk?: boolean };
 
 export class FakeRuntime implements Runtime {
   opts: FakeOpts;
   started: ServiceSpec[] = [];
   ran: Omit<ServiceSpec, 'hostPort' | 'containerPort'>[] = [];
   removed: string[] = [];
-  constructor(opts: FakeOpts = {}) { this.opts = { build: true, trivy: 'clean', healthy: true, businessExit: 0, ...opts }; }
+  running = new Map<string, ServiceSpec>();
+  stopped: string[] = [];
+  backups: string[] = [];
+  restores: string[] = [];
+  constructor(opts: FakeOpts = {}) { this.opts = { build: true, trivy: 'clean', healthy: true, businessExit: 0, badImages: new Set(), backupOk: true, ...opts }; }
   async available() { return { docker: true, trivy: this.opts.trivy !== 'missing', detail: 'fake' }; }
   async build(_c: string, _d: string, tag: string, _l: Record<string, string>, _p: string, _t: number, ctx: Ctx) {
     if (this.opts.slowBuildMs) {
@@ -107,7 +111,7 @@ export class FakeRuntime implements Runtime {
       });
       if (ctx.signal.aborted) return { ok: false, result: { ...ok(), code: null, cancelled: true } };
     }
-    return this.opts.build ? { ok: true, digest: `sha256:${tag.length}abc`, result: ok() } : { ok: false, result: { ...ok(), code: 1 } };
+    return this.opts.build ? { ok: true, digest: `sha256:${Buffer.from(tag).toString('hex').slice(-40)}`, result: ok() } : { ok: false, result: { ...ok(), code: 1 } };
   }
   async scan() {
     if (this.opts.trivy === 'missing') return { available: false, ok: false };
@@ -117,9 +121,17 @@ export class FakeRuntime implements Runtime {
     return { available: true, ok: true, json: { Results: [{ Vulnerabilities: vulns }] } };
   }
   async runOnce(spec: Omit<ServiceSpec, 'hostPort' | 'containerPort'>) { this.ran.push(spec); return { ...ok('1 passed'), code: this.opts.businessExit ?? 0 }; }
-  async start(spec: ServiceSpec) { this.started.push(spec); return ok('cid'); }
-  async remove(name: string) { this.removed.push(name); }
+  async start(spec: ServiceSpec) { this.started.push(spec); this.running.set(spec.name, spec); return ok('cid'); }
+  async remove(name: string) { this.removed.push(name); this.running.delete(name); }
+  async stop(name: string) { this.stopped.push(name); this.running.delete(name); }
+  async backupVolume(volume: string, file: string) { this.backups.push(file); return this.opts.backupOk ?? true; }
+  async restoreVolume(volume: string, file: string) { this.restores.push(file); return true; }
   async removeVolume(name: string) { this.removed.push(name); }
   async logs() { /* noop */ }
-  async probe() { return this.opts.healthy ? 200 : 503; }
+  async probe(url: string) {
+    const port = Number(new URL(url).port);
+    const spec = [...this.running.values()].find((s) => s.hostPort === port);
+    if (spec && this.opts.badImages?.has(spec.image)) return 503;
+    return this.opts.healthy ? 200 : 503;
+  }
 }

@@ -21,6 +21,8 @@ export type ServiceSpec = {
   cpus: string;
   command?: string[];
   network: 'none' | 'bridge';
+  /** 正式發布：Docker 重啟後自動恢復 */
+  restart?: boolean;
 };
 
 export interface Runtime {
@@ -30,6 +32,10 @@ export interface Runtime {
   runOnce(spec: Omit<ServiceSpec, 'hostPort' | 'containerPort'>, timeoutMs: number, ctx: Ctx): Promise<ExecResult>;
   start(spec: ServiceSpec, ctx: Ctx): Promise<ExecResult>;
   remove(name: string, ctx?: Ctx): Promise<void>;
+  stop(name: string, ctx?: Ctx): Promise<void>;
+  /** 以平台自帶的 busybox 小映像備份／還原資料卷（不使用提交的 image） */
+  backupVolume(volume: string, file: string, ctx: Ctx): Promise<boolean>;
+  restoreVolume(volume: string, file: string, ctx: Ctx): Promise<boolean>;
   removeVolume(name: string, ctx?: Ctx): Promise<void>;
   logs(name: string, ctx: Ctx): Promise<void>;
   probe(url: string): Promise<number | null>;
@@ -91,6 +97,7 @@ export class DockerRuntime implements Runtime {
   private baseArgs(spec: Omit<ServiceSpec, 'hostPort' | 'containerPort'>): string[] {
     const args = ['--name', spec.name, ...hardening(), '--memory', String(spec.memoryBytes), '--cpus', spec.cpus, '--network', spec.network];
     for (const [k, v] of Object.entries(spec.labels)) args.push('--label', `${k}=${v}`);
+    if ((spec as ServiceSpec).restart) args.push('--restart', 'unless-stopped');
     if (spec.volume && spec.mountPath) args.push('-v', `${spec.volume}:${spec.mountPath}`);
     for (const k of Object.keys(spec.env)) args.push('-e', k); // 值經由子程序環境傳入，不出現在命令列
     return args;
@@ -114,6 +121,26 @@ export class DockerRuntime implements Runtime {
 
   async remove(name: string, ctx?: Ctx) {
     await run(this.cfg.docker, ['rm', '-f', name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
+  }
+
+  async stop(name: string, ctx?: Ctx) {
+    await run(this.cfg.docker, ['stop', '-t', '20', name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
+  }
+
+  async backupVolume(volume: string, file: string, ctx: Ctx) {
+    const { dirname, basename } = await import('node:path');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(dirname(file), { recursive: true });
+    const r = await run(this.cfg.docker, ['run', '--rm', '--network', 'none', '-v', `${volume}:/vol:ro`, '-v', `${dirname(file)}:/backup`, this.cfg.helperImage,
+      'tar', 'czf', `/backup/${basename(file)}`, '-C', '/vol', '.'], { timeoutMs: 10 * 60 * 1000, signal: ctx.signal, logFile: ctx.logFile, mask: ctx.mask });
+    return r.code === 0;
+  }
+
+  async restoreVolume(volume: string, file: string, ctx: Ctx) {
+    const { dirname, basename } = await import('node:path');
+    const r = await run(this.cfg.docker, ['run', '--rm', '--network', 'none', '-v', `${volume}:/vol`, '-v', `${dirname(file)}:/backup:ro`, this.cfg.helperImage,
+      'sh', '-c', `find /vol -mindepth 1 -delete && tar xzf /backup/${basename(file)} -C /vol`], { timeoutMs: 10 * 60 * 1000, signal: ctx.signal, logFile: ctx.logFile, mask: ctx.mask });
+    return r.code === 0;
   }
 
   async removeVolume(name: string, ctx?: Ctx) {

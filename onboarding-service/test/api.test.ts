@@ -8,6 +8,7 @@ import { Store } from '../src/db.ts';
 import { JobQueue } from '../src/queue.ts';
 import { Secrets } from '../src/secrets.ts';
 import { createApp } from '../src/server.ts';
+import { runReleaseJob } from '../src/releases.ts';
 import { FakeRuntime, MANIFEST, testConfig, validZip, type FakeOpts } from './helpers.ts';
 
 const ORIGIN = 'http://localhost:3002';
@@ -21,6 +22,9 @@ async function setup(opts: FakeOpts = {}) {
   // 先以 0 埠啟動取得實際埠，再讓 Host 檢查使用該埠
   const cfg = { ...cfg0, timeouts: { ...cfg0.timeouts, healthMs: 300 } };
   const queue = new JobQueue(store, cfg, rt, secrets);
+  queue.extraKinds.release = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+  queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+  queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   const app = createApp(store, cfg, queue, rt, secrets, TOKEN);
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', () => r()));
   cfg.port = (app.server.address() as AddressInfo).port;
@@ -233,3 +237,210 @@ test('新增工具與提交新版本驗證目標，錯誤 ZIP 不建立工具或
     assert.equal(t.store.all('SELECT id FROM submissions').length, 2);
   } finally { await t.close(); }
 });
+
+// ── 階段 E：發布、更新、回復與入口 ──────────────────────────────────
+async function approvedVersion(t: Awaited<ReturnType<typeof setup>>, version: string, mode = 'new') {
+  const zip = validZip([{ name: `v-${version}.txt`, data: version }], MANIFEST.replace('version: 1.0.0', `version: ${version}`));
+  const up = await upload(t.call, zip, `department=purchase&owner=Mila&mode=${mode}${mode === 'update' ? '&expectedToolId=demo-tool' : ''}`);
+  assert.equal(up.status, 201, JSON.stringify(up.data));
+  const id = (up.data.submission as { id: string }).id;
+  await t.runQueue();
+  assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '已核對' })).status, 200);
+  assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: '核准' })).status, 200);
+  const sub = (await t.call('GET', `/api/onboarding/submissions/${id}`)).data.submission as Record<string, any>;
+  return { id, digest: sub.imageDigest as string };
+}
+const catalogOf = async (t: Awaited<ReturnType<typeof setup>>) => (await t.call('GET', '/api/onboarding/catalog')).data.tools as Record<string, any>[];
+
+test('發布：未核准不能發布；核准後發布同一份 image，健康檢查通過才出現在入口', async () => {
+  const t = await setup();
+  try {
+    const up = await upload(t.call, validZip(), 'department=purchase&owner=Mila&mode=new');
+    const pending = (up.data.submission as { id: string }).id;
+    await t.runQueue();
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${pending}/release`)).status, 409);
+    await t.call('POST', `/api/onboarding/submissions/${pending}/confirmations`, { note: '已核對' });
+    await t.call('POST', `/api/onboarding/submissions/${pending}/approvals`, { reason: '核准' });
+    const digest = ((await t.call('GET', `/api/onboarding/submissions/${pending}`)).data.submission as Record<string, any>).imageDigest;
+    assert.equal((await catalogOf(t)).length, 0);
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${pending}/release`)).status, 202);
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${pending}/release`)).status, 409);
+    await t.runQueue();
+    const cat = await catalogOf(t);
+    assert.equal(cat.length, 1);
+    assert.equal(cat[0].version, '1.0.0');
+    assert.equal(cat[0].healthy, true);
+    assert.match(cat[0].url, /^http:\/\/127\.0\.0\.1:187\d\d\/$/);
+    const spec = t.rt.running.get('wh-rel-demo-tool')!;
+    assert.equal(spec.image, digest);
+    assert.equal(spec.restart, true);
+    assert.equal(spec.volume, 'wh-rel-demo-tool-data');
+    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${pending}`)).data.submission as Record<string, any>).status, 'released');
+    assert.equal(t.rt.backups.length, 0);
+  } finally { await t.close(); }
+});
+
+test('更新：先停止舊版並備份，新版通過後切換；同一個入口埠', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    const port1 = (await catalogOf(t))[0].url;
+    const v2 = await approvedVersion(t, '1.0.1', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    const cat = await catalogOf(t);
+    assert.equal(cat[0].version, '1.0.1');
+    assert.equal(cat[0].url, port1);
+    assert.deepEqual(t.rt.stopped, ['wh-rel-demo-tool']);
+    assert.equal(t.rt.backups.length, 1);
+    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.deepEqual(hist.map((r) => [r.version, r.status]), [['1.0.1', 'active'], ['1.0.0', 'superseded']]);
+    assert.ok(hist[0].detail.backupBefore);
+  } finally { await t.close(); }
+});
+
+test('更新失敗：還原備份並恢復前一版，入口仍是前一版；首次發布失敗則入口不可用', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    const v2 = await approvedVersion(t, '1.0.1', 'update');
+    t.rt.opts.badImages!.add(v2.digest);
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    const cat = await catalogOf(t);
+    assert.equal(cat[0].version, '1.0.0');
+    assert.equal(cat[0].healthy, true);
+    assert.equal(t.rt.restores.length, 1);
+    assert.equal(t.rt.running.get('wh-rel-demo-tool')!.image, v1.digest);
+    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.equal(hist[0].status, 'failed');
+    assert.match(hist[0].detail.error, /健康檢查/);
+    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v2.id}`)).data.submission as Record<string, any>).status, 'approved');
+  } finally { await t.close(); }
+  const t2 = await setup();
+  try {
+    const v1 = await approvedVersion(t2, '1.0.0');
+    t2.rt.opts.badImages!.add(v1.digest);
+    await t2.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t2.runQueue();
+    assert.equal((await catalogOf(t2)).length, 0);
+    const hist = (await t2.call('GET', '/api/onboarding/releases')).data.releases as Record<string, any>[];
+    assert.equal(hist[0].status, 'failed');
+  } finally { await t2.close(); }
+});
+
+test('回復：需選資料處理方式與原因；保留資料回到前一版；還原則用發布前備份', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { reason: '測試', dataMode: 'keep' })).status, 409);
+    const v2 = await approvedVersion(t, '1.0.1', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { reason: '測試' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { dataMode: 'keep' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { reason: '新版匯出欄位錯誤', dataMode: 'restore' })).status, 202);
+    await t.runQueue();
+    const cat = await catalogOf(t);
+    assert.equal(cat[0].version, '1.0.0');
+    assert.equal(t.rt.restores.length, 1);
+    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.deepEqual(hist.map((r) => r.status), ['active', 'rolled_back', 'superseded']);
+    assert.equal(hist[0].detail.kind, 'rollback');
+  } finally { await t.close(); }
+});
+
+test('重新上線：回復後可再把較新的版本上線，需原因、不能選目前版本，部署前會備份', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    const v2 = await approvedVersion(t, '1.0.1', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { reason: '測試回復', dataMode: 'keep' }); await t.runQueue();
+    let hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    const v2rel = hist.find((r) => r.version === '1.0.1')!;
+    const v1rel = hist.find((r) => r.version === '1.0.0' && r.status === 'superseded')!;
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/redeploy', { releaseId: v2rel.id })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/redeploy', { releaseId: v1rel.id, reason: '同版本' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/redeploy', { releaseId: v2rel.id, reason: '回復測試完成，回到新版' })).status, 202);
+    await t.runQueue();
+    assert.equal((await catalogOf(t))[0].version, '1.0.1');
+    hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.equal(hist[0].status, 'active');
+    assert.equal(hist[0].detail.kind, 'redeploy');
+    assert.ok(hist[0].detail.backupBefore);
+    assert.equal(hist[1].status, 'superseded');
+    // 重新上線後仍可再回復到前一個上線版本
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { reason: '再測一次', dataMode: 'keep' })).status, 202);
+    await t.runQueue();
+    assert.equal((await catalogOf(t))[0].version, '1.0.0');
+  } finally { await t.close(); }
+});
+
+test('下架與重新上架：停止容器、入口顯示下架、資料與埠號保留；重新上架回到同一網址', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    const url = (await catalogOf(t))[0].url;
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/online', { reason: '不在下架狀態' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/offline', {})).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/offline', { reason: '供應商格式調整，暫停使用' })).status, 200);
+    assert.ok(t.rt.stopped.includes('wh-rel-demo-tool'));
+    let cat = await catalogOf(t);
+    assert.equal(cat[0].offline, true);
+    assert.equal(cat[0].url, null);
+    assert.equal(cat[0].healthy, false);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/rollback', { reason: 'x', dataMode: 'keep' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/online', { reason: '格式調整完成' })).status, 202);
+    await t.runQueue();
+    cat = await catalogOf(t);
+    assert.equal(cat[0].offline, false);
+    assert.equal(cat[0].url, url);
+    assert.equal(cat[0].version, '1.0.0');
+    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.deepEqual(hist.map((r) => r.status), ['active', 'superseded']);
+    assert.equal(hist[1].detail.offline.reason, '供應商格式調整，暫停使用');
+  } finally { await t.close(); }
+});
+
+test('入口事件：點擊與阻擋分開記錄，同一事件重送不重複計數', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    const e = { clientEventId: 'evt_0123456789', toolId: 'demo-tool', kind: 'click' };
+    assert.equal((await t.call('POST', '/api/onboarding/entry-events', e)).data.recorded, true);
+    assert.equal((await t.call('POST', '/api/onboarding/entry-events', e)).data.recorded, false);
+    assert.equal((await t.call('POST', '/api/onboarding/entry-events', { ...e, clientEventId: 'evt_blocked_01', kind: 'blocked', reason: '服務未回應' })).data.recorded, true);
+    assert.equal((await t.call('POST', '/api/onboarding/entry-events', { ...e, clientEventId: 'evt_x_0000001', kind: 'open' })).status, 409);
+    const events = (await t.call('GET', '/api/onboarding/entry-events?toolId=demo-tool')).data.events as Record<string, any>[];
+    assert.deepEqual(events.map((x) => x.kind).sort(), ['blocked', 'click']);
+    assert.equal(events[0].version, '1.0.0');
+  } finally { await t.close(); }
+});
+
+test('取消提交：測試失敗時撤回，撤銷確認並關閉預覽；已發布版本不能取消；撤回後可重新上傳同一份 ZIP', async () => {
+  const t = await setup();
+  try {
+    const up = await upload(t.call, validZip(), 'department=purchase&owner=Mila&mode=new');
+    const id = (up.data.submission as { id: string }).id;
+    await t.runQueue();
+    await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '已核對' });
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/withdraw`, { reason: '  ' })).status, 409);
+    const w = await t.call('POST', `/api/onboarding/submissions/${id}/withdraw`, { reason: '匯出比較表失敗' });
+    assert.equal(w.status, 200);
+    const s = w.data.submission as Record<string, any>;
+    assert.equal(s.status, 'withdrawn');
+    assert.equal(s.previewUrl, null);
+    assert.ok(s.approvals.every((a: { revoked_at: string | null }) => a.revoked_at));
+    assert.ok(t.rt.removed.includes('wh-preview-demo-tool'));
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '再確認' })).status, 409);
+    assert.equal((await upload(t.call, validZip(), 'department=purchase&owner=Mila&mode=update&expectedToolId=demo-tool')).status, 201);
+    await t.runQueue();
+    const v = await approvedVersion(t, '1.0.1', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v.id}/release`); await t.runQueue();
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${v.id}/withdraw`, { reason: '測試' })).status, 409);
+  } finally { await t.close(); }
+});
+

@@ -7,7 +7,8 @@ import { Auth } from './auth.ts';
 import { intake } from './intake.ts';
 import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
-import { approvalsFor, approveException, approveRelease, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers } from './approvals.ts';
+import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
+import { approvalsFor, approveException, approveRelease, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
@@ -100,6 +101,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       job, steps, approvals: approvalsFor(store, id),
       pendingExceptions: missingExceptions(store, sub),
       releaseBlockers: ['awaiting_approval', 'awaiting_confirmation'].includes(sub.status) ? releaseBlockers(store, cfg, sub) : [],
+      release: store.get<{ id: string; status: string; updated_at: string }>('SELECT id, status, updated_at FROM releases WHERE submission_id=? ORDER BY created_at DESC LIMIT 1', id) ?? null,
     };
   };
 
@@ -176,6 +178,18 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       confirmTest(store, cfg, m[1], session!.actor, String(body.note ?? ''));
       send(res, 200, { submission: submissionView(m[1]) });
     } },
+    { method: 'POST', re: /^\/api\/onboarding\/submissions\/([\w-]+)\/withdraw$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      withdraw(store, m[1], session!.actor, String(body.reason ?? ''));
+      queue.tick();
+      const s = store.get<{ preview_container: string | null; tool_id: string; revision: number }>('SELECT preview_container, tool_id, revision FROM submissions WHERE id=?', m[1]);
+      if (s?.preview_container) {
+        await rt.remove(s.preview_container);
+        await rt.removeVolume(`wh-preview-${s.tool_id}-r${s.revision}-data`);
+        store.run('UPDATE submissions SET preview_port=NULL, preview_container=NULL WHERE id=?', m[1]);
+      }
+      send(res, 200, { submission: submissionView(m[1]) });
+    } },
     { method: 'POST', re: /^\/api\/onboarding\/submissions\/([\w-]+)\/exceptions$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
       approveException(store, cfg, m[1], session!.actor, String(body.cveId ?? ''), String(body.reason ?? ''));
@@ -185,6 +199,47 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const body = await json(req);
       approveRelease(store, cfg, m[1], session!.actor, String(body.reason ?? ''));
       send(res, 200, { submission: submissionView(m[1]) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/submissions\/([\w-]+)\/release$/, auth: true, fn: ({ res, session }, m) => {
+      const r = requestRelease(store, cfg, m[1], session!.actor);
+      send(res, 202, { ...r, submission: submissionView(m[1]) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/rollback$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 202, requestRollback(store, cfg, m[1], session!.actor, String(body.reason ?? ''), String(body.dataMode ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/redeploy$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 202, requestRedeploy(store, cfg, m[1], String(body.releaseId ?? ''), session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/offline$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 200, await takeOffline(store, cfg, rt, m[1], session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/online$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      const off = offlineRelease(store, m[1]);
+      if (!off) throw new GateError(['此工具目前不是下架狀態']);
+      send(res, 202, requestRedeploy(store, cfg, m[1], off.id, session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/releases$/, auth: true, fn: ({ res, url }) => {
+      send(res, 200, { releases: releaseHistory(store, url.searchParams.get('toolId') ?? undefined) });
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/releases\/([\w-]+)\/log$/, auth: true, fn: ({ res }, m) => {
+      const job = store.get<{ id: string; submission_id: string }>('SELECT id, submission_id FROM jobs WHERE release_id=? ORDER BY created_at DESC LIMIT 1', m[1]);
+      const file = job ? join(cfg.dataDir, 'evidence', job.submission_id, job.id, 'release.log') : '';
+      send(res, 200, job && existsSync(file) ? readFileSync(file, 'utf8').slice(-256 * 1024) : '（尚無日誌）');
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/catalog$/, auth: true, fn: async ({ res }) => {
+      send(res, 200, { tools: await catalog(store, rt) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/entry-events$/, auth: true, fn: async ({ req, res, session }) => {
+      const body = await json(req);
+      send(res, 200, recordEntryEvent(store, session!.actor, { clientEventId: String(body.clientEventId ?? ''), toolId: String(body.toolId ?? ''), kind: String(body.kind ?? ''), reason: body.reason ? String(body.reason) : undefined }));
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/entry-events$/, auth: true, fn: ({ res, url }) => {
+      const toolId = url.searchParams.get('toolId');
+      send(res, 200, { events: store.all(`SELECT tool_id, kind, reason, version, actor, at FROM entry_events ${toolId ? 'WHERE tool_id=?' : ''} ORDER BY id DESC LIMIT 200`, ...(toolId ? [toolId] : [])) });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/tools$/, auth: true, fn: ({ res }) => {
       send(res, 200, { tools: store.all('SELECT * FROM tools ORDER BY created_at') });

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 export type SubmissionStatus =
   | 'queued' | 'running' | 'failed' | 'cancelled' | 'interrupted'
-  | 'awaiting_confirmation' | 'awaiting_approval' | 'approved' | 'released' | 'superseded';
+  | 'awaiting_confirmation' | 'awaiting_approval' | 'approved' | 'released' | 'superseded' | 'withdrawn';
 
 export type StepStatus =
   | 'pending' | 'running' | 'passed' | 'warning' | 'failed' | 'blocked' | 'skipped'
@@ -51,7 +51,12 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, csrf TEXT NOT NULL, actor TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS entry_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, client_event_id TEXT NOT NULL UNIQUE, tool_id TEXT NOT NULL, kind TEXT NOT NULL,
+  reason TEXT, release_id TEXT, version TEXT, actor TEXT NOT NULL, at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_releases_tool ON releases(tool_id, status);
 CREATE INDEX IF NOT EXISTS idx_sub_tool ON submissions(tool_id);
 `;
 
@@ -66,6 +71,9 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     this.db.exec(SCHEMA);
+    // 既有資料庫遷移：發布／回復工作需記錄對應的 release
+    const cols = this.all<{ name: string }>('PRAGMA table_info(jobs)').map((c) => c.name);
+    if (!cols.includes('release_id')) this.db.exec('ALTER TABLE jobs ADD COLUMN release_id TEXT');
   }
 
   get<T = Row>(sql: string, ...params: unknown[]): T | undefined {

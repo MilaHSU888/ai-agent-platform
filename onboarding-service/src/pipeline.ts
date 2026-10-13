@@ -78,8 +78,8 @@ export function vulnerabilityList(json: unknown): VulnItem[] {
 export async function allocatePort(store: Store, start: number, end: number, column: 'preview_port' | 'port'): Promise<number> {
   const used = new Set(
     column === 'preview_port'
-      ? store.all<{ p: number }>("SELECT preview_port AS p FROM submissions WHERE preview_port IS NOT NULL AND status NOT IN ('superseded','failed','cancelled')").map((r) => r.p)
-      : store.all<{ p: number }>("SELECT port AS p FROM releases WHERE port IS NOT NULL AND status IN ('active','starting')").map((r) => r.p),
+      ? store.all<{ p: number }>("SELECT preview_port AS p FROM submissions WHERE preview_port IS NOT NULL AND status NOT IN ('superseded','failed','cancelled','withdrawn')").map((r) => r.p)
+      : store.all<{ p: number }>("SELECT port AS p FROM releases WHERE port IS NOT NULL AND status IN ('active','starting','offline')").map((r) => r.p),
   );
   for (let p = start; p <= end; p++) if (!used.has(p) && !(await portInUse(p))) return p;
   throw new Error('沒有可用的本機埠');
@@ -251,13 +251,13 @@ function finalize(store: Store, jobId: string, subId: string, results: Partial<R
     store.run("UPDATE step_results SET status='cancelled', finished_at=? WHERE job_id=? AND status IN ('running','pending')", t, jobId);
     store.run("UPDATE jobs SET status='cancelled', finished_at=? WHERE id=?", t, jobId);
     const cur = store.get<{ status: string }>('SELECT status FROM submissions WHERE id=?', subId);
-    if (cur?.status !== 'superseded') store.setSubmissionStatus(subId, 'cancelled');
+    if (!['superseded', 'withdrawn'].includes(cur?.status ?? '')) store.setSubmissionStatus(subId, 'cancelled');
     return;
   }
   const failed = ['build', 'platform_test', 'business_test', 'preview', 'validate'].some((s) => ['failed', 'not_verified', 'skipped'].includes(results[s as StepName] ?? 'failed'))
     || results.scan === 'incomplete';
   store.run('UPDATE jobs SET status=?, finished_at=? WHERE id=?', failed ? 'failed' : 'succeeded', t, jobId);
   const cur = store.get<{ status: string }>('SELECT status FROM submissions WHERE id=?', subId);
-  if (cur?.status !== 'superseded') store.setSubmissionStatus(subId, failed ? 'failed' : 'awaiting_confirmation');
+  if (!['superseded', 'withdrawn'].includes(cur?.status ?? '')) store.setSubmissionStatus(subId, failed ? 'failed' : 'awaiting_confirmation');
   store.audit('system', failed ? 'job.failed' : 'job.succeeded', jobId, { submission: subId, results });
 }

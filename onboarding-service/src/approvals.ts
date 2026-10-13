@@ -104,6 +104,23 @@ export function approveRelease(store: Store, cfg: Config, id: string, actor: str
   });
 }
 
+/** 取消提交（測試失敗等）：撤回尚未發布的提交，撤銷其確認與核准；預覽容器由呼叫端關閉。 */
+export function withdraw(store: Store, id: string, actor: string, reason: string) {
+  const sub = getSub(store, id);
+  if (!['queued', 'running', 'failed', 'cancelled', 'interrupted', 'awaiting_confirmation', 'awaiting_approval', 'approved'].includes(sub.status)) {
+    throw new GateError([sub.status === 'released' ? '已發布的版本不能取消提交，請改用回復' : `目前狀態（${sub.status}）不能取消提交`]);
+  }
+  if (store.get("SELECT id FROM releases WHERE submission_id=? AND status IN ('pending','starting')", id)) throw new GateError(['此版本正在發布中，不能取消提交']);
+  if (!reason.trim()) throw new GateError(['請說明取消原因']);
+  const t = now();
+  store.tx(() => {
+    store.run("UPDATE jobs SET cancel_requested=1 WHERE submission_id=? AND status IN ('queued','running')", id);
+    store.run('UPDATE approvals SET revoked_at=? WHERE submission_id=? AND revoked_at IS NULL', t, id);
+    store.setSubmissionStatus(id, 'withdrawn');
+    store.audit(actor, 'submission.withdrawn', id, { reason: reason.trim(), previousStatus: sub.status });
+  });
+}
+
 export function approvalsFor(store: Store, id: string) {
   return store.all('SELECT kind,subject,actor,reason,created_at,revoked_at,image_digest FROM approvals WHERE submission_id=? ORDER BY created_at', id);
 }

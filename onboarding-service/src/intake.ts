@@ -52,7 +52,7 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   if (released) {
     return { ok: false, warnings: inspected.warnings, issues: [{ file: 'workhub.yaml', field: 'tool.version', reason: `版本 ${m.tool.version} 已發布過`, fix: '提交更新時請遞增版本號' }] };
   }
-  const dup = store.get<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND source_hash=? AND status NOT IN ('superseded','failed','cancelled','interrupted')", m.tool.id, sourceHash);
+  const dup = store.get<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND source_hash=? AND status NOT IN ('superseded','failed','cancelled','interrupted','withdrawn')", m.tool.id, sourceHash);
   if (dup) {
     return { ok: false, warnings: inspected.warnings, issues: [{ file: '(ZIP)', reason: `相同內容已在處理中或已完成（${dup.id}）`, fix: '若要重跑請使用「重試」；若有修改請重新打包' }] };
   }
@@ -83,7 +83,7 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
     }
     revision = (store.get<{ r: number }>('SELECT COALESCE(MAX(revision),0)+1 AS r FROM submissions WHERE tool_id=?', m.tool.id)?.r) ?? 1;
     // 新修訂使舊提交（未發布者）的測試確認與核准失效
-    const older = store.all<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND status NOT IN ('released','superseded')", m.tool.id);
+    const older = store.all<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND status NOT IN ('released','superseded','withdrawn')", m.tool.id);
     for (const o of older) {
       store.setSubmissionStatus(o.id, 'superseded');
       store.run('UPDATE approvals SET revoked_at=? WHERE submission_id=? AND revoked_at IS NULL', t, o.id);

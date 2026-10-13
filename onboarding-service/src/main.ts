@@ -6,6 +6,7 @@ import { DockerRuntime } from './runtime.ts';
 import { Secrets } from './secrets.ts';
 import { JobQueue } from './queue.ts';
 import { createApp } from './server.ts';
+import { runReleaseJob } from './releases.ts';
 
 const cfg = loadConfig();
 mkdirSync(cfg.dataDir, { recursive: true, mode: 0o700 });
@@ -14,6 +15,9 @@ const interrupted = store.markInterrupted('system');
 const secrets = new Secrets(cfg.dataDir);
 const rt = new DockerRuntime(cfg);
 const queue = new JobQueue(store, cfg, rt, secrets);
+queue.extraKinds.release = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 const { server } = createApp(store, cfg, queue, rt, secrets);
 
 const avail = await rt.available();

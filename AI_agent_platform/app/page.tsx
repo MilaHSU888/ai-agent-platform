@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ToolEntry } from "./tool-entry";
 import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
 import { defaultConfig, entryBlock, initialDemo, type DemoState } from "./demo-management";
+import { onboardingApi, type CatalogTool } from "./onboarding-api";
+
+const newEventId = () => `evt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
 type Department = {
   id: string;
@@ -180,12 +183,42 @@ export default function Home() {
     try { localStorage.setItem('workhub-demo-v018', JSON.stringify(demo)); }
     catch { queueMicrotask(() => setMessage('瀏覽器無法儲存；本次操作僅在目前頁面保留')); }
   }, [demo, demoLoaded]);
-  const catalog = useMemo(() => [...tools, ...demo.added].map(tool => {
-    const c = demo.configs[tool.id];
+  // 上架服務已發布、健康檢查通過的工具：覆蓋示範設定的狀態、版本、Owner 與入口網址（服務未啟動時維持示範資料）
+  const [released, setReleased] = useState<CatalogTool[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => onboardingApi.catalog().then((r) => { if (alive) setReleased(r); }).catch(() => { if (alive) setReleased([]); });
+    void load();
+    const timer = setInterval(load, 20000);
+    return () => { alive = false; clearInterval(timer); };
+  }, []);
+  const releasedExtra = useMemo<Tool[]>(() => released
+    .filter((r) => !tools.some((t) => t.name === r.name) && !demo.added.some((t) => t.name === r.name))
+    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: '已透過上架服務發布的工具', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: 'blue', icon: r.name.slice(0, 1) }) as Tool), [released, demo.added]);
+  const releasedById = useMemo(() => Object.fromEntries(released.map((r) => {
+    const match = tools.find((t) => t.name === r.name) ?? demo.added.find((t) => t.name === r.name);
+    return [match?.id ?? `rel-${r.toolId}`, r];
+  })) as Record<string, CatalogTool>, [released, demo.added]);
+  const releasedIds = useMemo(() => Object.fromEntries(Object.entries(releasedById).map(([id, r]) => [id, r.toolId])) as Record<string, string>, [releasedById]);
+  const shown = useMemo<DemoState>(() => {
+    const configs = { ...demo.configs };
+    for (const [id, r] of Object.entries(releasedById)) {
+      const tool = [...tools, ...demo.added, ...releasedExtra].find((t) => t.id === id);
+      if (!tool) continue;
+      configs[id] = { ...(configs[id] ?? defaultConfig(tool)), status: r.offline ? '已下架' : r.healthy ? '運行中' : '維護中', version: r.version, owner: r.owner, url: r.url ?? '', access: true, model: r.usesModel ? '核准模型端點（wisely-5090）' : '不使用模型' };
+    }
+    return { ...demo, configs };
+  }, [demo, releasedById, releasedExtra]);
+  const catalog = useMemo(() => [...tools, ...demo.added, ...releasedExtra].map(tool => {
+    const c = shown.configs[tool.id];
     return c ? {...tool, description:c.description, ...(c.url || tool.url !== undefined ? {url:c.url} : {})} : tool;
-  }), [demo.added, demo.configs]);
+  }), [demo.added, shown.configs, releasedExtra]);
   const changeDemo = (fn: (s: DemoState) => DemoState) => setDemo(fn);
-  const recordClick = (id:string) => setDemo(s => ({...s, clicks:[...s.clicks, {tool:id,time:new Date().toLocaleString('zh-TW')}].slice(-500)}));
+  const recordClick = (id:string) => {
+    setDemo(s => ({...s, clicks:[...s.clicks, {tool:id,time:new Date().toLocaleString('zh-TW')}].slice(-500)}));
+    const r = releasedById[id];
+    if (r) void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: r.toolId, kind: 'click' }).catch(() => {});
+  };
   const department = departments.find((item) => item.id === activeDepartment) ?? departments[0];
   const visibleTools = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -193,13 +226,22 @@ export default function Home() {
       const matchesDepartment = tool.department === activeDepartment;
       const matchesType = type === "全部" || tool.type === type;
       const matchesQuery = !normalized || `${tool.name}${tool.description}`.toLowerCase().includes(normalized);
-      return matchesDepartment && matchesType && matchesQuery && (!favoritesOnly || demo.favorites.includes(tool.id)) && (categoryFilter === "全部分類" || (demo.configs[tool.id] ?? defaultConfig(tool)).category === categoryFilter);
+      return matchesDepartment && matchesType && matchesQuery && (!favoritesOnly || demo.favorites.includes(tool.id)) && (categoryFilter === "全部分類" || (shown.configs[tool.id] ?? defaultConfig(tool)).category === categoryFilter);
     });
-  }, [activeDepartment, query, type, catalog, categoryFilter, favoritesOnly, demo.favorites, demo.configs]);
+  }, [activeDepartment, query, type, catalog, categoryFilter, favoritesOnly, demo.favorites, shown.configs]);
 
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
   const selectedTool = visibleTools.find((tool) => tool.id === selectedToolId) ?? null;
+  // 已發布工具服務未回應時，選取即記錄一次阻擋事件（每次選取一筆，不因定時更新重複）
+  const blockedLogged = useRef('');
+  useEffect(() => {
+    const r = releasedById[selectedToolId];
+    if (!r || r.healthy) { if (!r) blockedLogged.current = ''; return; }
+    if (blockedLogged.current === selectedToolId) return;
+    blockedLogged.current = selectedToolId;
+    void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: r.toolId, kind: 'blocked', reason: r.offline ? '工具已下架' : '服務健康檢查未回應' }).catch(() => {});
+  }, [selectedToolId, releasedById]);
 
   useEffect(() => {
     function focusSearch(event: KeyboardEvent) {
@@ -288,7 +330,7 @@ export default function Home() {
                   <button className={`tool-card ${selectedToolId === tool.id ? "selected" : ""}`} key={tool.id} onClick={() => setSelectedToolId((current) => current === tool.id ? "" : tool.id)} aria-expanded={selectedToolId === tool.id}>
                     <span className={`tool-icon metal-tile ${tool.color}`}><i className={`metal-symbol symbol-${index % 6}`}></i></span>
                     <strong>{tool.name}</strong>
-                    <small>{tool.type === "AI" ? "AI" : "TOOL"} · {(demo.configs[tool.id] ?? defaultConfig(tool)).status}{!(demo.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}</small>
+                    <small>{tool.type === "AI" ? "AI" : "TOOL"} · {(shown.configs[tool.id] ?? defaultConfig(tool)).status}{!(shown.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}</small>
                   </button>
                 ))}
               </section>
@@ -296,11 +338,11 @@ export default function Home() {
               <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
             )}
 
-            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small></div><div className="demo-entry-actions"><small>{(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool)).model}</small><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{entryBlock(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
+            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small></div><div className="demo-entry-actions"><small>{(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).model}</small><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
           </div>
         ) : view === "analytics" ? (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
-        ) : <ManagementCenter view={view} state={demo} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} /> }
+        ) : <ManagementCenter view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} /> }
       </main>
 
     </div>

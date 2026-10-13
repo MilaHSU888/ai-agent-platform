@@ -44,7 +44,7 @@ export class JobQueue {
     if (next.cancel_requested) {
       this.store.run("UPDATE jobs SET status='cancelled', finished_at=? WHERE id=?", now(), next.id);
       const s = this.store.get<{ status: string }>('SELECT status FROM submissions WHERE id=?', next.submission_id);
-      if (s && s.status !== 'superseded') this.store.setSubmissionStatus(next.submission_id, 'cancelled');
+      if (s && !['superseded', 'withdrawn'].includes(s.status)) this.store.setSubmissionStatus(next.submission_id, 'cancelled');
       return;
     }
     const ctrl = new AbortController();
