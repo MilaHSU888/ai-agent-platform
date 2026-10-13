@@ -357,13 +357,25 @@ quote-aggregator-2.12.0-pilot.5.zip
 ### 12.1 開發者要準備
 
 1. 第一次上架在開發者中心點「下載上架資料包」；版本更新在該工具那一列點「下載更新資料包」，給 AI 的指令已帶入 tool.id、目前版本、建議的新版本號與模型端點。解壓後把 `workhub-kit/` 資料夾放進專案資料夾。資料包內有本 SOP（`WorkHub工具上架SOP.md`）、`workhub.yaml` 範本、預檢工具 `workhub-check.mjs`、指令範本 `給AI的打包指令.txt`。
-2. 電腦裝好 Docker Desktop 與 Node.js 22 以上（AI 驗證與預檢要用）。
+2. 先完成下方「開始前必須安裝」的每一項，檢查指令都正常再開始。AI agent 不會替你安裝這些系統軟體。
 3. 準備好答案：工具代號與名稱、是否存資料、是否用 AI、測試資料是否已去識別化。`tool.id` 與版本號可在開發者中心「工具提交」該工具那一列看到，版更用的資料包也已帶入。
 4. 開啟 AI agent，貼上 `給AI的打包指令.txt` 的內容，勾選第一次上架或版本更新。
 
+開始前必須安裝（由開發者自己裝好，公司電腦請先問 IT）：
+
+| 項目 | 用途 | 檢查指令 | 沒有時 |
+| --- | --- | --- | --- |
+| Docker Desktop（引擎已啟動） | 建置與本機驗證 | `docker info` 正常顯示，沒有錯誤 | 到 docker.com 下載安裝後打開一次；需要管理者權限。大型企業商業使用需付費授權，請先確認公司政策 |
+| Node.js 22 以上 | 執行預檢工具 `workhub-check.mjs` | `node -v` 顯示 v22 以上 | 到 nodejs.org 下載 LTS 版 |
+| 能執行指令的 AI agent | 依 SOP 修改、驗證與打包 | 在專案資料夾開啟後能執行 `docker info` | 依公司核准的工具安裝（例如 Claude Code） |
+| 網路可連 Docker Hub 與套件庫 | 建置時下載基底映像與套件（PyPI、npm） | `docker pull hello-world` 成功 | 公司網路有限制時請 IT 開放 |
+| 磁碟空間 10 GB 以上 | 映像與建置快取 | `df -h ~` | 清出空間，或在 Docker Desktop 清除不用的映像 |
+
+不必需：工具本身的開發環境（例如 Python）可以沒有，測試可以在 Docker 裡跑。平台是 linux/arm64；Apple 晶片的 Mac 最順，Intel Mac 或 Windows 也能建置，但會透過模擬執行、速度較慢。
+
 ### 12.2 AI agent 的工作步驟
 
-1. **讀 SOP**：完整讀過第 1～12 節再動手。
+1. **讀 SOP**：完整讀過第 1～12 節；先執行 12.1「開始前必須安裝」的檢查指令，缺少任何一項就停下來告訴開發者缺什麼、怎麼安裝，不自行安裝系統軟體。
 2. **盤點專案**：語言與框架、進入點、監聽埠、會寫檔的位置、對外連線、寫死的金鑰或主機、現有測試、只能在 Windows 執行的套件。
 3. **先問人**：遇到 12.5 的事項，一次列出問題，等開發者回答。
 4. **補齊設定**：依第 4、5 節寫 `workhub.yaml`、`Dockerfile`、`.dockerignore`；在 Linux 容器裡產生寫死版本的鎖定清單（Python 可用 `docker run --rm -v "$PWD":/w -w /w python:3.14-slim-trixie sh -c "pip install -r requirements.txt && pip freeze > requirements.lock"`）。

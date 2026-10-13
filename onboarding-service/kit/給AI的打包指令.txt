@@ -5,6 +5,7 @@
 - 上架資料包：workhub-kit/ 資料夾（內有 WorkHub工具上架SOP.md、workhub.yaml 範本、workhub-check.mjs）
 
 請照 workhub-kit/WorkHub工具上架SOP.md 執行，特別是第 12 節「交給 AI agent 打包」：
+0. 先執行 SOP 12.1「開始前必須安裝」的檢查指令（docker info、node -v 等）。缺少任何一項就停下來告訴我缺什麼、怎麼安裝，不要自行安裝系統軟體。
 1. 先完整讀過 SOP，再盤點專案（語言、框架、進入點、監聽埠、會寫檔的位置、外部連線、寫死的金鑰或主機、現有測試）。
 2. 遇到第 12 節「必須停下來問人」的事項，先問我，不要自己決定。
 3. 依 SOP 補齊或修改 workhub.yaml、Dockerfile、.dockerignore、鎖定套件清單與業務測試；必要時調整程式，讓資料只寫在 DATA_DIR、監聽 0.0.0.0、有健康檢查網址、使用 AI 時只讀 OPENAI_BASE_URL／OPENAI_API_KEY／OPENAI_MODEL。
