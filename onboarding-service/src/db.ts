@@ -7,9 +7,9 @@ export type SubmissionStatus =
 
 export type StepStatus =
   | 'pending' | 'running' | 'passed' | 'warning' | 'failed' | 'blocked' | 'skipped'
-  | 'not_verified' | 'incomplete' | 'cancelled' | 'interrupted';
+  | 'not_verified' | 'incomplete' | 'cancelled' | 'interrupted' | 'awaiting';
 
-export const STEPS = ['validate', 'build', 'scan', 'ai_review', 'platform_test', 'business_test', 'preview'] as const;
+export const STEPS = ['validate', 'build', 'scan', 'code_review', 'platform_test', 'business_test', 'preview'] as const;
 export type StepName = (typeof STEPS)[number];
 
 const SCHEMA = `
@@ -77,6 +77,8 @@ export class Store {
     // 維運：工具維護旗標（入口關閉、容器照跑）
     const tcols = this.all<{ name: string }>('PRAGMA table_info(tools)').map((c) => c.name);
     if (!tcols.includes('maintenance_json')) this.db.exec('ALTER TABLE tools ADD COLUMN maintenance_json TEXT');
+    // 程式碼檢查改為人工確認（DEC-019）：舊步驟名稱 ai_review 更名為 code_review
+    this.db.exec("UPDATE step_results SET step='code_review' WHERE step='ai_review'");
   }
 
   get<T = Row>(sql: string, ...params: unknown[]): T | undefined {

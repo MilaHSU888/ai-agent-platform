@@ -48,8 +48,7 @@ export function releaseBlockers(store: Store, cfg: Config, sub: Sub): string[] {
     const miss = missingExceptions(store, sub);
     if (miss.length) reasons.push(`CRITICAL 漏洞尚未核准例外：${miss.join(', ')}`);
   }
-  const ai = s.ai_review?.status;
-  if (!(ai === 'passed' || (ai === 'skipped' && cfg.environment === 'local'))) reasons.push('程式碼 AI review 未完成（正式環境不可略過）');
+  if (!activeApprovals(store, sub, 'code_review').length) reasons.push('開發者尚未按「已檢查」完成程式碼檢查');
   if (!activeApprovals(store, sub, 'test_confirmation').length) reasons.push('使用者尚未確認測試結果');
   return reasons;
 }
@@ -68,6 +67,7 @@ export function confirmTest(store: Store, cfg: Config, id: string, actor: string
   if (s.business_test?.status !== 'passed') reasons.push('業務測試未通過');
   if (s.platform_test?.status !== 'passed') reasons.push('平台共通檢查未通過');
   if (s.preview?.status !== 'passed') reasons.push('預覽未啟動，無法人工核對');
+  if (!activeApprovals(store, sub, 'code_review').length) reasons.push('請先完成程式碼檢查（按「已檢查」）');
   if (!note.trim()) reasons.push('請填寫核對說明（例如核對了哪些樣本）');
   if (reasons.length) throw new GateError(reasons);
   store.tx(() => {
@@ -75,6 +75,25 @@ export function confirmTest(store: Store, cfg: Config, id: string, actor: string
       newId('apv'), id, 'test_confirmation', null, actor, note.trim(), sub.source_hash, sub.image_digest, now());
     store.setSubmissionStatus(id, 'awaiting_approval');
     store.audit(actor, 'submission.test_confirmed', id, { note: note.trim(), imageDigest: sub.image_digest });
+  });
+}
+
+/** 人工程式碼檢查：開發者自行看過程式碼與漏洞清單後按「已檢查」即代表通過（備註選填）；綁定這一版的原始碼與 image，新版本上傳後失效 */
+export function confirmCodeReview(store: Store, cfg: Config, id: string, actor: string, note: string) {
+  const sub = getSub(store, id);
+  if (!['running', 'awaiting_confirmation'].includes(sub.status)) throw new GateError([`目前狀態（${sub.status}）不能標示程式碼已檢查`]);
+  const s = latestSteps(store, id);
+  const reasons: string[] = [];
+  if (s.build?.status !== 'passed') reasons.push('建置尚未成功，沒有可檢查的版本');
+  if (!['passed', 'warning'].includes(s.scan?.status ?? '')) reasons.push('漏洞檢查尚未完成，請等掃描結果出來再檢查');
+  if (activeApprovals(store, sub, 'code_review').length) reasons.push('這一版已完成程式碼檢查');
+  if (reasons.length) throw new GateError(reasons);
+  const job = store.get<{ id: string }>("SELECT id FROM jobs WHERE submission_id=? AND kind='verify' ORDER BY created_at DESC LIMIT 1", id);
+  store.tx(() => {
+    store.run('INSERT INTO approvals(id,submission_id,kind,subject,actor,reason,source_hash,image_digest,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      newId('apv'), id, 'code_review', null, actor, note.trim(), sub.source_hash, sub.image_digest, now());
+    if (job) store.setStep(job.id, 'code_review', 'passed', { mode: 'manual', reviewer: actor, note: note.trim(), at: now() });
+    store.audit(actor, 'submission.code_reviewed', id, { note: note.trim(), imageDigest: sub.image_digest });
   });
 }
 

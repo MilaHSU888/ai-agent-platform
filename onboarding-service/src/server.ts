@@ -10,7 +10,7 @@ import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
 import { opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { buildKit, type KitTarget } from './kit.ts';
-import { approvalsFor, approveException, approveRelease, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
+import { approvalsFor, approveException, approveRelease, confirmCodeReview, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
@@ -205,6 +205,11 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       if (!job || !existsSync(file)) { send(res, 404, { error: '此提交尚無漏洞掃描結果' }); return; }
       const items = vulnerabilityList(JSON.parse(readFileSync(file, 'utf8')));
       send(res, 200, { scannedAt: statSync(file).mtime.toISOString(), items });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/submissions\/([\w-]+)\/code-review$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      confirmCodeReview(store, cfg, m[1], session!.actor, String(body.note ?? ''));
+      send(res, 200, { submission: submissionView(m[1]) });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/submissions\/([\w-]+)\/confirmations$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);

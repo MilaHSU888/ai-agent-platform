@@ -10,7 +10,8 @@ import { loadConfig } from '../src/config.ts';
 import { Secrets } from '../src/secrets.ts';
 
 const ENDPOINT_ID = 'wisely-5090';
-const BASE = (process.env.MODEL_BASE_URL ?? 'https://llm.wiselychen.org/v1').replace(/\/$/, '');
+// 端點網址不寫在程式裡：由 .command 詢問（Enter＝沿用已儲存的網址），經環境變數 MODEL_BASE_URL 傳入
+const BASE = (process.env.MODEL_BASE_URL ?? '').trim().replace(/\/$/, '');
 const UA = 'WorkHub-Onboarding/0.1';
 // 64x32 PNG：左半紅、右半藍，用於確認模型能讀圖
 const IMG = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAAOElEQVR4nO3PsQkAAAzDsPz/dHpFliLwbFCaTBvvu94DAAAAAAAAAAAAAAAAAAAAAAAAAAAAPAQcOkv4asq/aw0AAAAASUVORK5CYII=';
@@ -48,6 +49,7 @@ async function call(path: string, key: string, body?: unknown, timeoutMs = 125_0
 
 const key = await readKey();
 if (key.length < 16) { console.log('✗ 沒有收到金鑰（或長度不足），未做任何變更。'); process.exit(1); }
+if (!/^https?:\/\//.test(BASE)) { console.log('✗ 沒有收到端點網址（需以 https:// 開頭），未做任何變更。'); process.exit(1); }
 console.log(`\n端點：${BASE}`);
 
 const models = await call('/models', key, undefined, 20_000);

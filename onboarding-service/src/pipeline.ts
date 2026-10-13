@@ -1,5 +1,5 @@
 /**
- * 驗證工作：validate → build → scan → ai_review → platform_test → business_test → preview。
+ * 驗證工作：validate → build → scan → code_review（人工程式碼檢查，等待確認）→ platform_test → business_test → preview。
  * 每步寫入 step_results 與證據檔；任何一步失敗、未驗證或掃描未完成，提交都不可送交確認。
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -158,14 +158,9 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
       set('scan', results.scan, { policy: 'record only; not blocking', ...s, needsException: [] });
     }
 
-    // 4. AI review：本機標示略過並留存原因；正式環境禁止略過
-    if (cfg.environment === 'local') {
-      results.ai_review = 'skipped';
-      set('ai_review', 'skipped', { reason: '本機試點：程式碼 AI review 暫略過（未執行，不是通過）', actor: cfg.operator, at: now(), scope: 'local-only' });
-    } else {
-      results.ai_review = 'blocked';
-      set('ai_review', 'blocked', { reason: '正式環境尚未接入程式碼 AI review，不可略過' });
-    }
+    // 4. 程式碼檢查：改由客戶人工審查（DEC-019）。自動流程不代審，標為「待確認」，由開發者在網站按「已檢查」才算通過
+    results.code_review = 'awaiting';
+    set('code_review', 'awaiting', { reason: '等待開發者人工程式碼檢查', mode: 'manual' });
 
     // 5. platform_test：獨立容器＋空白資料卷，健康檢查與入口可達性
     if (stopIfCancelled()) return;

@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { loadConfig } from './config.ts';
 import { Store } from './db.ts';
@@ -10,6 +11,20 @@ import { runReleaseJob } from './releases.ts';
 import { relayEnv, syncRelay } from './relay.ts';
 
 const cfg = loadConfig();
+
+// 先確認埠沒被占用，再碰資料庫與通行碼：重複啟動時若先覆寫 proxy-token、把工作標為中斷，
+// 會讓正在執行的那一份服務認不得網站送來的通行碼（網站顯示「無法以本機操作者身分連線」）。
+const portFree = await new Promise<boolean>((resolve) => {
+  const probe = createServer();
+  probe.once('error', () => resolve(false));
+  probe.listen(cfg.port, cfg.host, () => probe.close(() => resolve(true)));
+});
+if (!portFree) {
+  console.error(`上架服務已經在執行（${cfg.host}:${cfg.port} 已被占用），這次啟動已取消，原本的服務不受影響。`);
+  console.error('若要重新啟動：先關閉原本的上架服務視窗（或按 Ctrl+C），再雙擊「啟動上架服務.command」。');
+  process.exit(1);
+}
+
 mkdirSync(cfg.dataDir, { recursive: true, mode: 0o700 });
 const store = new Store(join(cfg.dataDir, 'onboarding.db'));
 const interrupted = store.markInterrupted('system');
@@ -26,6 +41,10 @@ const avail = await rt.available();
 const relay = avail.docker && relayEnv(cfg, secrets) && Object.keys(secrets.relayTokens()).length
   ? await syncRelay(cfg, rt, secrets).catch((e: Error) => ({ ok: false, detail: e.message }))
   : { ok: false, detail: relayEnv(cfg, secrets) ? '尚無工具使用模型，第一次預覽或發布時啟動' : '核准模型端點尚未設定（雙擊「設定模型端點.command」）' };
+server.on('error', (e: NodeJS.ErrnoException) => {
+  console.error(e.code === 'EADDRINUSE' ? `埠 ${cfg.port} 剛被其他程式占用，上架服務無法啟動。請關閉另一個上架服務視窗後再試。` : `上架服務無法啟動：${e.message}`);
+  process.exit(1);
+});
 server.listen(cfg.port, cfg.host, () => {
   const line = '─'.repeat(56);
   console.log(line);

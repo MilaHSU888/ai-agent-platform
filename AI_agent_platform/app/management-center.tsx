@@ -31,7 +31,7 @@ export function ManagementCenter({view,state,tools,departments,change,notice,rel
  const openRelease=(t:DemoTool)=>{setSelectedDepartment(t.department);setSelected(t.id);setReleaseOpen(true);};
  return <div className="mg-center"><header className="mg-heading"><div><p className="eyebrow">WORKHUB / 管理工作台</p><h1>{title.label}</h1><p>{view==='developer'?'上傳原始碼 ZIP，由本機上架服務自動建置、檢查與測試；確認後送交發布核准。':view==='releases'?'集中核准工具上線、管理發布狀態與回復版本。':view==='monitor'?'發現異常後，可在同一頁進入維護、查看狀態、重啟服務或回復版本。':'工具生命週期與入口共用同一份示範資料'}</p></div>{view==='releases'?<button onClick={download}>匯出稽核紀錄 ↓</button>:null}</header>
  {view==='developer'&&<>
-  <div className="mg-flow">{['上傳原始碼 ZIP','自動建置','漏洞檢查','開發者預覽與測試','提交發佈申請'].map((label,i)=><span key={label}><b>0{i+1}</b>{label}</span>)}</div>
+  <div className="mg-flow">{['上傳原始碼 ZIP','自動建置','漏洞檢查','程式碼檢查','開發者預覽與測試','提交發佈申請'].map((label,i)=><span key={label}><b>0{i+1}</b>{label}</span>)}</div>
   <OnboardingPanel departments={departments} notice={notice}/>
  </>}
  {view==='releases'&&<>

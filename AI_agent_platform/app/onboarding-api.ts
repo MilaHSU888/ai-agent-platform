@@ -84,6 +84,7 @@ export const onboardingApi = {
   catalog: () => call<{ tools: CatalogTool[] }>('GET', '/catalog').then((r) => r.tools),
   entryEvent: (e: { clientEventId: string; toolId: string; kind: 'click' | 'blocked'; reason?: string }) => call<{ recorded: boolean }>('POST', '/entry-events', e),
   withdraw: (id: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/withdraw`, { reason }),
+  codeReview: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/code-review`, { note }),
   confirm: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/confirmations`, { note }),
   exception: (id: string, cveId: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/exceptions`, { cveId, reason }),
   approve: (id: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/approvals`, { reason }),

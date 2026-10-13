@@ -3,18 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, onboardingApi, type Issue, type ReleaseRecord, type Session, type Submission, type VulnItem } from './onboarding-api';
 
 const STEP_LABELS: [string, string][] = [
-  ['validate', '提交驗證'], ['build', '建置 image'], ['scan', '漏洞檢查'], ['ai_review', '程式碼 AI review'],
+  ['validate', '提交驗證'], ['build', '建置 image'], ['scan', '漏洞檢查'], ['code_review', '程式碼檢查'],
   ['platform_test', '平台共通檢查'], ['business_test', '工具業務測試'], ['preview', '預覽'],
 ];
 const STEP_STATUS: Record<string, string> = {
   pending: '等待中', running: '執行中', passed: '通過', warning: '有 CRITICAL 漏洞（不阻擋）', failed: '失敗', blocked: '需核准例外', skipped: '略過',
-  not_verified: '未驗證', incomplete: '未完成', cancelled: '已取消', interrupted: '已中斷',
+  not_verified: '未驗證', incomplete: '未完成', cancelled: '已取消', interrupted: '已中斷', awaiting: '待人工確認',
 };
 const SUB_STATUS: Record<string, string> = {
   queued: '排隊中', running: '建置與測試中', failed: '未通過', cancelled: '已取消', interrupted: '已中斷（可重試）',
   awaiting_confirmation: '待使用者確認測試', awaiting_approval: '待發布核准', approved: '已核准（待發布）', released: '已發布', superseded: '已被新版本取代', withdrawn: '已取消提交',
 };
-const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
+const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
 const ACTIVE = ['queued', 'running'];
 
 type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void };
@@ -35,7 +35,7 @@ function stepDetail(step: string, s: Record<string, unknown>): string {
     const c = (s.counts ?? {}) as Record<string, number>;
     return `CRITICAL ${c.CRITICAL ?? 0} · HIGH ${c.HIGH ?? 0}（${String(s.uniqueCves ?? 0)} 個不重複 CVE）；僅記錄，不阻擋發布`;
   }
-  if (step === 'ai_review') return String(s.reason ?? '');
+  if (step === 'code_review') return s.reviewer ? `${String(s.reviewer)} 已檢查${s.note ? `：${String(s.note)}` : ''}` : '請開發者看過程式碼後，在下方按「已檢查」';
   if (step === 'platform_test') return s.gotStatus ? `健康檢查 ${String(s.healthPath)} → ${String(s.gotStatus)}（${String(s.secondsToHealthy)} 秒）` : `健康檢查未回應（${String(s.healthPath)}）`;
   if (step === 'business_test') return s.reason ? String(s.reason) : `無網路容器執行 ${(s.command as string[] | undefined)?.join(' ') ?? ''} → exit ${String(s.exitCode)}${s.timedOut ? '（逾時）' : ''}`;
   if (step === 'preview') return s.url ? `${String(s.url)}${s.modelConfigured === false ? '（尚未設定模型連線，AI 功能不可用）' : ''}` : String(s.reason ?? '');
@@ -81,6 +81,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
   const [vulns, setVulns] = useState<{ tool: string; scannedAt: string; items: VulnItem[] } | null>(null);
   const [vulnFilter, setVulnFilter] = useState<'all' | 'CRITICAL' | 'fixable'>('all');
   const [note, setNote] = useState('');
+  const [reviewNote, setReviewNote] = useState('');
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawReason, setWithdrawReason] = useState('');
   const [health, setHealth] = useState<{ docker: boolean; trivy: boolean } | null>(null);
@@ -149,6 +150,8 @@ export function OnboardingPanel({ departments, notice }: Props) {
     <button onClick={() => location.reload()}>重新整理</button></section>;
 
   const steps = selected?.steps ?? {};
+  // 程式碼檢查：漏洞檢查完成後由開發者自行檢查程式碼並按「已檢查」；完成前不顯示測試確認
+  const needsReview = !!selected && ['running', 'awaiting_confirmation'].includes(selected.status) && ['awaiting', 'skipped'].includes(steps.code_review?.status ?? '') && ['passed', 'warning'].includes(steps.scan?.status ?? '');
 
   return <div className="onb">
     <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」；已上架的工具要更新，請在下方該工具旁按「提交新版本」。還沒有 ZIP？先下載上架資料包（SOP、範本、預檢工具與給 AI 的打包指令），交給 AI agent 打包。</p></div>
@@ -194,7 +197,6 @@ export function OnboardingPanel({ departments, notice }: Props) {
         <div className="mg-row"><div><h2>提交詳情</h2><h3>{selected.toolName} · {selected.version}</h3>
           <p className="mg-muted">第 {selected.revision} 版提交 · {selected.originalFilename} · 來源雜湊 <code>{selected.sourceHash.slice(0, 12)}</code>{selected.imageDigest && <> · image <code>{selected.imageDigest.slice(0, 19)}</code></>}</p></div>
           <div className="onb-head-actions"><span className={`mg-status ${tone(selected.status)}`}>{SUB_STATUS[selected.status] ?? selected.status}</span></div></div>
-        <p className="onb-note">本機試點：程式碼 AI review 未執行（標示為略過，不是通過）；僅允許本機發布。</p>
         <ol className="onb-steps">{STEP_LABELS.map(([key, label]) => {
           const st = steps[key];
           const status = st?.status ?? 'pending';
@@ -207,7 +209,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
             <div className="onb-step-links">
               {key === 'scan' && ['passed', 'warning', 'blocked'].includes(status) &&
                 <button className="onb-link" onClick={() => void onboardingApi.vulns(selected.id).then((r) => { setVulnFilter('all'); setVulns({ tool: `${selected.toolName} · ${selected.version}`, ...r }); }).catch(fail)}>查看漏洞清單</button>}
-              {selected.job && !['pending', 'skipped'].includes(status) && key !== 'ai_review' &&
+              {selected.job && !['pending', 'skipped'].includes(status) && key !== 'code_review' &&
                 <button className="onb-link" onClick={() => void onboardingApi.log(selected.job!.id, key).then((text) => setLog({ step: label, text }))}>查看日誌</button>}
             </div>
           </li>;
@@ -229,7 +231,20 @@ export function OnboardingPanel({ departments, notice }: Props) {
             <button className="onb-danger" disabled={busy || !withdrawReason.trim()} onClick={() => void act(async () => { await onboardingApi.withdraw(selected.id, withdrawReason); setWithdrawOpen(false); }, '已取消提交')}>確認取消提交</button></div>
         </div>}
 
-        {selected.status === 'awaiting_confirmation' && <div className="onb-cta">
+        {needsReview && <div className="onb-cta">
+          <p className="onb-cta-eyebrow">下一步：程式碼檢查</p>
+          <h3>請自行檢查程式碼，沒問題就按「已檢查」</h3>
+          <ol>
+            <li>檢視這次上傳的原始碼（重點：是否有寫死的帳密、對外連線、刪改資料的動作）。</li>
+            <li>沒問題就按「<b>已檢查</b>」（備註選填）。若有問題請改按「取消提交」，修正後重新上傳。</li>
+          </ol>
+          <textarea aria-label="程式碼檢查備註" value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="備註（選填），例如：已看過 app/ 與 workhub.yaml，無寫死帳密與對外連線" />
+          <div className="onb-cta-actions">
+            <button className="onb-primary" disabled={busy} onClick={() => void act(async () => { await onboardingApi.codeReview(selected.id, reviewNote); setReviewNote(''); }, '程式碼已檢查')}>已檢查</button>
+          </div>
+        </div>}
+
+        {selected.status === 'awaiting_confirmation' && !needsReview && <div className="onb-cta">
           <p className="onb-cta-eyebrow">下一步：請完成測試並確認</p>
           <h3>在預覽中測試這個版本，確認沒問題後提交發佈申請</h3>
           <ol>
@@ -249,7 +264,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
 
         {reasons.length > 0 && <ul className="onb-error">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
         {selected.approvals.length > 0 && <div><h3>確認與核准紀錄</h3>{selected.approvals.map((a, i) =>
-          <p key={i} className="mg-event">{new Date(a.created_at).toLocaleString('zh-TW')}｜{a.actor}｜{({ test_confirmation: '測試確認', vuln_exception: '漏洞例外', release_approval: '發布核准' } as Record<string, string>)[a.kind] ?? a.kind}{a.subject ? ` ${a.subject}` : ''}：{a.reason}{a.revoked_at ? '（已失效）' : ''}</p>)}</div>}
+          <p key={i} className="mg-event">{new Date(a.created_at).toLocaleString('zh-TW')}｜{a.actor}｜{({ code_review: '程式碼已檢查', test_confirmation: '測試確認', vuln_exception: '漏洞例外', release_approval: '發布核准' } as Record<string, string>)[a.kind] ?? a.kind}{a.subject ? ` ${a.subject}` : ''}{a.reason ? `：${a.reason}` : ''}{a.revoked_at ? '（已失效）' : ''}</p>)}</div>}
       </section>}
     </div>
 
@@ -342,7 +357,8 @@ export function ReleaseReview({ notice }: { notice: (m: string) => void }) {
           <div className="mg-row"><div><h3>{sub.toolName} · {sub.version}</h3><small className="mg-muted">第 {sub.revision} 版提交 · Owner {sub.owner} · image <code>{(sub.imageDigest ?? '').slice(0, 19)}</code></small></div>
             <span className={`mg-status ${inFlight ? 'warn' : sub.status === 'approved' ? 'good' : 'warn'}`}>{inFlight ? '發布中' : sub.status === 'approved' ? '已核准（待發布）' : '待管理者審核'}</span></div>
           <ul className="onb-review-facts">
-            <li>建置 {ok('build') ? '通過' : '未通過'} · 平台共通檢查 {ok('platform_test') ? '通過' : '未通過'} · 業務測試 {ok('business_test') ? '通過' : '未通過'} · 程式碼 AI review 略過（本機試點）</li>
+            <li>建置 {ok('build') ? '通過' : '未通過'} · 平台共通檢查 {ok('platform_test') ? '通過' : '未通過'} · 業務測試 {ok('business_test') ? '通過' : '未通過'}</li>
+            <li>程式碼檢查：{(() => { const cr = sub.approvals.filter((a) => a.kind === 'code_review' && !a.revoked_at).at(-1); return cr ? `${cr.actor} 已檢查（${new Date(cr.created_at).toLocaleString('zh-TW')}）${cr.reason ? `：${cr.reason}` : ''}` : '尚未檢查'; })()}</li>
             <li className={(scan.counts?.CRITICAL ?? 0) > 0 ? 'onb-error' : undefined}>漏洞（僅記錄，不阻擋）：CRITICAL {scan.counts?.CRITICAL ?? 0} · HIGH {scan.counts?.HIGH ?? 0}{(scan.counts?.CRITICAL ?? 0) > 0 && '，請先在開發者中心查看漏洞清單再核准'}{exceptions.length > 0 && `；已核准例外 ${exceptions.map((e) => e.subject).join('、')}`}</li>
             {confirmNote && <li>測試確認（{confirmNote.actor}，{new Date(confirmNote.created_at).toLocaleString('zh-TW')}）：{confirmNote.reason}</li>}
             {rel?.status === 'failed' && <li className="onb-error">上次發布失敗：{rel.detail.error}（入口維持原狀，可修正後再發布）</li>}

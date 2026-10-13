@@ -93,8 +93,8 @@ test('完整流程：上傳 → 建置 → 掃描 → 測試 → 預覽 → 測�
     assert.equal(s1.status, 'awaiting_confirmation');
     assert.equal(s1.steps.build.status, 'passed');
     assert.equal(s1.steps.scan.status, 'passed');
-    assert.equal(s1.steps.ai_review.status, 'skipped');
-    assert.match(s1.steps.ai_review.summary.reason, /未執行，不是通過/);
+    assert.equal(s1.steps.code_review.status, 'awaiting');
+    assert.match(s1.steps.code_review.summary.reason, /開發者人工程式碼檢查/);
     assert.equal(s1.steps.platform_test.status, 'passed');
     assert.equal(s1.steps.business_test.status, 'passed');
     assert.equal(s1.steps.preview.status, 'passed');
@@ -102,6 +102,13 @@ test('完整流程：上傳 → 建置 → 掃描 → 測試 → 預覽 → 測�
     // 業務測試在無網路容器執行；預覽容器埠只綁本機（由 runtime 以 127.0.0.1 綁定）
     assert.equal(t.rt.ran[0].network, 'none');
     assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: 'ok' })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '核對 Q01～Q07' })).status, 409, '未做程式碼檢查不能確認測試');
+    const cr = await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, {});  // 開發者直接按「已檢查」，備註選填
+    assert.equal(cr.status, 200);
+    const s2 = cr.data.submission as Record<string, any>;
+    assert.equal(s2.steps.code_review.status, 'passed');
+    assert.equal(s2.steps.code_review.summary.reviewer, 'Mila');
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, { note: '再按一次' })).status, 409, '同一版不重複確認');
     assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '' })).status, 409);
     assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '核對 Q01～Q07' })).status, 200);
     const ap = await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: '本機試點發布' });
@@ -158,6 +165,7 @@ test('漏洞檢查只記錄不阻擋：有 CRITICAL 標為 warning，不需例�
     assert.equal(s.steps.scan.summary.counts.CRITICAL, 1);
     assert.deepEqual(s.pendingExceptions, []);
     assert.equal(s.status, 'awaiting_confirmation');
+    await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, { note: '已看過程式碼' });
     await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '已核對' });
     s = (await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: '發布' })).data.submission as Record<string, any>;
     assert.equal(s.status, 'approved');
@@ -170,6 +178,7 @@ test('新修訂使舊提交失效，舊的確認與核准一併撤銷；同內�
     await t.login();
     const a = ((await upload(t.call, validZip())).data.submission as { id: string }).id;
     await t.runQueue();
+    await t.call('POST', `/api/onboarding/submissions/${a}/code-review`, { note: '已看過程式碼' });
     await t.call('POST', `/api/onboarding/submissions/${a}/confirmations`, { note: '已核對' });
     assert.equal((await upload(t.call, validZip())).status, 422);
     const b = await upload(t.call, validZip([{ name: 'fix.txt', data: 'v2' }]));
@@ -245,6 +254,7 @@ async function approvedVersion(t: Awaited<ReturnType<typeof setup>>, version: st
   assert.equal(up.status, 201, JSON.stringify(up.data));
   const id = (up.data.submission as { id: string }).id;
   await t.runQueue();
+  await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, { note: '已看過程式碼' });
   assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '已核對' })).status, 200);
   assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: '核准' })).status, 200);
   const sub = (await t.call('GET', `/api/onboarding/submissions/${id}`)).data.submission as Record<string, any>;
@@ -259,6 +269,7 @@ test('發布：未核准不能發布；核准後發布同一份 image，健康�
     const pending = (up.data.submission as { id: string }).id;
     await t.runQueue();
     assert.equal((await t.call('POST', `/api/onboarding/submissions/${pending}/release`)).status, 409);
+    await t.call('POST', `/api/onboarding/submissions/${pending}/code-review`, { note: '已看過程式碼' });
     await t.call('POST', `/api/onboarding/submissions/${pending}/confirmations`, { note: '已核對' });
     await t.call('POST', `/api/onboarding/submissions/${pending}/approvals`, { reason: '核准' });
     const digest = ((await t.call('GET', `/api/onboarding/submissions/${pending}`)).data.submission as Record<string, any>).imageDigest;
@@ -564,6 +575,7 @@ test('取消提交：測試失敗時撤回，撤銷確認並關閉預覽；已�
     const up = await upload(t.call, validZip(), 'department=purchase&owner=Mila&mode=new');
     const id = (up.data.submission as { id: string }).id;
     await t.runQueue();
+    await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, { note: '已看過程式碼' });
     await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '已核對' });
     assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/withdraw`, { reason: '  ' })).status, 409);
     const w = await t.call('POST', `/api/onboarding/submissions/${id}/withdraw`, { reason: '匯出比較表失敗' });
