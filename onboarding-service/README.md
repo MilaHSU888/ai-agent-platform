@@ -1,6 +1,6 @@
 # WorkHub 本機上架服務（onboarding-service）
 
-本機試點用的上架管理服務：接收原始碼 ZIP → 驗證 → 建置 image → 漏洞檢查 → 平台共通檢查 → 工具業務測試 → 預覽 → 使用者確認 → 發布核准。
+本機試點用的上架管理服務：接收原始碼 ZIP → 驗證 → 建置 image → 漏洞檢查 → 人工程式碼檢查（開發者按「已檢查」）→ 平台共通檢查 → 工具業務測試 → 預覽 → 使用者確認測試 → 發布核准 → 發布／更新／版本切換／下架，以及維運（維護模式、重新啟動、日誌）。開發者規格見 [上架 SOP](../docs/sop/WorkHub工具上架SOP.md)，需求對照見 [PRD §9](../docs/phase1/PRD.md#9-20261013-採購工具本機試點實作補充)。
 網站開發者中心經由 Vite 同源代理（`/api/onboarding` → `127.0.0.1:4310`）呼叫本服務。
 
 ## 啟動
@@ -12,6 +12,14 @@ npm ci
 npm start          # 只綁 127.0.0.1:4310
 npm test           # node:test，使用假容器執行器，不需 Docker
 npm run typecheck
+npm run test:relay # 模型轉接服務（Python）測試
+npm run build:kit  # 重新打包資料包內的離線預檢程式 dist-kit/workhub-check.mjs
+```
+
+設定模型端點（金鑰以隱藏輸入寫入 `onboarding-data/secrets.json`，不經網頁、不進 ZIP）：雙擊 `pilot/設定模型端點.command`，或
+
+```bash
+MODEL_BASE_URL=https://… node --experimental-strip-types tools/set-model-endpoint.ts
 ```
 
 ## 設計重點
@@ -23,10 +31,14 @@ npm run typecheck
 - **送審容器**：不掛主機目錄與 Docker socket、`--cap-drop ALL`、`no-new-privileges`、記憶體與 CPU 上限；業務測試 `--network none` 並使用空白資料卷；預覽使用獨立資料卷、只綁 127.0.0.1。
 - **建置不注入模型憑證**；模型連線參數存於 `onboarding-data/secrets.json`（0600），只注入工具在 `env` 宣告的變數名稱。
 - **核准綁定版本**：測試確認、漏洞例外、發布核准都綁定 source_hash + image_digest；新修訂使舊的確認與核准失效。
-- **本機試點例外**：程式碼 AI review 標示 `skipped`（不是 passed）並記錄原因與操作者；`ONBOARDING_ENVIRONMENT=production` 時後端禁止略過。
-- **漏洞政策（2026-10-13 決策）**：只阻擋 CRITICAL；HIGH 記錄不阻擋；無修正版的 CRITICAL 須逐一核准本機例外。
+- **程式碼檢查為人工確認（DEC-019）**：不使用 AI、原始碼不送模型。漏洞檢查完成後步驟為 `awaiting`，開發者按「已檢查」（`POST /submissions/:id/code-review`，備註選填）才變 `passed`；未檢查不能確認測試、不能核准發布。
+- **漏洞政策（DEC-020）**：只記錄、不阻擋（CRITICAL 標 `warning`）；掃描器無法執行時才阻擋。
+- **隔離網路與模型轉接**：每個工具一個 internal docker 網路 `wh-net-<toolId>`，瀏覽器經 `<容器>-gw` 閘道開啟；工具只連得到 `wh-llm-relay`（`http://llm-relay:8080/v1`），拿到工具專用通行碼 `whr_…`，真實金鑰只在轉接服務。轉接只允許模型清單與對話 API、限制可用模型，記錄中繼資料到 `onboarding-data/relay-logs`。
+- **發布**：發布同一份已測試 image；更新前停舊版並備份資料卷，健康檢查失敗自動還原；可切換到任何曾上線版本（保留資料／還原備份）、下架與重新上架。
+- **資料包**：`GET /api/onboarding/kit` 下載上架資料包；`?toolId=` 下載預填該工具 `tool.id`、下一版號與模型端點代號的更新資料包。
 
-## 尚未實作（後續階段）
+## 尚未實作
 
-- 階段 D：模型端點設定指令、本機最小模型轉接服務與對外路由限制。
-- 階段 E：正式發布（同一 image digest）、WorkHub 入口更新、更新失敗保留前版、回復與一致性備份、入口點擊紀錄。
+- AD／SSO 登入與權限（目前只綁本機，不可對外開放）。
+- 正式 LLM Proxy（配額、雲端模型、資料政策）；管理者選模型目前只有網站 Demo。
+- 多台主機、amd64、平台設定備份與還原演練。

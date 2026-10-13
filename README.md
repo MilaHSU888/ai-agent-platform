@@ -1,14 +1,99 @@
-> **2026/10/08 更新版 Demo**：現行基準為 [PRD v0.18](docs/phase1/PRD.md) 與 [Demo 整合規格](docs/phase1/attachments/05-Demo整合規格.md)。新增開發者、發布、維運、分類、聯絡與模型設定互動；操作只保存於本機瀏覽器。下文原有 Phase 2 上架治理及完成事件分析敘述屬歷史背景，與現行 PRD 衝突者不再適用。正式容量未核准；AI 識圖現為獨立工具入口。
+# WorkHub：企業 AI 工具平台
 
-# AI Agent Platform：企業智慧工具平台
+WorkHub 是企業 AI Agent 統一管理平台：一個入口開啟公司各部門的 AI／非 AI 小工具，並由平台負責權限、上架、發布、模型接入與使用紀錄。需求基準為 [PRD v0.18](docs/phase1/PRD.md)；2026/10/13 本機試點的實作與差異見 [PRD §9](docs/phase1/PRD.md#9-20261013-採購工具本機試點實作補充)。
 
-> **2026-09-11 識圖交接範圍更新（以此為準）**：依使用者本次確認，AI 識圖改為未完成版本的獨立前端原始碼交接；本次不部署、不上傳 GitHub、不串接 5090，也不完成剩餘功能。WorkHub 移除內嵌識圖介面，只保留工具資訊、入口可見性與可選 URL；未設定 URL 時顯示「待設定入口」。後續辨識、後端保存、登入／權限、GPU 驗證、部署與正式 UAT 由客戶接手。现有前端部門篩選不代表已完成 AD／後端權限。本文下方涉及舊識圖建置承諾、5090 驗收或完整識圖 UAT 的敘述保留作歷史／後續需求，不屬於本次交付完成條件。範例逐筆確認與舊「整體確認」不同，交接保留目前行為，未替客戶決定正式流程。
+## 目前狀態（2026/10/13）
 
-本專案為企業 AI Agent 統一管理平台的 WorkHub 前端原型，用於呈現統一工具入口、部門權限、管理者儀表板、AI 識圖、企業／部門知識庫及 Prompt 等操作流程。
+| 部分 | 狀態 |
+|---|---|
+| WorkHub 網站（工具中心、儀表板、開發者中心、發布管理、維運中心、平台設定） | 可在本機執行；上架／發布／維運接上真實的本機上架服務，其餘為前端 Demo（資料存在瀏覽器） |
+| 本機上架服務 `onboarding-service` | 試點可用：ZIP 收件檢查、Docker 建置、漏洞掃描、人工程式碼檢查、斷網測試、預覽、核准發布、更新備份與自動還原、版本切換、下架、維護模式、重新啟動、日誌 |
+| 模型接入 | 工具經平台模型轉接服務連 Wisely 5090（已實測）；之後改走正式 LLM Proxy。管理者選模型目前為 Demo |
+| 試點工具 | 採購報價單彙整工具已上架（pilot.5）；出貨追蹤工具 1.0.0 已打包，作為第二個工具演練 |
+| 開發者 SOP 與資料包 | 已交付：[上架 SOP](docs/sop/WorkHub工具上架SOP.md)；網站開發者中心可下載上架資料包／更新資料包，交給 AI agent 打包 |
+| 尚未做 | AD／SSO 與權限、正式 LLM Proxy（配額、雲端模型）、使用紀錄分析後端、多台主機部署 |
 
-依 2026/08/21 高層會議結論，專案先進行前期盤點，再分為兩個正式建置階段。現在的前端同時展示各階段的介面概念，不代表後端、資料庫、AD、使用紀錄、OpenWebUI 或既有工具串接均已完成。
+## 快速開始（本機）
 
-## 平台原則
+需要 macOS（Apple Silicon）、[Docker Desktop](https://www.docker.com/products/docker-desktop/)、Node.js 22.13 以上、pnpm。
+
+**1. 啟動上架服務**（先開 Docker Desktop）：雙擊 `pilot/啟動上架服務.command`，或
+
+```bash
+cd onboarding-service
+npm ci
+npm start          # 只綁 127.0.0.1:4310，資料存在 ../pilot/onboarding-data
+```
+
+**2. 啟動網站**：雙擊 `pilot/啟動WorkHub網站.command`，或
+
+```bash
+cd AI_agent_platform
+pnpm install
+pnpm dev -- --port 3002
+```
+
+開啟 http://localhost:3002 ，進入「管理工作台 → 開發者中心」上傳工具 ZIP。本機試點不需登入；`localhost` 只能本機開啟，不可直接分享。
+
+**3.（使用 AI 的工具才需要）設定模型端點**：雙擊 `pilot/設定模型端點.command`，在終端機以隱藏輸入填寫金鑰；或 `MODEL_BASE_URL=https://… node --experimental-strip-types onboarding-service/tools/set-model-endpoint.ts`。金鑰只存在 `pilot/onboarding-data/secrets.json`（權限 0600），不經網頁、不進 Git 或 ZIP。
+
+## 工具上架流程
+
+1. 開發者下載資料包（新工具：開發者中心「下載上架資料包」；既有工具：工具列「下載更新資料包」），連同程式碼交給 AI agent，產出一個 ZIP（內含 `Dockerfile`、`workhub.yaml`）。
+2. 在開發者中心填工具名稱、部門、Owner，上傳 ZIP。
+3. 平台自動：收件檢查 → 建置 → 漏洞檢查（只記錄不阻擋）。
+4. **程式碼檢查**：開發者自行檢查原始碼，按「已檢查」即代表通過（人工，不使用 AI；備註選填）。
+5. 平台自動：共通健康檢查 → 斷網業務測試 → 啟動預覽。
+6. 開發者在預覽中測試，按「確認測試結果」。
+7. 管理者在「發布管理」核准並發布；更新時自動備份，失敗自動還原前版。
+
+細節與檢查清單見 [WorkHub 工具上架 SOP](docs/sop/WorkHub工具上架SOP.md)。
+
+## 架構
+
+```
+瀏覽器 ── WorkHub 網站（vinext，:3002）── /api/onboarding 代理（附本機通行碼）── 上架服務（Node，127.0.0.1:4310，SQLite）
+                                                                                     │ docker
+                                         每個工具：隔離網路 wh-net-<tool> ── 工具容器 ── 模型轉接 wh-llm-relay ── 模型端點（5090 → 之後 LLM Proxy）
+                                         瀏覽器經本機閘道 <容器>-gw 開啟工具
+```
+
+- 工具只拿到平台注入的 `OPENAI_BASE_URL`／`OPENAI_API_KEY`（工具專用通行碼）／`OPENAI_MODEL`，真實金鑰只在轉接服務。
+- 工具容器無對外路由、彼此不通；業務測試完全斷網。
+- 每次確認與核准都綁定該版原始碼雜湊與 image，上傳新版本即失效；所有操作留稽核紀錄。
+
+## 目錄
+
+| 路徑 | 內容 |
+|---|---|
+| `AI_agent_platform/` | WorkHub 網站（`app/page.tsx` 入口、`app/management-center.tsx` 管理工作台、`app/onboarding-panel.tsx` 開發者中心與發布管理、`app/monitor-center.tsx` 維運中心、`app/model-demo.tsx` 模型設定 Demo） |
+| `onboarding-service/` | 本機上架服務（`src/`）、模型轉接與閘道（`relay/`）、模型端點設定與預檢工具（`tools/`）、資料包內容（`kit/`、`dist-kit/`）；說明見 [onboarding-service/README.md](onboarding-service/README.md) |
+| `docs/phase1/` | [PRD](docs/phase1/PRD.md)、[決策紀錄](docs/phase1/DECISIONS.md)、附件與歷史版本 |
+| `docs/sop/` | [WorkHub 工具上架 SOP](docs/sop/WorkHub工具上架SOP.md)（正本為線上文件） |
+| `../pilot/`（不在 repo） | 試點工具原始碼與 ZIP、`onboarding-data`（資料庫、金鑰、日誌）、雙擊啟動腳本 |
+
+## 測試
+
+```bash
+cd onboarding-service && npm test && npm run typecheck && npm run test:relay
+cd AI_agent_platform && pnpm lint && pnpm test
+```
+
+上架服務的測試使用假容器執行器，不需 Docker。
+
+## 正式上線前待辦
+
+- AD／SSO 登入與部門權限（TBD-AUTH-001）；在此之前上架服務不可對外開放。
+- 正式 LLM Proxy：端點、配額、雲端模型與資料政策（TBD-LLM-001、TBD-DATA-001）。
+- 客戶確認 PRD §9 差異：開發者人工程式碼檢查取代 AI 檢查、漏洞只記錄不阻擋。
+- 確認發布審核者人選，以及正式環境是否需要開發者以外的人複核程式碼（TBD-RELEASE-001）。
+- 使用紀錄與主管分析後端、平台設定備份與還原演練、多台主機與 amd64。
+
+## 產品範圍與背景
+
+以下為原始規劃（2026/08–09），細節以 PRD 為準。
+
+### 平台原則
 
 - 2026/08/25–2026/08/28 先盤點既有小工具、AD 組織權限、AI 識圖現況及訪談對象。
 - 使用者透過 AD／SSO 登入後，只看到具備權限的工具。
@@ -18,7 +103,7 @@
 - AI 與非 AI 紀錄由統一分析服務彙整，供主管查看採用率、使用量及效益。
 - 一般使用者僅透過問答使用獲授權的知識；知識庫內容與管理功能只對管理者顯示。
 
-## 分階段範圍
+### 分階段範圍
 
 | 階段 | 日期 | 主要內容 |
 |---|---|---|
@@ -28,7 +113,7 @@
 
 Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準仍待確認。
 
-### Phase 1 重點
+#### Phase 1 重點
 
 - 以 URL 方式串接既有小工具及 OpenWebUI，先建立統一使用入口。
 - 串接 AD，提供登入、身分辨識及依角色顯示工具的權限管理。
@@ -36,7 +121,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 將具直接業務效益的 AI 識圖提前納入 Phase 1。
 - AI 識圖開發前需取得原始工程圖及既定格式的 Excel 輸出範本。
 
-### Phase 2 重點
+#### Phase 2 重點
 
 - 確認是否導入 Code Review，以及正式審查、上架與版本治理流程。
 - 處理使用者以書籤或網址直接開啟工具時，平台可能無法統計使用次數的紀錄缺口。
@@ -44,7 +129,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 將 OpenWebUI 知識庫整合至平台，並自動套用全公司及部門知識庫，減少每次手動選擇。
 - OpenWebUI 已具備 Prompt 儲存能力，因此 Prompt 儲存不列為本次優先開發項目。
 
-## 部門分類
+### 部門分類
 
 - 全公司共用
 - 財務部、資訊部、人力資源部、總務部
@@ -53,9 +138,9 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 
 正式分類及角色權限需再與公司 AD 組織及群組設定對應。
 
-## 主要功能
+### 主要功能
 
-### WorkHub 工具中心
+#### WorkHub 工具中心
 
 - 依部門及 AI／非 AI 類型篩選工具
 - 工具名稱與用途搜尋
@@ -64,7 +149,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 各工具保留原本的操作介面與工作流程
 - 響應式桌面與手機版面
 
-### 管理者儀表板
+#### 管理者儀表板
 
 - 活躍使用者與整體採用率
 - 工具執行次數與預估節省工時
@@ -72,7 +157,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 本月、近三個月及本年度期間切換
 - 正式上線後只呈現必要的彙總與效益資料，不讓主管查看員工的完整提問內容
 
-### AI 識圖大師
+#### AI 識圖大師
 
 - 使用客戶提供的真實球標辨識報告案例
 - 中央圖面與右側辨識結果同步定位
@@ -85,7 +170,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 人工覆核後輸出符合客戶既定格式的 Excel 檔案
 - 預估使用範圍為 7 個廠區，主要使用者為工程師及品檢員；各廠品保部門至少約 5 位，實際人數待盤點
 
-### 採購報價匯整工具
+#### 採購報價匯整工具
 
 採購報價匯整工具是客戶已完成的既有小工具，Phase 1 僅負責整合入口、權限及使用紀錄，不重新開發其原有 UI、Backend 或功能。
 
@@ -97,7 +182,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 檔案清單、單筆移除與清空重來
 - 比較表匯出狀態、使用說明及歷史查價
 
-### 企業／部門知識庫
+#### 企業／部門知識庫
 
 - 全公司及每個部門皆有知識庫問答入口
 - 自動附加「全公司＋目前部門」知識庫
@@ -107,7 +192,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - 部門管理員可新增知識庫、上傳文件及啟用／暫停來源
 - 全公司必備來源由平台管理員控管
 
-### Prompt 範本
+#### Prompt 範本
 
 - 個人、部門共用及全公司共用 Prompt
 - Prompt 搜尋、一鍵套用與快速選擇
@@ -118,7 +203,7 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 - OpenWebUI 已具備 Prompt 儲存功能，依 8/21 會議結論不列為本次優先開發項目
 - 後續若有新的管理痛點，再評估 Skill、MCP、快查及角色權限能力
 
-## 目前已知的整合情境
+### 目前已知的整合情境
 
 | 工具 | 主要用途 | 整合定位 |
 |---|---|---|
@@ -131,105 +216,31 @@ Phase 1 與 Phase 2 各規劃約兩個月；驗收緩衝期及正式驗收標準
 
 上述工具是否使用 LLM 需於正式整合前確認。使用 LLM 者接入 LLM Proxy；未使用 LLM 者接入非 AI 工具使用紀錄資料庫。
 
-## 內部工具上架與審查
+### 內部工具上架與審查
 
-### Phase 1
+原規劃 Phase 1 只以 URL 串接、Code Review 留到 Phase 2。2026/10/13 起，本機試點已實作「上傳 ZIP → 自動建置 → 漏洞檢查 → 程式碼檢查（人工確認）→ 預覽測試 → 核准發布」完整流程；與 v0.18 的差異見 [PRD §9](docs/phase1/PRD.md#9-20261013-採購工具本機試點實作補充)，待客戶確認。
 
-Phase 1 先以 URL 串接既有小工具，完成統一入口、AD 權限及使用紀錄整合；不在本階段承諾完整 Code Review 或正式上架治理流程。
+### 平台資料流
 
-### Phase 2
-
-由客戶資訊部確認是否導入 Code Review。若納入，需再定義：
-
-- 人工審查及指定審查人。
-- 程式品質、資安、權限與資料流檢查標準。
-- 核准、退回修改及重新送審。
-- 版本、發布及審查紀錄。
-- 視開發者數量及治理需求，擴充開發者自助上架與管理後台。
-
-## 平台資料流
-
-### AI 工具
+#### AI 工具
 
 `AI 工具 Backend → LLM Proxy → 地端模型／核准的雲端模型`
 
 LLM Proxy 負責資料政策、模型路由、Token、配額、回應時間及稽核紀錄。LLM Proxy 位於使用 LLM 的小工具與模型之間，不是與小工具平行的功能。
 
-### 非 AI 工具
+#### 非 AI 工具
 
 `非 AI 工具 → 統一使用事件介面 → 非 AI 工具使用紀錄資料庫`
 
-### 統一分析
+#### 統一分析
 
 `LLM Proxy 紀錄＋非 AI 工具使用紀錄 → 統一分析服務 → 主管儀表板`
 
-## 目前實作與正式串接界線
+### OpenWebUI 正式串接前置需求
 
-| 項目 | 目前狀態 |
-|---|---|
-| WorkHub 工具中心、部門分類與搜尋 | 前端原型 |
-| 管理者儀表板及示意統計 | 前端原型；正式數值需由實際紀錄產生 |
-| AI 識圖、採購報價匯整操作 | 前端流程展示；AI 識圖於 Phase 1 正式建置，原始工程圖、模型、資料庫欄位及既定 Excel 格式待串接 |
-| 企業／部門知識庫 | Phase 2 前端展示；正式版本需串接 OpenWebUI API 並處理自動選擇知識庫 |
-| Prompt 快速選擇與儲存 | 前端概念展示；OpenWebUI 已有儲存能力，目前不列為優先開發項目 |
-| AD／SSO 與角色權限 | 待正式串接 |
-| LLM Proxy、非 AI 紀錄資料庫與統一分析 | 待正式建置及串接 |
-| CRM、ERP 及既有工具 | 待客戶提供介面、網址及權限資訊 |
-| GitHub、AI Review 與 IT 部署流程 | Proposal 流程；檢查項目及交接條件待確認 |
-| 完整 Code Review | Phase 2 規劃 |
+OpenWebUI 問答、Prompt 與知識庫管理目前為前端展示。正式串接需要：OpenWebUI URL 與 API Token、使用模型 ID、全公司與各部門 Knowledge Base ID、AD 群組與 OpenWebUI 權限對應、Prompt 與知識庫管理 API 權限。使用紀錄只保存必要的遙測與成效資料，不讓主管查看員工的完整提問內容。
 
-## 本機執行
-
-### 系統需求
-
-- Node.js `>=22.13.0`
-- pnpm
-
-### 安裝與啟動
-
-```bash
-cd AI_agent_platform
-pnpm install
-pnpm dev -- --port 3002
-```
-
-開啟 [http://localhost:3002](http://localhost:3002)。`localhost` 僅供本機預覽，傳給其他人無法直接開啟；外部展示需另行部署或建立受控的分享網址。
-
-### 建置驗證
-
-```bash
-cd AI_agent_platform
-pnpm build
-```
-
-## 主要檔案
-
-| 路徑 | 用途 |
-|---|---|
-| `AI_agent_platform/app/page.tsx` | 平台、儀表板及各工具主要互動 |
-| `AI_agent_platform/app/globals.css` | 全站與各工具版面樣式 |
-| `AI_agent_platform/public/ai-balloon-s*.png` | AI 識圖案例局部圖 |
-| `AI_agent_platform/.openai/hosting.json` | Sites 部署與資源宣告 |
-
-## OpenWebUI 正式串接前置需求
-
-目前 OpenWebUI 問答、Prompt 與知識庫管理為 Phase 2 前端展示。正式串接需要提供：
-
-- OpenWebUI URL 與 API Token
-- 使用模型 ID
-- 全公司與各部門 Knowledge Base ID
-- AD 群組與 OpenWebUI 權限對應
-- Prompt 與知識庫管理 API 權限
-
-正式上線時，使用紀錄應只保存必要的遙測與成效資料，不應讓主管查看員工的完整提問內容。
-
-## 技術基礎
-
-- [vinext](https://github.com/cloudflare/vinext)
-- React／Next.js 相容 App Router
-- Cloudflare Sites 相容建置
-
-## 需求文件
+### 需求文件
 
 - [企業 AI Agent 統一管理平台 Proposal](../企業AI_Agent統一管理平台_Proposal.md)
 - [8/18 AI Agent 平台會議記錄](../會議記錄/0818-會議記錄.md)
