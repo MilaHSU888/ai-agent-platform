@@ -243,8 +243,8 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
 
 /** WorkHub 入口：只列出健康檢查通過、上線中的版本；並即時探測服務是否回應。 */
 export async function catalog(store: Store, rt: Runtime) {
-  const rows = store.all<Rel & { name: string; department: string; owner: string; version: string; manifest_json: string }>(
-    `SELECT r.*, t.name, t.department, t.owner, s.version, s.manifest_json FROM releases r
+  const rows = store.all<Rel & { name: string; department: string; owner: string; version: string; manifest_json: string; maintenance_json: string | null }>(
+    `SELECT r.*, t.name, t.department, t.owner, t.maintenance_json, s.version, s.manifest_json FROM releases r
      JOIN tools t ON t.id=r.tool_id JOIN submissions s ON s.id=r.submission_id
      WHERE r.status='active' OR (r.status='offline' AND NOT EXISTS (SELECT 1 FROM releases a WHERE a.tool_id=r.tool_id AND a.status='active'))`);
   return Promise.all(rows.map(async (r) => {
@@ -254,6 +254,7 @@ export async function catalog(store: Store, rt: Runtime) {
     return {
       toolId: r.tool_id, name: r.name, department: r.department, owner: r.owner, version: r.version, releaseId: r.id,
       url: r.port && !offline ? `http://127.0.0.1:${r.port}/` : null, healthy: !offline && status === m.run.healthCheck.expectStatus, offline,
+      maintenance: r.maintenance_json ? JSON.parse(r.maintenance_json) as { at: string; actor: string; reason: string } : null,
       usesModel: m.model.uses, releasedAt: r.updated_at,
     };
   }));

@@ -44,6 +44,10 @@ export interface Runtime {
   probe(url: string): Promise<number | null>;
   /** 建立隔離網路（--internal：無對外路由） */
   ensureNetwork(name: string, internal: boolean, ctx?: Ctx): Promise<boolean>;
+  /** 重啟容器（資料保留） */
+  restart(name: string, ctx?: Ctx): Promise<ExecResult>;
+  /** 讀取容器最近的日誌（已遮罩） */
+  logsText(name: string, tail: number, mask: (s: string) => string): Promise<string>;
   /** 確保模型轉接服務容器在跑、設定一致，並接上所有工具的隔離網路 */
   ensureRelay(spec: RelaySpec, ctx?: Ctx): Promise<{ ok: boolean; detail: string }>;
 }
@@ -175,6 +179,15 @@ export class DockerRuntime implements Runtime {
 
   async removeVolume(name: string, ctx?: Ctx) {
     await run(this.cfg.docker, ['volume', 'rm', '-f', name], { timeoutMs: 60000, logFile: ctx?.logFile, mask: ctx?.mask });
+  }
+
+  async restart(name: string, ctx?: Ctx) {
+    return run(this.cfg.docker, ['restart', '-t', '20', name], { timeoutMs: 120000, logFile: ctx?.logFile, mask: ctx?.mask });
+  }
+
+  async logsText(name: string, tail: number, mask: (s: string) => string) {
+    const r = await run(this.cfg.docker, ['logs', '--timestamps', '--tail', String(tail), name], { timeoutMs: 30000 });
+    return mask(r.code === 0 ? `${r.stdout}${r.stderr}` : `無法讀取日誌：${r.stderr.slice(0, 300)}`);
   }
 
   async logs(name: string, ctx: Ctx) {

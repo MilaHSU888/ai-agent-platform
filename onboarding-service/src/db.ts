@@ -74,6 +74,9 @@ export class Store {
     // 既有資料庫遷移：發布／回復工作需記錄對應的 release
     const cols = this.all<{ name: string }>('PRAGMA table_info(jobs)').map((c) => c.name);
     if (!cols.includes('release_id')) this.db.exec('ALTER TABLE jobs ADD COLUMN release_id TEXT');
+    // 維運：工具維護旗標（入口關閉、容器照跑）
+    const tcols = this.all<{ name: string }>('PRAGMA table_info(tools)').map((c) => c.name);
+    if (!tcols.includes('maintenance_json')) this.db.exec('ALTER TABLE tools ADD COLUMN maintenance_json TEXT');
   }
 
   get<T = Row>(sql: string, ...params: unknown[]): T | undefined {

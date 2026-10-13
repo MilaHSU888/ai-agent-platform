@@ -14,7 +14,8 @@ export type VulnItem = {
   id: string; severity: string; category: string; title: string; description: string; url: string | null;
   published: string | null; fixable: boolean; packages: { name: string; installed: string; fixed: string | null }[];
 };
-export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; usesModel: boolean; releasedAt: string };
+export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; maintenance?: { at: string; actor: string; reason: string } | null; usesModel: boolean; releasedAt: string };
+export type OpsEvent = { at: string; actor: string; action: string; label: string; toolId?: string; toolName: string | null; bad: boolean; reason?: string; version?: string };
 export type ReleaseStep = { name: string; status: 'passed' | 'failed' | 'skipped'; at: string; detail?: string };
 export type ReleaseRecord = {
   id: string; toolId: string; submissionId: string; name: string; version: string; status: string; url: string | null; createdAt: string; updatedAt: string; previousReleaseId: string | null;
@@ -73,6 +74,10 @@ export const onboardingApi = {
   redeploy: (toolId: string, releaseId: string, reason: string) => call<{ releaseId: string }>('POST', `/tools/${toolId}/redeploy`, { releaseId, reason }),
   offline: (toolId: string, reason: string) => call<{ releaseId: string }>('POST', `/tools/${toolId}/offline`, { reason }),
   online: (toolId: string, reason: string) => call<{ releaseId: string }>('POST', `/tools/${toolId}/online`, { reason }),
+  maintenance: (toolId: string, on: boolean, reason = '') => call<{ maintenance: unknown }>('POST', `/tools/${toolId}/maintenance`, { on, reason }),
+  restart: (toolId: string, reason = '') => call<{ ok: boolean; seconds: number; error?: string }>('POST', `/tools/${toolId}/restart`, { reason }),
+  toolLogs: async (toolId: string) => (await fetch(`${BASE}/tools/${toolId}/logs?tail=200`, { credentials: 'same-origin' })).text(),
+  opsEvents: () => call<{ events: OpsEvent[] }>('GET', '/ops/events').then((r) => r.events),
   releases: (toolId?: string) => call<{ releases: ReleaseRecord[] }>('GET', `/releases${toolId ? `?toolId=${encodeURIComponent(toolId)}` : ''}`).then((r) => r.releases),
   releaseLog: async (id: string) => (await fetch(`${BASE}/releases/${id}/log`, { credentials: 'same-origin' })).text(),
   catalog: () => call<{ tools: CatalogTool[] }>('GET', '/catalog').then((r) => r.tools),

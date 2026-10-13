@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ToolEntry } from "./tool-entry";
 import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
-import { defaultConfig, entryBlock, initialDemo, type DemoState } from "./demo-management";
+import { DEFAULT_LOCAL_MODEL, defaultConfig, entryBlock, initialDemo, normalizeModel, type DemoState } from "./demo-management";
 import { onboardingApi, type CatalogTool } from "./onboarding-api";
 
 const newEventId = () => `evt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -190,7 +190,9 @@ export default function Home() {
     const load = () => onboardingApi.catalog().then((r) => { if (alive) setReleased(r); }).catch(() => { if (alive) setReleased([]); });
     void load();
     const timer = setInterval(load, 20000);
-    return () => { alive = false; clearInterval(timer); };
+    // 維運動作完成後立即更新入口狀態
+    window.addEventListener('workhub:catalog-refresh', load);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener('workhub:catalog-refresh', load); };
   }, []);
   const releasedExtra = useMemo<Tool[]>(() => released
     .filter((r) => !tools.some((t) => t.name === r.name) && !demo.added.some((t) => t.name === r.name))
@@ -205,7 +207,7 @@ export default function Home() {
     for (const [id, r] of Object.entries(releasedById)) {
       const tool = [...tools, ...demo.added, ...releasedExtra].find((t) => t.id === id);
       if (!tool) continue;
-      configs[id] = { ...(configs[id] ?? defaultConfig(tool)), status: r.offline ? '已下架' : r.healthy ? '運行中' : '維護中', version: r.version, owner: r.owner, url: r.url ?? '', access: true, model: r.usesModel ? '核准模型端點（wisely-5090）' : '不使用模型' };
+      configs[id] = { ...(configs[id] ?? defaultConfig(tool)), status: r.offline ? '已下架' : r.maintenance ? '維護中' : r.healthy ? '運行中' : '維護中', version: r.version, owner: r.owner, url: r.url ?? '', access: true, model: r.usesModel ? normalizeModel(configs[id]?.model ?? DEFAULT_LOCAL_MODEL) : '不使用模型' };
     }
     return { ...demo, configs };
   }, [demo, releasedById, releasedExtra]);
@@ -237,10 +239,10 @@ export default function Home() {
   const blockedLogged = useRef('');
   useEffect(() => {
     const r = releasedById[selectedToolId];
-    if (!r || r.healthy) { if (!r) blockedLogged.current = ''; return; }
+    if (!r || (r.healthy && !r.maintenance)) { if (!r) blockedLogged.current = ''; return; }
     if (blockedLogged.current === selectedToolId) return;
     blockedLogged.current = selectedToolId;
-    void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: r.toolId, kind: 'blocked', reason: r.offline ? '工具已下架' : '服務健康檢查未回應' }).catch(() => {});
+    void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: r.toolId, kind: 'blocked', reason: r.offline ? '工具已下架' : r.maintenance ? '工具維護中' : '服務健康檢查未回應' }).catch(() => {});
   }, [selectedToolId, releasedById]);
 
   useEffect(() => {
@@ -342,7 +344,7 @@ export default function Home() {
           </div>
         ) : view === "analytics" ? (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
-        ) : <ManagementCenter view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} /> }
+        ) : <ManagementCenter view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} goTo={setView} /> }
       </main>
 
     </div>

@@ -898,3 +898,68 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .onb-field { display: grid; gap: 6px; margin: 8px 0; }
 .onb-tool-versions { display: grid; gap: 8px; }
 .onb-tool-versions .mg-status { margin-left: 8px; }
+
+/* 模型選擇（示範） */
+.md-banner { background: #fff7e6; border: 1px solid #f1d9a6; color: #6b4e16; border-radius: 10px; padding: 10px 14px; margin: 8px 0 14px; }
+.md-add { display: grid; grid-template-columns: 120px 1fr 1fr auto; gap: 10px; align-items: end; }
+.md-add label, .md-switch label { display: grid; gap: 6px; }
+.md-tool { border: 1px solid #dfe5ee; border-radius: 12px; padding: 14px 16px; margin: 14px 0; display: grid; gap: 10px; }
+.md-tool h3, .md-tool h4 { margin: 0; }
+.md-tool .mg-status { margin-left: 6px; }
+.md-switch { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 10px; align-items: end; }
+.md-history { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 0.92em; }
+.md-history span { color: #6b7686; }
+@media (max-width: 720px) { .md-add, .md-switch { grid-template-columns: 1fr; } }
+
+/* 維運中心：沿用管理頁的 mg-* 樣式，只補版面 */
+.oc { display: grid; gap: 20px; }
+.oc .mg-panel { margin: 0; }
+.oc-tight { margin: 4px 0 0; }
+.oc-steps { margin: 0; }
+.oc-steps span { position: relative; }
+.oc-steps small { display: block; margin-top: 4px; color: #718096; font-size: 12px; }
+.oc-core { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.oc-core > div { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: #f5f7fa; border: 1px solid #edf1f5; border-radius: 10px; font-size: 13px; color: #25394f; }
+.oc-select { min-width: 240px; }
+.oc-tool { display: flex; align-items: center; gap: 14px; padding: 16px 0; margin-top: 16px; border-top: 1px solid #edf1f5; border-bottom: 1px solid #edf1f5; }
+.oc-tool > div { display: grid; gap: 3px; }
+.oc-tool b { font-size: 15px; color: #25394f; }
+.oc-tool small { color: #718096; font-size: 12px; }
+.oc-tool .mg-status { margin-left: auto; }
+.oc-icon { width: 38px; height: 38px; flex: none; display: grid; place-items: center; background: #eff3f8; border: 1px solid #dce4ed; border-radius: 10px; color: #263e5c; font-size: 14px; font-weight: 600; }
+.oc-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0 14px; }
+.mg-center button.oc-action { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 16px; border-radius: 12px; }
+.oc-action > span { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #eff3f8; color: #263e5c; font-size: 15px; }
+.oc-action div { display: grid; gap: 6px; }
+.oc-action b { font-size: 14px; color: #25394f; }
+.oc-action small { color: #718096; font-size: 12px; }
+.mg-center button.oc-action.ok { background: #f4faf6; border-color: #477255; }
+.oc-action.ok > span { background: #eaf4ed; color: #477255; }
+.mg-center button.oc-action.danger { background: #fdf6f5; border-color: #e3b6ae; }
+.oc-action.danger > span { background: #fbe9e7; color: #a23a2c; }
+.oc-advice { margin: 0; padding: 12px 16px; background: #eff3f8; border-left: 3px solid #263e5c; border-radius: 0 8px 8px 0; color: #25394f; font-size: 13px; }
+.oc-real { display: flex; align-items: center; gap: 16px; padding-top: 16px; color: #4a5a70; font-size: 13px; }
+.oc-real p { margin: 0; flex: 1; }
+.oc-two { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(260px, 1fr); gap: 20px; align-items: start; }
+.oc-usage, .oc-models, .oc-events { list-style: none; margin: 14px 0 0; padding: 0; display: grid; }
+.oc-usage li { display: grid; grid-template-columns: 38px 150px minmax(0, 1fr) 48px 120px; align-items: center; gap: 12px; padding: 8px 0; font-size: 13px; color: #25394f; }
+.oc-usage strong { text-align: right; font-weight: 600; }
+.oc-usage .mg-status { text-align: center; }
+.oc-bar { height: 8px; background: #edf1f5; border-radius: 999px; overflow: hidden; }
+.oc-bar i { display: block; height: 100%; border-radius: 999px; background: #263e5c; }
+.oc-models li { display: grid; gap: 8px; padding: 10px 0; }
+.oc-models li > div { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #25394f; }
+.oc-models .mg-status { margin-left: 8px; padding: 2px 7px; font-size: 11px; }
+.oc-models small { color: #718096; }
+.oc-events li { display: grid; grid-template-columns: 36px 1fr auto; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid #edf1f5; }
+.oc-events li:first-child { border-top: 0; }
+.oc-events .mg-status { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; font-weight: 700; }
+.oc-events b { display: block; font-size: 13px; color: #25394f; font-weight: 600; }
+.oc-events small, .oc-events time { color: #718096; font-size: 12px; }
+.oc-foot { margin: 0; text-align: center; }
+@media (max-width: 1100px) { .oc-core { grid-template-columns: repeat(2, minmax(0, 1fr)); } .oc-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .oc-two { grid-template-columns: 1fr; } .oc-usage li { grid-template-columns: 38px 1fr minmax(0, 1fr) 48px; } .oc-usage li > .mg-status { display: none; } }
+@media (max-width: 640px) { .oc-core, .oc-actions { grid-template-columns: 1fr; } .oc-select { min-width: 0; width: 100%; } .oc-usage li { grid-template-columns: 38px 1fr 48px; } .oc-usage .oc-bar { display: none; } }
+.oc-goto { margin: 10px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mg-center .oc-goto button.onb-link { padding: 0; border: 0; background: none; color: #263e5c; text-decoration: underline; }
+.oc-maint { display: flex; gap: 10px; align-items: center; margin: -4px 0 14px; }
+.oc-maint input { flex: 1; }

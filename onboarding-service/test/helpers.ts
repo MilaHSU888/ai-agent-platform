@@ -130,6 +130,9 @@ export class FakeRuntime implements Runtime {
   async restoreVolume(volume: string, file: string) { this.restores.push(file); return true; }
   async removeVolume(name: string) { this.removed.push(name); }
   async logs() { /* noop */ }
+  restarted: string[] = [];
+  async restart(name: string) { this.restarted.push(name); return ok(); }
+  async logsText(name: string, tail: number, mask: (s: string) => string) { return mask(`fake log for ${name} (${tail}) Bearer whr_secret_token_value`); }
   async ensureNetwork(name: string, internal: boolean) { this.networks.set(name, internal); return true; }
   async ensureRelay(spec: RelaySpec) { this.relays.push(spec); return { ok: true, detail: 'fake relay' }; }
   async probe(url: string) {

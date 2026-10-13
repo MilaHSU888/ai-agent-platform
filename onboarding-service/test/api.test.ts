@@ -457,6 +457,36 @@ test('模型轉接：工具只拿到轉接網址與工具專用通行碼、跑�
   } finally { await t.close(); }
 });
 
+test('維運：維護模式只關入口不停容器；重新啟動經健康檢查；日誌遮罩通行碼；事件列在近期事件', async () => {
+  const t = await setup();
+  try {
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/maintenance', { on: true, reason: 'x' })).status, 409);
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/maintenance', { on: true })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/maintenance', { on: true, reason: '資料庫連線逾時' })).status, 200);
+    let cat = await catalogOf(t);
+    assert.equal(cat[0].maintenance.reason, '資料庫連線逾時');
+    assert.equal(cat[0].healthy, true, '容器照跑');
+    assert.ok(!t.rt.stopped.includes('wh-rel-demo-tool'));
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/maintenance', { on: true, reason: '重複' })).status, 409);
+    const rs = await t.call('POST', '/api/onboarding/tools/demo-tool/restart', {});
+    assert.equal(rs.status, 200); assert.equal(rs.data.ok, true);
+    assert.deepEqual(t.rt.restarted, ['wh-rel-demo-tool']);
+    const logs = await t.call('GET', '/api/onboarding/tools/demo-tool/logs');
+    assert.equal(logs.status, 200);
+    assert.ok(String(logs.data.text).includes('fake log'));
+    assert.ok(!String(logs.data.text).includes('whr_secret_token_value'), '日誌遮罩');
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/maintenance', { on: false })).status, 200);
+    cat = await catalogOf(t);
+    assert.equal(cat[0].maintenance, null);
+    const ev = (await t.call('GET', '/api/onboarding/ops/events')).data.events as Record<string, any>[];
+    assert.deepEqual(ev.slice(0, 4).map((e) => e.label), ['恢復服務', '重新啟動完成，健康檢查通過', '重新啟動', '進入維護']);
+    assert.equal(ev[3].toolName, '示範工具'); assert.equal(ev[3].bad, true);
+    assert.ok(ev.some((e) => e.label === '發布成功' && e.toolId === 'demo-tool'));
+  } finally { await t.close(); }
+});
+
 test('入口事件：點擊與阻擋分開記錄，同一事件重送不重複計數', async () => {
   const t = await setup();
   try {

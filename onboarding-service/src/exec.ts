@@ -14,6 +14,8 @@ export function makeMasker(secrets: string[]) {
     return out
       .replace(/(Authorization:\s*Bearer\s+)[^\s"']+/gi, '$1****')
       .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, 'sk-****')
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{12,}/g, 'Bearer ****')
+      .replace(/\bwhr_[A-Za-z0-9_-]{8,}/g, 'whr_****')
       .replace(/((?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?)[^\s"',]{8,}/gi, '$1****');
   };
 }

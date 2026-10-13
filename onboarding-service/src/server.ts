@@ -8,6 +8,7 @@ import { intake } from './intake.ts';
 import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
+import { opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { approvalsFor, approveException, approveRelease, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
@@ -221,6 +222,20 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const off = offlineRelease(store, m[1]);
       if (!off) throw new GateError(['此工具目前不是下架狀態']);
       send(res, 202, requestRedeploy(store, cfg, m[1], off.id, session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/maintenance$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 200, setMaintenance(store, m[1], body.on === true, session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/restart$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 200, await restartTool(store, cfg, rt, m[1], session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/tools\/([\w-]+)\/logs$/, auth: true, fn: async ({ res, url }, m) => {
+      send(res, 200, await toolLogs(store, rt, secrets, m[1], Number(url.searchParams.get('tail') ?? 200)));
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/ops\/events$/, auth: true, fn: ({ res }) => {
+      send(res, 200, { events: opsEvents(store) });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/releases$/, auth: true, fn: ({ res, url }) => {
       send(res, 200, { releases: releaseHistory(store, url.searchParams.get('toolId') ?? undefined) });
