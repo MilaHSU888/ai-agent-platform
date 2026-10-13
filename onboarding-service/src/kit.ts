@@ -40,6 +40,7 @@ export function promptText(target: KitTarget, approved: string[]): string {
        `- 上傳時請在 WorkHub 開發者中心該工具那一列按「提交新版本」`].join('\n')
     : ['這次是：第一次上架（新工具）',
        '- tool.id 請和我確認：3～41 個小寫英數字或連字號、英文字母開頭，上架後不能更改',
+       '- 工具名稱不用寫進 workhub.yaml，我上傳時會在 WorkHub 表單填寫',
        '- 版本號從 1.0.0 開始',
        '- 若其實是更新既有工具，請改用該工具在 WorkHub 開發者中心的「下載更新資料包」，裡面會帶入 tool.id 與版本號'].join('\n');
   const e = [`模型端點：工具如果需要呼叫 AI 模型，model.approvedEndpoint 只能填平台核准的代號：${approved.join('、') || '（目前沒有）'}。`,
@@ -81,7 +82,7 @@ export function buildKit(template: string, approved: string[], target: KitTarget
   const missing = SOURCES.filter(([, p]) => !existsSync(p)).map(([n]) => n);
   const files = SOURCES.filter(([, p]) => existsSync(p)).map(([n, p]) => ({ name: `workhub-kit/${n}`, data: readFileSync(p) }));
   files.push({ name: 'workhub-kit/給AI的打包指令.txt', data: Buffer.from(promptText(target, approved), 'utf8') });
-  const yaml = target ? template.replace(/id: my-tool\b/, `id: ${target.toolId}`).replace(/name: 我的工具/, `name: ${target.name}`).replace(/version: 1\.0\.0/, `version: ${nextVersion(target.latest)}`) : template;
+  const yaml = target ? template.replace(/id: my-tool\b/, `id: ${target.toolId}`).replace(/  # name: 我的工具[^\n]*/, `  # 工具名稱：${target.name}（以 WorkHub 平台為準，要改名請在發布管理修改）`).replace(/version: 1\.0\.0/, `version: ${nextVersion(target.latest)}`) : template;
   files.push({ name: 'workhub-kit/workhub.yaml', data: Buffer.from(yaml, 'utf8') });
   return { zip: makeZip(files), missing };
 }

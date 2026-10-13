@@ -7361,7 +7361,7 @@ function validateManifest(text, files, cfg2) {
   if (typeof tool.id !== "string" || !/^[a-z][a-z0-9-]{2,40}$/.test(tool.id)) {
     bad("tool.id", "\u5DE5\u5177 ID \u5FC5\u9808\u662F 3\uFF5E41 \u500B\u5C0F\u5BEB\u82F1\u6578\u5B57\u6216\u9023\u5B57\u865F\uFF0C\u4E14\u4EE5\u82F1\u6587\u5B57\u6BCD\u958B\u982D", "\u4F8B\u5982 quote-aggregator");
   }
-  if (typeof tool.name !== "string" || !tool.name.trim()) bad("tool.name", "\u7F3A\u5C11\u5DE5\u5177\u540D\u7A31", "\u586B\u5BEB\u4F7F\u7528\u8005\u770B\u5F97\u61C2\u7684\u540D\u7A31");
+  if (tool.name !== void 0 && (typeof tool.name !== "string" || tool.name.trim().length > 40)) bad("tool.name", "\u5DE5\u5177\u540D\u7A31\u9700\u70BA 40 \u5B57\u4EE5\u5167\u7684\u6587\u5B57", "\u53EF\u522A\u9664\u6B64\u6B04\uFF0C\u6539\u5728\u5E73\u53F0\u4E0A\u50B3\u8868\u55AE\u586B\u5BEB");
   if (typeof tool.version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(tool.version)) {
     bad("tool.version", "\u7248\u672C\u9700\u70BA\u8A9E\u610F\u5316\u7248\u672C\uFF08\u4F8B\u5982 1.2.0 \u6216 1.2.0-pilot.1\uFF09", "\u4FEE\u6B63\u7248\u672C\u5B57\u4E32\uFF1B\u6BCF\u6B21\u63D0\u4EA4\u66F4\u65B0\u9700\u905E\u589E");
   }
@@ -7455,7 +7455,7 @@ function validateManifest(text, files, cfg2) {
     warnings,
     manifest: {
       schemaVersion: "workhub/v1",
-      tool: { id: tool.id, name: tool.name.trim(), version: tool.version, description: String(tool.description ?? "") },
+      tool: { id: tool.id, name: typeof tool.name === "string" ? tool.name.trim() : "", version: tool.version, description: String(tool.description ?? "") },
       build: { dockerfile: dfPath, context: context || ".", platforms },
       run: {
         port: run.port,

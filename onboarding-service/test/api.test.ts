@@ -518,6 +518,30 @@ test('上架資料包：一個 ZIP 內含 SOP、範本、預檢工具與給 AI �
   } finally { await t.close(); }
 });
 
+test('工具名稱以平台表單為準：新增時表單優先、未填才用 workhub.yaml；更新不覆蓋；可在平台改名並留紀錄', async () => {
+  const t = await setup();
+  try {
+    const noName = MANIFEST.replace('  name: 示範工具\n', '');
+    const r0 = await upload(t.call, validZip([], noName));
+    assert.equal(r0.status, 422);
+    assert.ok((r0.data.issues as any[]).some((i) => i.field === 'name'));
+    const r1 = await upload(t.call, validZip([], noName), 'department=purchase&owner=Mila&filename=demo.zip&name=' + encodeURIComponent('出貨查詢'));
+    assert.equal(r1.status, 201);
+    assert.equal((r1.data.submission as any).toolName, '出貨查詢');
+    await t.runQueue();
+    const r2 = await upload(t.call, validZip([], MANIFEST.replace('version: 1.0.0', 'version: 1.0.1')), 'department=purchase&owner=Mila&filename=demo.zip&mode=update&expectedToolId=demo-tool');
+    assert.equal(r2.status, 201);
+    assert.equal((r2.data.submission as any).toolName, '出貨查詢', 'workhub.yaml 的 tool.name 不覆蓋平台名稱');
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/name', { name: '  ' })).status, 409);
+    const rn = await t.call('POST', '/api/onboarding/tools/demo-tool/name', { name: '出貨進度查詢' });
+    assert.equal(rn.status, 200);
+    const sub = (await t.call('GET', `/api/onboarding/submissions/${(r2.data.submission as any).id}`)).data.submission as any;
+    assert.equal(sub.toolName, '出貨進度查詢');
+    const audit = t.store.all<{ action: string }>("SELECT action FROM audit_events WHERE action='tool.renamed'");
+    assert.equal(audit.length, 1);
+  } finally { await t.close(); }
+});
+
 test('入口事件：點擊與阻擋分開記錄，同一事件重送不重複計數', async () => {
   const t = await setup();
   try {

@@ -58,9 +58,9 @@ export const onboardingApi = {
   health: () => call<{ ok: boolean; docker: boolean; trivy: boolean; environment: string; queue: string }>('GET', '/health'),
   list: () => call<{ submissions: Submission[] }>('GET', '/submissions').then((r) => r.submissions),
   get: (id: string) => call<{ submission: Submission }>('GET', `/submissions/${id}`).then((r) => r.submission),
-  upload: (file: File, department: string, owner: string, expectedToolId?: string) =>
+  upload: (file: File, department: string, owner: string, expectedToolId?: string, name?: string) =>
     call<{ submission: Submission; warnings: Issue[] }>('POST',
-      `/submissions?department=${encodeURIComponent(department)}&owner=${encodeURIComponent(owner)}&filename=${encodeURIComponent(file.name)}&mode=${expectedToolId ? 'update' : 'new'}${expectedToolId ? `&expectedToolId=${encodeURIComponent(expectedToolId)}` : ''}`,
+      `/submissions?department=${encodeURIComponent(department)}&owner=${encodeURIComponent(owner)}&filename=${encodeURIComponent(file.name)}&mode=${expectedToolId ? 'update' : 'new'}${expectedToolId ? `&expectedToolId=${encodeURIComponent(expectedToolId)}` : ''}${name ? `&name=${encodeURIComponent(name.trim())}` : ''}`,
       file, 'application/zip'),
   retry: (id: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/retry`),
   cancel: (jobId: string) => call('POST', `/jobs/${jobId}/cancel`),
@@ -78,6 +78,7 @@ export const onboardingApi = {
   restart: (toolId: string, reason = '') => call<{ ok: boolean; seconds: number; error?: string }>('POST', `/tools/${toolId}/restart`, { reason }),
   toolLogs: async (toolId: string) => (await fetch(`${BASE}/tools/${toolId}/logs?tail=200`, { credentials: 'same-origin' })).text(),
   opsEvents: () => call<{ events: OpsEvent[] }>('GET', '/ops/events').then((r) => r.events),
+  rename: (toolId: string, name: string) => call<{ toolId: string; name: string }>('POST', `/tools/${toolId}/name`, { name }),
   releases: (toolId?: string) => call<{ releases: ReleaseRecord[] }>('GET', `/releases${toolId ? `?toolId=${encodeURIComponent(toolId)}` : ''}`).then((r) => r.releases),
   releaseLog: async (id: string) => (await fetch(`${BASE}/releases/${id}/log`, { credentials: 'same-origin' })).text(),
   catalog: () => call<{ tools: CatalogTool[] }>('GET', '/catalog').then((r) => r.tools),

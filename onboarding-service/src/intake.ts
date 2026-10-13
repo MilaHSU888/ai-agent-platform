@@ -7,7 +7,15 @@ import { newId, now, type Store } from './db.ts';
 import { validateManifest, type Manifest } from './manifest.ts';
 import { detectPrefix, extract, readCentralDirectory, readEntry, scanSecrets, type Issue } from './zip-intake.ts';
 
-export type IntakeForm = { department: string; owner: string; actor: string; originalFilename: string; mode?: string; expectedToolId?: string };
+export type IntakeForm = { department: string; owner: string; actor: string; originalFilename: string; mode?: string; expectedToolId?: string; name?: string };
+
+export function validToolName(name: string): string | null {
+  const n = name.trim();
+  if (!n) return '請填寫工具名稱';
+  if (n.length > 40) return '工具名稱最多 40 字';
+  if (/[\u0000-\u001f<>]/.test(n)) return '工具名稱不可包含控制字元或 < >';
+  return null;
+}
 export type IntakeResult =
   | { ok: true; submissionId: string; jobId: string; toolId: string; version: string; revision: number; warnings: Issue[] }
   | { ok: false; issues: Issue[]; warnings: Issue[] };
@@ -46,6 +54,12 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   if (form.mode && !['new', 'update'].includes(form.mode)) return rejectTarget('不支援的提交方式', '請重新開啟新增工具或提交新版本表單');
   if (form.mode === 'new' && existingTool) return rejectTarget('此工具已存在', '請在該工具的提交詳情選擇「提交新版本」，或為新工具使用不同的 tool.id');
   if (form.mode === 'update' && (!form.expectedToolId || m.tool.id !== form.expectedToolId || !existingTool)) return rejectTarget('ZIP 的工具識別與選取的更新工具不符', '請上傳所選工具的 ZIP，並確認 tool.id 相同；新工具請使用「新增工具」');
+  // 工具名稱：第一次上架以表單為準，表單沒填才用 workhub.yaml 的 tool.name；更新時沿用平台上的名稱
+  const toolName = (form.name ?? '').trim() || m.tool.name;
+  if (!existingTool) {
+    const nameErr = validToolName(toolName);
+    if (nameErr) return { ok: false, warnings: inspected.warnings, issues: [{ file: '(平台表單)', field: 'name', reason: nameErr, fix: '在上架表單填寫使用者看得懂的工具名稱' }] };
+  }
   const sourceHash = createHash('sha256').update(buf).digest('hex');
 
   const released = store.get<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND version=? AND status='released'", m.tool.id, m.tool.version);
@@ -76,10 +90,10 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   store.tx(() => {
     const tool = store.get<{ id: string }>('SELECT id FROM tools WHERE id=?', m.tool.id);
     if (!tool) {
-      store.run('INSERT INTO tools(id,name,department,owner,created_at,updated_at) VALUES (?,?,?,?,?,?)', m.tool.id, m.tool.name, form.department, form.owner, t, t);
-      store.audit(form.actor, 'tool.registered', m.tool.id, { department: form.department, owner: form.owner });
+      store.run('INSERT INTO tools(id,name,department,owner,created_at,updated_at) VALUES (?,?,?,?,?,?)', m.tool.id, toolName.trim(), form.department, form.owner, t, t);
+      store.audit(form.actor, 'tool.registered', m.tool.id, { name: toolName.trim(), department: form.department, owner: form.owner });
     } else {
-      store.run('UPDATE tools SET name=?, updated_at=? WHERE id=?', m.tool.name, t, m.tool.id);
+      store.run('UPDATE tools SET updated_at=? WHERE id=?', t, m.tool.id);
     }
     revision = (store.get<{ r: number }>('SELECT COALESCE(MAX(revision),0)+1 AS r FROM submissions WHERE tool_id=?', m.tool.id)?.r) ?? 1;
     // 新修訂使舊提交（未發布者）的測試確認與核准失效

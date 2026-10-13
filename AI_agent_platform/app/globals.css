@@ -965,3 +965,5 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .oc-maint input { flex: 1; }
 .mg-center a.onb-kit { display: inline-flex; align-items: center; padding: 9px 14px; border: 1px solid #cfd9e5; border-radius: 8px; background: #fff; color: #263e5c; text-decoration: none; font-size: 13px; white-space: nowrap; }
 .mg-center a.onb-kit:hover { background: #edf3f8; }
+.onb-rename { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: end; margin: 14px 0; }
+.onb-rename small, .onb-rename .onb-error { grid-column: 1 / -1; margin: 0; }

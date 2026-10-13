@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Config } from './config.ts';
 import { newId, now, type Store } from './db.ts';
 import { Auth } from './auth.ts';
-import { intake } from './intake.ts';
+import { intake, validToolName } from './intake.ts';
 import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
@@ -18,7 +18,7 @@ export const TEMPLATE = `# WorkHub 提交規格 v1 範本（不要放任何密�
 schemaVersion: workhub/v1
 tool:
   id: my-tool                 # 小寫英數字與連字號
-  name: 我的工具
+  # name: 我的工具            # 選填；工具名稱以 WorkHub 上傳表單為準
   version: 1.0.0              # 每次提交更新請遞增
   description: 一句話說明用途
 build:
@@ -115,6 +115,21 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     { method: 'GET', re: /^\/api\/onboarding\/session$/, auth: false, fn: ({ res, session }) => {
       send(res, 200, session ? { authenticated: true, actor: session.actor, environment: cfg.environment } : { authenticated: false, environment: cfg.environment });
     } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/name$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      const name = String(body.name ?? '').trim();
+      const err = validToolName(name);
+      if (err) throw new GateError([err]);
+      const tool = store.get<{ name: string }>('SELECT name FROM tools WHERE id=?', m[1]);
+      if (!tool) throw new GateError(['找不到此工具']);
+      if (tool.name !== name) {
+        store.tx(() => {
+          store.run('UPDATE tools SET name=?, updated_at=? WHERE id=?', name, now(), m[1]);
+          store.audit(session!.actor, 'tool.renamed', m[1], { from: tool.name, to: name });
+        });
+      }
+      send(res, 200, { toolId: m[1], name });
+    } },
     { method: 'GET', re: /^\/api\/onboarding\/kit$/, auth: true, fn: ({ res, url }) => {
       const toolId = url.searchParams.get('toolId');
       let target: KitTarget = null;
@@ -144,6 +159,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
         department: url.searchParams.get('department') ?? '', owner: url.searchParams.get('owner') ?? '',
         originalFilename: url.searchParams.get('filename') ?? 'upload.zip', actor: session!.actor,
         mode: url.searchParams.get('mode') ?? undefined, expectedToolId: url.searchParams.get('expectedToolId') ?? undefined,
+        name: url.searchParams.get('name') ?? undefined,
       });
       if (!r.ok) {
         store.audit(session!.actor, 'submission.rejected', null, { filename: url.searchParams.get('filename'), issues: r.issues.slice(0, 50) });

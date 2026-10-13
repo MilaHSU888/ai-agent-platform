@@ -61,7 +61,8 @@ export function validateManifest(text: string, files: Set<string>, cfg: Config):
   if (typeof tool.id !== 'string' || !/^[a-z][a-z0-9-]{2,40}$/.test(tool.id)) {
     bad('tool.id', '工具 ID 必須是 3～41 個小寫英數字或連字號，且以英文字母開頭', '例如 quote-aggregator');
   }
-  if (typeof tool.name !== 'string' || !tool.name.trim()) bad('tool.name', '缺少工具名稱', '填寫使用者看得懂的名稱');
+  // 工具名稱以平台表單為準（2026-10-13 決策）；tool.name 選填，只在第一次上架且表單沒填時當預設值
+  if (tool.name !== undefined && (typeof tool.name !== 'string' || tool.name.trim().length > 40)) bad('tool.name', '工具名稱需為 40 字以內的文字', '可刪除此欄，改在平台上傳表單填寫');
   if (typeof tool.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(tool.version)) {
     bad('tool.version', '版本需為語意化版本（例如 1.2.0 或 1.2.0-pilot.1）', '修正版本字串；每次提交更新需遞增');
   }
@@ -158,7 +159,7 @@ export function validateManifest(text: string, files: Set<string>, cfg: Config):
     warnings,
     manifest: {
       schemaVersion: 'workhub/v1',
-      tool: { id: tool.id as string, name: (tool.name as string).trim(), version: tool.version as string, description: String(tool.description ?? '') },
+      tool: { id: tool.id as string, name: typeof tool.name === 'string' ? tool.name.trim() : '', version: tool.version as string, description: String(tool.description ?? '') },
       build: { dockerfile: dfPath, context: context || '.', platforms: platforms as string[] },
       run: {
         port: run.port as number,

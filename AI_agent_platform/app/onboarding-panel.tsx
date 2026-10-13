@@ -72,6 +72,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
   }, [submissionForm]);
   const [department, setDepartment] = useState(departments.find((d) => d.id === 'purchase')?.id ?? departments[0]?.id ?? '');
   const [owner, setOwner] = useState('');
+  const [toolName, setToolName] = useState('');
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [warnings, setWarnings] = useState<Issue[]>([]);
@@ -120,6 +121,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
   const openSubmission = (tool: Submission | null) => {
     setSubmissionForm({ tool }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
     setOwner(tool?.owner ?? '');
+    setToolName(tool?.toolName ?? '');
     setDepartment(tool?.department ?? departments.find((d) => d.id === 'purchase')?.id ?? departments[0]?.id ?? '');
   };
 
@@ -166,12 +168,13 @@ export function OnboardingPanel({ departments, notice }: Props) {
       {submissionForm.tool && <p className="onb-note">更新工具：<code>{submissionForm.tool.toolId}</code>。ZIP 中的 tool.id 必須相同，並填寫新版本號。<b>送出後，目前這一版的測試確認、漏洞例外與核准都會失效</b>，需重新建置、測試與核准；只想繼續目前這一版，請按「取消」並在下方提交詳情操作。</p>}
       <form key={submissionForm.tool?.id ?? 'new'} className="mg-fields onb-upload" onSubmit={(e) => {
         e.preventDefault(); if (!file) return;
-        void act(async () => { const r = await onboardingApi.upload(file, department, owner, submissionForm.tool?.toolId); setWarnings(r.warnings); setSelectedId(r.submission.id); setFile(null); setSubmissionForm(null); setLog(null); setNote(''); }, '已收件，開始建置與測試');
+        void act(async () => { const r = await onboardingApi.upload(file, department, owner, submissionForm.tool?.toolId, submissionForm.tool ? undefined : toolName); setWarnings(r.warnings); setSelectedId(r.submission.id); setFile(null); setSubmissionForm(null); setLog(null); setNote(''); }, '已收件，開始建置與測試');
       }}>
+        <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 出貨進度查詢" title={submissionForm.tool ? '要改名請到發布管理的工具發布詳情' : undefined} /></label>
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>原始碼 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
-        <button disabled={!file || !owner.trim() || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
+        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       <IssueTable title="提交包未通過檢查（已停止建置）" issues={issues} />
@@ -480,5 +483,28 @@ export function OfflineControl({ list, disabled, notice, onDone }: { list: Relea
     <div className="mg-row"><input aria-label={active ? '下架原因' : '重新上架原因'} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={`${active ? '下架' : '重新上架'}原因（會留在稽核紀錄）`} />
       <button className={active ? 'onb-danger' : undefined} disabled={disabled || busy || !reason.trim()} onClick={() => void go()}>{active ? '下架' : '重新上架'}</button></div>
     {errors.length > 0 && <ul className="onb-error">{errors.map((r) => <li key={r}>{r}</li>)}</ul>}
+  </div>;
+}
+
+/** 發布管理的工具詳情：工具名稱以平台為準，可直接改名（留稽核紀錄，不需重新上架） */
+export function ToolNameEditor({ toolId, name, notice }: { toolId: string; name: string; notice: (m: string) => void }) {
+  const [value, setValue] = useState(name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const changed = value.trim() !== name;
+  const save = async () => {
+    setBusy(true); setError('');
+    try {
+      const r = await onboardingApi.rename(toolId, value);
+      notice(`工具名稱已改為「${r.name}」`);
+      window.dispatchEvent(new Event('workhub:catalog-refresh'));
+    } catch (e) { setError(e instanceof ApiError ? (e.reasons[0] ?? e.message) : '上架服務沒有回應'); }
+    finally { setBusy(false); }
+  };
+  return <div className="onb-rename">
+    <label>工具名稱<input value={value} maxLength={40} onChange={(e) => setValue(e.target.value)} /></label>
+    <button className="onb-primary-sm" disabled={busy || !changed || !value.trim()} onClick={() => void save()}>{busy ? '儲存中…' : '儲存名稱'}</button>
+    <small className="mg-muted">tool.id <code>{toolId}</code> 不會改變；改名立即生效，不需重新上架。</small>
+    {error && <p className="onb-error">{error}</p>}
   </div>;
 }

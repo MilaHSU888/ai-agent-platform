@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolEntry } from "./tool-entry";
 import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
 import { DEFAULT_LOCAL_MODEL, defaultConfig, entryBlock, initialDemo, normalizeModel, type DemoState } from "./demo-management";
@@ -47,6 +47,9 @@ const departments: Department[] = [
   { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 6, saved: 247 },
   { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 6, saved: 121 },
 ];
+
+/** 示範卡片與實際上架工具的固定對照（tool.id → 示範卡片 id） */
+const RELEASED_ALIAS: Record<string, string> = { 'quote-aggregator': 'quote' };
 
 const tools: Tool[] = [
   { id: "openwebui", name: "OpenWebUI", description: "既有 AI 助理授權入口；正式 URL 待提供", department: "shared", type: "AI", users: 0, runs: 0, saved: 0, color: "blue", icon: "AI", url: "" },
@@ -194,13 +197,15 @@ export default function Home() {
     window.addEventListener('workhub:catalog-refresh', load);
     return () => { alive = false; clearInterval(timer); window.removeEventListener('workhub:catalog-refresh', load); };
   }, []);
+  // 已發布工具對應到示範卡片：先看固定對照（tool.id），再看名稱；名稱可在平台改，對照不受影響
+  const matchDemo = useCallback((r: CatalogTool) => tools.find((t) => t.id === RELEASED_ALIAS[r.toolId]) ?? tools.find((t) => t.name === r.name) ?? demo.added.find((t) => t.name === r.name), [demo.added]);
   const releasedExtra = useMemo<Tool[]>(() => released
-    .filter((r) => !tools.some((t) => t.name === r.name) && !demo.added.some((t) => t.name === r.name))
-    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: '已透過上架服務發布的工具', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: 'blue', icon: r.name.slice(0, 1) }) as Tool), [released, demo.added]);
+    .filter((r) => !matchDemo(r))
+    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: '已透過上架服務發布的工具', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: 'blue', icon: r.name.slice(0, 1) }) as Tool), [released, matchDemo]);
   const releasedById = useMemo(() => Object.fromEntries(released.map((r) => {
-    const match = tools.find((t) => t.name === r.name) ?? demo.added.find((t) => t.name === r.name);
+    const match = matchDemo(r);
     return [match?.id ?? `rel-${r.toolId}`, r];
-  })) as Record<string, CatalogTool>, [released, demo.added]);
+  })) as Record<string, CatalogTool>, [released, matchDemo]);
   const releasedIds = useMemo(() => Object.fromEntries(Object.entries(releasedById).map(([id, r]) => [id, r.toolId])) as Record<string, string>, [releasedById]);
   const shown = useMemo<DemoState>(() => {
     const configs = { ...demo.configs };
@@ -213,8 +218,9 @@ export default function Home() {
   }, [demo, releasedById, releasedExtra]);
   const catalog = useMemo(() => [...tools, ...demo.added, ...releasedExtra].map(tool => {
     const c = shown.configs[tool.id];
-    return c ? {...tool, description:c.description, ...(c.url || tool.url !== undefined ? {url:c.url} : {})} : tool;
-  }), [demo.added, shown.configs, releasedExtra]);
+    const name = releasedById[tool.id]?.name ?? tool.name; // 已發布工具的名稱以平台為準
+    return c ? {...tool, name, description:c.description, ...(c.url || tool.url !== undefined ? {url:c.url} : {})} : {...tool, name};
+  }), [demo.added, shown.configs, releasedExtra, releasedById]);
   const changeDemo = (fn: (s: DemoState) => DemoState) => setDemo(fn);
   const recordClick = (id:string) => {
     setDemo(s => ({...s, clicks:[...s.clicks, {tool:id,time:new Date().toLocaleString('zh-TW')}].slice(-500)}));
