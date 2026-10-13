@@ -1,8 +1,9 @@
 "use client";
 
-import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import customerReviewRows from "./customer-review.json";
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { useEffect, useMemo, useState } from "react";
+import { ToolEntry } from "./tool-entry";
+import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
+import { defaultConfig, entryBlock, initialDemo, type DemoState } from "./demo-management";
 
 type Department = {
   id: string;
@@ -26,6 +27,7 @@ type Tool = {
   saved: number;
   color: string;
   icon: string;
+  url?: string;
 };
 
 const departments: Department[] = [
@@ -44,6 +46,7 @@ const departments: Department[] = [
 ];
 
 const tools: Tool[] = [
+  { id: "openwebui", name: "OpenWebUI", description: "既有 AI 助理授權入口；正式 URL 待提供", department: "shared", type: "AI", users: 0, runs: 0, saved: 0, color: "blue", icon: "AI", url: "" },
   { id: "meeting", name: "會議紀錄助手", description: "自動整理逐字稿、待辦事項與決策摘要", department: "shared", type: "AI", badge: "熱門", users: 214, runs: 846, saved: 286, color: "violet", icon: "記" },
   { id: "translate", name: "多語翻譯助手", description: "中英日文件翻譯與企業用語校正", department: "shared", type: "AI", users: 186, runs: 638, saved: 192, color: "blue", icon: "譯" },
   { id: "document", name: "文件格式轉換", description: "PDF、Word、Excel 檔案快速轉換", department: "shared", type: "非 AI", users: 172, runs: 512, saved: 84, color: "cyan", icon: "轉" },
@@ -71,7 +74,7 @@ const tools: Tool[] = [
   { id: "contract", name: "合約摘要助手", description: "整理行政合約重點與到期日", department: "general", type: "AI", users: 8, runs: 49, saved: 22, color: "violet", icon: "約" },
   { id: "room", name: "會議室資源管理", description: "空間、設備與借用衝突查詢", department: "general", type: "非 AI", users: 9, runs: 88, saved: 13, color: "cyan", icon: "室" },
 
-  { id: "vision", name: "AI 識圖大師", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "mfg2", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
+  { id: "vision", name: "AI 識圖大師", url: "", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "mfg2", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
   { id: "spec", name: "規格文件助手", description: "摘要規格、比對版本與標示變更", department: "rd", type: "AI", badge: "熱門", users: 42, runs: 318, saved: 126, color: "violet", icon: "規" },
   { id: "patent", name: "專利檢索助手", description: "整理技術關鍵字與相似專利", department: "rd", type: "AI", users: 31, runs: 186, saved: 84, color: "blue", icon: "專" },
   { id: "testreport", name: "測試報告產生器", description: "彙整測試數據與報告格式", department: "rd", type: "非 AI", users: 38, runs: 241, saved: 71, color: "green", icon: "測" },
@@ -79,7 +82,7 @@ const tools: Tool[] = [
   { id: "risk", name: "設計風險檢查", description: "依歷史案例提示潛在設計風險", department: "rd", type: "AI", users: 24, runs: 127, saved: 41, color: "orange", icon: "險" },
   { id: "tech", name: "技術知識搜尋", description: "跨專案搜尋核准的技術文件", department: "rd", type: "AI", users: 35, runs: 223, saved: 68, color: "pink", icon: "知" },
 
-  { id: "quote", name: "採購報價匯整工具", description: "將不同格式的供應商報價檔匯整為統一比較表", department: "purchase", type: "AI", users: 17, runs: 164, saved: 58, color: "blue", icon: "價" },
+  { id: "quote", name: "採購報價單彙整工具", description: "將不同格式的供應商報價檔匯整為統一比較表", department: "purchase", type: "AI", users: 17, runs: 164, saved: 58, color: "blue", icon: "價" },
   { id: "supplier", name: "供應商評核", description: "品質、交期與服務績效彙整", department: "purchase", type: "非 AI", users: 14, runs: 82, saved: 24, color: "green", icon: "供" },
   { id: "po", name: "採購單查詢", description: "依料號、廠商與日期查詢 PO", department: "purchase", type: "非 AI", users: 19, runs: 202, saved: 35, color: "cyan", icon: "購" },
   { id: "clause", name: "採購條款檢查", description: "提示付款、交期與責任條款", department: "purchase", type: "AI", users: 12, runs: 91, saved: 25, color: "violet", icon: "款" },
@@ -148,22 +151,51 @@ function getToolScenario(tool: Tool) {
 
 export default function Home() {
   const [activeDepartment, setActiveDepartment] = useState("shared");
-  const [view, setView] = useState<"tools" | "analytics">("tools");
+  const [view, setView] = useState<"tools" | "analytics" | ManagementView>("tools");
   const [query, setQuery] = useState("");
   const [type, setType] = useState<"全部" | "AI" | "非 AI">("全部");
   const [activeTool, setActiveTool] = useState<Tool | null>(null);
   const [selectedToolId, setSelectedToolId] = useState("");
 
+  const [demo, setDemo] = useState<DemoState>(initialDemo);
+  const [demoLoaded, setDemoLoaded] = useState(false);
+  const [message, setMessage] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("全部分類");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [announcement, setAnnouncement] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+    if (cancelled) return;
+    try {
+      const raw = localStorage.getItem('workhub-demo-v018');
+      if (raw) { const saved = JSON.parse(raw); if (saved && Array.isArray(saved.added) && saved.configs && Array.isArray(saved.categories)) setDemo({...initialDemo(), ...saved}); }
+    } catch { setMessage('本機示範資料無法讀取，已使用初始內容'); }
+    setDemoLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (!demoLoaded) return;
+    try { localStorage.setItem('workhub-demo-v018', JSON.stringify(demo)); }
+    catch { queueMicrotask(() => setMessage('瀏覽器無法儲存；本次操作僅在目前頁面保留')); }
+  }, [demo, demoLoaded]);
+  const catalog = useMemo(() => [...tools, ...demo.added].map(tool => {
+    const c = demo.configs[tool.id];
+    return c ? {...tool, description:c.description, ...(c.url || tool.url !== undefined ? {url:c.url} : {})} : tool;
+  }), [demo.added, demo.configs]);
+  const changeDemo = (fn: (s: DemoState) => DemoState) => setDemo(fn);
+  const recordClick = (id:string) => setDemo(s => ({...s, clicks:[...s.clicks, {tool:id,time:new Date().toLocaleString('zh-TW')}].slice(-500)}));
   const department = departments.find((item) => item.id === activeDepartment) ?? departments[0];
   const visibleTools = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return tools.filter((tool) => {
+    return catalog.filter((tool) => {
       const matchesDepartment = tool.department === activeDepartment;
       const matchesType = type === "全部" || tool.type === type;
       const matchesQuery = !normalized || `${tool.name}${tool.description}`.toLowerCase().includes(normalized);
-      return matchesDepartment && matchesType && matchesQuery;
+      return matchesDepartment && matchesType && matchesQuery && (!favoritesOnly || demo.favorites.includes(tool.id)) && (categoryFilter === "全部分類" || (demo.configs[tool.id] ?? defaultConfig(tool)).category === categoryFilter);
     });
-  }, [activeDepartment, query, type]);
+  }, [activeDepartment, query, type, catalog, categoryFilter, favoritesOnly, demo.favorites, demo.configs]);
 
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
@@ -180,9 +212,6 @@ export default function Home() {
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
 
-  if (activeTool?.id === "vision") {
-    return <VisionWorkspace onBack={() => setActiveTool(null)} />;
-  }
   if (activeTool?.id === "quote") {
     return <QuoteWorkspace onBack={() => setActiveTool(null)} />;
   }
@@ -202,7 +231,8 @@ export default function Home() {
         </div>
         <nav className="topnav" aria-label="主要功能">
           <button className={view === "tools" ? "active" : ""} onClick={() => setView("tools")}>工具中心</button>
-          <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>管理者後台</button>
+          <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>使用分析</button>
+          {managementViews.map(item => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>{item.label}</button>)}
         </nav>
         <div className="user-area">
           <label className="department-switcher"><span>部門別</span><select value={activeDepartment} onChange={(event) => { setActiveDepartment(event.target.value); setView("tools"); setQuery(""); setSelectedToolId(""); }}>{departments.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
@@ -212,6 +242,7 @@ export default function Home() {
         </div>
       </header>
 
+      {message && <div className="demo-message" role="status">{message}<button onClick={() => setMessage("")}>關閉</button></div>}
       <main className={`main-content ${view === "tools" ? "tool-center-main" : "admin-center-main"}`}>
         {view === "tools" ? (
           <div className="tool-center-stage">
@@ -230,6 +261,8 @@ export default function Home() {
               </div>
             </section>
 
+            <button className="demo-news" onClick={() => setAnnouncement(!announcement)}>更新公告：上架申請、發布維運與分類管理已加入 Demo · {announcement ? "收起" : "查看"}</button>
+            {announcement && <div className="mg-panel">以採購報價單彙整工具示範全流程；AI 識圖維持獨立入口。新增工具經檢查、測試與核准後出現在對應部門。所有工具名稱與統計示例均非代建清單。</div>}
             <section className="toolbar" aria-label="工具搜尋與篩選">
               <label className="search-box">
                 <span>⌕</span>
@@ -243,9 +276,10 @@ export default function Home() {
               </div>
             </section>
 
+            <div className="demo-filters"><label>功能分類<select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}><option>全部分類</option>{demo.categories.map(c => <option key={c}>{c}</option>)}</select></label><button aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly(!favoritesOnly)}>{favoritesOnly ? "★ 我的收藏" : "☆ 顯示收藏"}</button><button onClick={() => setView("issues")}>聯絡管理者／權限申請</button></div>
             <section className="section-title">
               <div><h2>{department.id === "shared" ? "共用工具" : `${department.name}工具`}</h2><span>{visibleTools.length} 項</span></div>
-              <p>依您的 AD 權限顯示</p>
+              <p>部門瀏覽示範 · 正式 AD 權限待串接</p>
             </section>
 
             {visibleTools.length > 0 ? (
@@ -254,7 +288,7 @@ export default function Home() {
                   <button className={`tool-card ${selectedToolId === tool.id ? "selected" : ""}`} key={tool.id} onClick={() => setSelectedToolId((current) => current === tool.id ? "" : tool.id)} aria-expanded={selectedToolId === tool.id}>
                     <span className={`tool-icon metal-tile ${tool.color}`}><i className={`metal-symbol symbol-${index % 6}`}></i></span>
                     <strong>{tool.name}</strong>
-                    <small>{tool.type === "AI" ? "AI" : "TOOL"}</small>
+                    <small>{tool.type === "AI" ? "AI" : "TOOL"} · {(demo.configs[tool.id] ?? defaultConfig(tool)).status}{!(demo.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}</small>
                   </button>
                 ))}
               </section>
@@ -262,11 +296,11 @@ export default function Home() {
               <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
             )}
 
-            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small></div><button onClick={() => setActiveTool(selectedTool)}>開啟工具 <span>→</span></button></section>}
+            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small></div><div className="demo-entry-actions"><small>{(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool)).model}</small><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{entryBlock(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(demo.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
           </div>
-        ) : (
+        ) : view === "analytics" ? (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
-        )}
+        ) : <ManagementCenter view={view} state={demo} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} /> }
       </main>
 
     </div>
@@ -683,339 +717,6 @@ function QuoteWorkspace({ onBack }: { onBack: () => void }) {
   );
 }
 
-type ReviewStatus = "pending" | "confirmed" | "edited" | "flagged";
-
-type ReviewDetail = { row: number; unit: string; value: string; suffix: string; upper: string; lower: string };
-
-type ReviewField = {
-  details?: ReviewDetail[];
-  id: string;
-  marker: number;
-  page?: number;
-  unresolved?: boolean;
-  label: string;
-  value: string;
-  original: string;
-  group: string;
-  status: ReviewStatus;
-  sample: "S01" | "S02" | "S03" | "S04";
-  image: string;
-  imageSize: [number, number];
-  highlight: { left: number; top: number; width: number; height: number };
-};
-
-function escapeExcelXml(value: string | number) {
-  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-
-async function buildReviewWorkbook(fields: ReviewField[]) {
-  const response = await fetch("/ai-vision-customer-template.xlsx", { cache: "no-store" });
-  if (!response.ok) throw new Error("無法載入客戶 Excel 範本");
-  const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
-  let sheet = strFromU8(files["xl/worksheets/sheet1.xml"]);
-  function replaceCell(reference: string, value: string) {
-    const pattern = new RegExp(`<c\\b([^>]*\\br="${reference}"[^>]*?)(?:\\/>|>[\\s\\S]*?<\\/c>)`);
-    if (!pattern.test(sheet)) {
-      // Empty cells in the template may not be serialized; keep cell order.
-      const row = reference.replace(/[A-Z]/g, "");
-      sheet = sheet.replace(new RegExp(`(<row\\b[^>]*r="${row}"[^>]*>)([\\s\\S]*?)(<\\/row>)`), (_match, opening, contents, closing) => {
-        const column = reference.replace(/\d/g, "");
-        const rank = (letters: string) => Array.from(letters).reduce((n, letter) => n * 26 + letter.charCodeAt(0) - 64, 0);
-        const target = new RegExp(`<c\\b[^>]*r="([A-Z]+)${row}"`);
-        let inserted = false;
-        const updated = contents.replace(/<c\b[^>]*?(?:\/>|>[\s\S]*?<\/c>)/g, (cell: string) => {
-          const match = cell.match(target);
-          if (!inserted && match && rank(match[1]) > rank(column)) { inserted = true; return `<c r="${reference}"/>` + cell; }
-          return cell;
-        });
-        return opening + updated + (inserted ? "" : `<c r="${reference}"/>`) + closing;
-      });
-    }
-    if (!pattern.test(sheet)) throw new Error(`範本缺少 ${reference}`);
-    sheet = sheet.replace(pattern, (_match, attributes: string) => {
-      const style = attributes.match(/\bs="[^"]*"/)?.[0] ?? "";
-      const number = value.replace(",", ".");
-      return /^-?\d+(?:\.\d+)?$/.test(number)
-        ? `<c r="${reference}" ${style}><v>${number}</v></c>`
-        : `<c r="${reference}" ${style} t="inlineStr"><is><t xml:space="preserve">${escapeExcelXml(value)}</t></is></c>`;
-    });
-  }
-  fields.forEach((field) => field.details?.forEach((detail) => {
-    for (const [column, value] of [["D", detail.unit], ["E", detail.value], ["F", detail.suffix], ["H", detail.upper], ["J", detail.lower]]) replaceCell(`${column}${detail.row}`, value);
-  }));
-  files["xl/worksheets/sheet1.xml"] = strToU8(sheet);
-  files["xl/workbook.xml"] = strToU8(strFromU8(files["xl/workbook.xml"]).replace(/<calcPr[^>]*\/>/, '<calcPr calcId="0" fullCalcOnLoad="1" forceFullCalc="1"/>'));
-  return zipSync(files, { level: 6 });
-}
-
-async function downloadReviewWorkbook(fields: ReviewField[]) {
-  const workbook = await buildReviewWorkbook(fields);
-  const workbookBuffer = workbook.buffer.slice(workbook.byteOffset, workbook.byteOffset + workbook.byteLength) as ArrayBuffer;
-  const url = URL.createObjectURL(new Blob([workbookBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "804LY0241001B0_品質檢驗紀錄.xlsx";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-const initialReviewFields: ReviewField[] = [
-  { id: "balloon-1", marker: 1, label: "外徑尺寸", value: "70 ±0,1", original: "70 ±0,1", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 63.7, top: 38.5, width: 7.2, height: 7.5 } },
-  { id: "balloon-2", marker: 2, label: "定位尺寸", value: "54 ±0,1", original: "54 ±0,1", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 67.6, top: 47.3, width: 7.5, height: 8.8 } },
-  { id: "balloon-3", marker: 3, label: "定位尺寸", value: "42 ±0,7", original: "42 ±0,7", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 70.7, top: 45.3, width: 7.2, height: 8.6 } },
-  { id: "balloon-4", marker: 4, label: "孔位尺寸", value: "28,4 ±0,5", original: "28,4 ±0,5", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 77.4, top: 43.2, width: 9.2, height: 8.2 } },
-  { id: "balloon-5", marker: 5, label: "螺紋孔規格", value: "8-#4-40 UNJC 3B・7.5 深", original: "8-#4-40 UNJC 3B・7.5 深", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 43.7, top: 34.3, width: 17.2, height: 7.4 } },
-  { id: "balloon-6", marker: 6, label: "定位尺寸", value: "30,5 ±0,05", original: "30,5 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 47.1, top: 44.3, width: 10.5, height: 7.1 } },
-  { id: "balloon-7", marker: 7, label: "定位尺寸", value: "31 ±0,05", original: "31 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 45.0, top: 48.4, width: 11.8, height: 7.4 } },
-  { id: "balloon-8", marker: 8, label: "通孔規格", value: "2-⌀1,6 +0,05/0・4 深", original: "2-⌀1,6 +0,05/0・4 深", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 27.0, top: 32.8, width: 14.2, height: 7.5 } },
-  { id: "balloon-9", marker: 9, label: "螺紋孔規格", value: "6-#4-40 UNJC 3B・8 深", original: "6-#4-40 UNJC 3B・8 深", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 24.0, top: 41.8, width: 16.0, height: 7.0 } },
-  { id: "balloon-10", marker: 10, label: "通孔規格", value: "3-⌀6 +0,03/0 THRU", original: "3-⌀6 +0,03/0 THRU", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 11.7, top: 20.6, width: 17.0, height: 8.3 } },
-  { id: "balloon-11", marker: 11, label: "螺紋孔規格", value: "8-M8×1.25 THRU", original: "8-M8×1.25 THRU", group: "一製程・孔規格", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 21.9, top: 15.6, width: 15.8, height: 6.2 } },
-  { id: "balloon-12", marker: 12, label: "總寬尺寸", value: "84 ±0,1", original: "84 ±0,1", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 76.7, top: 11.5, width: 12.7, height: 7.3 } },
-  { id: "balloon-13", marker: 13, label: "厚度尺寸", value: "2 ±0,05", original: "2 ±0,05", group: "一製程・尺寸", status: "confirmed", sample: "S01", image: "/ai-vision-process1.png", imageSize: [1800, 1273], highlight: { left: 67.3, top: 33.4, width: 7.8, height: 7.2 } },
-];
-
-const processPages = [{ page: 1, name: "一製程", image: "/ai-vision-process1.png" }, { page: 2, name: "二製程", image: "/ai-vision-process2.png" }];
-const secondProcessFields: ReviewField[] = [{"id": "p2-balloon-15", "marker": 15, "page": 2, "label": "尺寸／規格", "value": "⌀383,5 ±0,05", "original": "⌀383,5 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 21, "top": 28, "width": 9, "height": 5}}, {"id": "p2-balloon-16", "marker": 16, "page": 2, "label": "尺寸／規格", "value": "6-#4-40 UNJC-3B・TAP 7 D.P.・底部不可破孔", "original": "6-#4-40 UNJC-3B・TAP 7 D.P.・底部不可破孔", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 24, "top": 25, "width": 9, "height": 5}}, {"id": "p2-balloon-17", "marker": 17, "page": 2, "label": "尺寸／規格", "value": "7 +3/0", "original": "7 +3/0", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 28, "top": 21, "width": 6, "height": 5}}, {"id": "p2-balloon-18", "marker": 18, "page": 2, "label": "尺寸／規格", "value": "13 ±0,2", "original": "13 ±0,2", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 37, "top": 20, "width": 8, "height": 4}}, {"id": "p2-balloon-19", "marker": 19, "page": 2, "label": "尺寸／規格", "value": "2,05 ±0,02", "original": "2,05 ±0,02", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 37, "top": 24, "width": 9, "height": 4}}, {"id": "p2-balloon-20", "marker": 20, "page": 2, "label": "尺寸／規格", "value": "8 ±0,1", "original": "8 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 38, "top": 27, "width": 8, "height": 4}}, {"id": "p2-balloon-21", "marker": 21, "page": 2, "label": "尺寸／規格", "value": "3-8 ±0,03", "original": "3-8 ±0,03", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 45, "top": 26, "width": 8, "height": 5}}, {"id": "p2-balloon-22", "marker": 22, "page": 2, "label": "尺寸／規格", "value": "8 +0,05/0", "original": "8 +0,05/0", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 60, "top": 45, "width": 5, "height": 7}}, {"id": "p2-balloon-23", "marker": 23, "page": 2, "label": "尺寸／規格", "value": "45,05 +0,05/0", "original": "45,05 +0,05/0", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 54, "top": 46, "width": 6, "height": 8}}, {"id": "p2-balloon-24", "marker": 24, "page": 2, "label": "尺寸／規格", "value": "16 ±0,1", "original": "16 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 31, "top": 31, "width": 6, "height": 4}}, {"id": "p2-balloon-25", "marker": 25, "page": 2, "label": "尺寸／規格", "value": "2-187,5 ±0,1", "original": "2-187,5 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 39, "top": 37, "width": 8, "height": 5}}, {"id": "p2-balloon-26", "marker": 26, "page": 2, "label": "尺寸／規格", "value": "183,5 ±0,05", "original": "183,5 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 36, "top": 41, "width": 8, "height": 4}}, {"id": "p2-balloon-27", "marker": 27, "page": 2, "label": "尺寸／規格", "value": "3 ±0,05", "original": "3 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 36, "top": 45, "width": 6, "height": 5}}, {"id": "p2-balloon-28", "marker": 28, "page": 2, "label": "尺寸／規格", "value": "17,5 ±0,05", "original": "17,5 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 27, "top": 46, "width": 7, "height": 4}}, {"id": "p2-balloon-29", "marker": 29, "page": 2, "label": "尺寸／規格", "value": "17 ±0,05", "original": "17 ±0,05", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 38, "top": 53, "width": 6, "height": 4}}, {"id": "p2-balloon-30", "marker": 30, "page": 2, "label": "尺寸／規格", "value": "6-#4-40 UNJC-3B・TAP THRU", "original": "6-#4-40 UNJC-3B・TAP THRU", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 27, "top": 55, "width": 8, "height": 5}}, {"id": "p2-balloon-31", "marker": 31, "page": 2, "label": "尺寸／規格", "value": "8 ±0,1", "original": "8 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 41, "top": 60, "width": 6, "height": 4}}, {"id": "p2-balloon-32", "marker": 32, "page": 2, "label": "尺寸／規格", "value": "2,05 ±0,02", "original": "2,05 ±0,02", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 42, "top": 64, "width": 7, "height": 4}}, {"id": "p2-balloon-33", "marker": 33, "page": 2, "label": "尺寸／規格", "value": "2,05 ±0,02", "original": "2,05 ±0,02", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 16, "top": 56, "width": 7, "height": 5}}, {"id": "p2-balloon-34", "marker": 34, "page": 2, "label": "尺寸／規格", "value": "8 ±0,1", "original": "8 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 16, "top": 60, "width": 6, "height": 4}}, {"id": "p2-balloon-35", "marker": 35, "page": 2, "label": "尺寸／規格", "value": "380 ±0,1", "original": "380 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 32, "top": 75, "width": 8, "height": 5}}, {"id": "p2-balloon-36", "marker": 36, "page": 2, "label": "尺寸／規格", "value": "2-298 0/-0,1", "original": "2-298 0/-0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 27, "top": 83, "width": 8, "height": 5}}, {"id": "p2-balloon-37", "marker": 37, "page": 2, "label": "尺寸／規格", "value": "77,11 ±1", "original": "77,11 ±1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 35, "top": 84, "width": 7, "height": 5}}, {"id": "p2-balloon-38", "marker": 38, "page": 2, "label": "尺寸／規格", "value": "3,5 ±0,1", "original": "3,5 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 28, "top": 87, "width": 8, "height": 5}}, {"id": "p2-balloon-39", "marker": 39, "page": 2, "label": "尺寸／規格", "value": "10 ±0,1", "original": "10 ±0,1", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 16, "top": 70, "width": 6, "height": 5}}, {"id": "p2-balloon-40", "marker": 40, "page": 2, "label": "尺寸／規格", "value": "94 ±0,15", "original": "94 ±0,15", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 9, "top": 73, "width": 7, "height": 5}}, {"id": "p2-balloon-41", "marker": 41, "page": 2, "unresolved": true, "label": "待補資料（原圖未定位）", "value": "", "original": "", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 8, "top": 12, "width": 10, "height": 5}}, {"id": "p2-balloon-42", "marker": 42, "page": 2, "unresolved": true, "label": "待補資料（原圖未定位）", "value": "", "original": "", "group": "二製程", "status": "pending", "sample": "S02", "image": "/ai-vision-process2.png", "imageSize": [1800, 1273], "highlight": {"left": 8, "top": 12, "width": 10, "height": 5}}];
-
-function VisionWorkspace({ onBack }: { onBack: () => void }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [pdfUrl, setPdfUrl] = useState("");
-  const [importing, setImporting] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const [error, setError] = useState("");
-  const [showExample, setShowExample] = useState(false);
-  const uploadRef = useRef<HTMLInputElement>(null);
-  const importRequest = useRef(0);
-
-  useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); }, [pdfUrl]);
-  useEffect(() => () => { importRequest.current += 1; }, []);
-
-  async function importPdf(files: FileList | null) {
-    if (!files?.length) return;
-    const request = ++importRequest.current;
-    setError("");
-    if (files.length !== 1) { setImporting(false); setError("請一次匯入一份 PDF，可包含多個製程頁面。"); return; }
-    setImporting(true);
-    try {
-      const candidate = files[0];
-      const header = new TextDecoder().decode(await candidate.slice(0, 1024).arrayBuffer());
-      if (request !== importRequest.current) return;
-      if (!candidate.name.toLowerCase().endsWith(".pdf") || !header.includes("%PDF-")) {
-        setError("請選擇有效的 PDF 工程圖檔案。");
-        return;
-      }
-      const url = URL.createObjectURL(new Blob([candidate], { type: "application/pdf" }));
-      setFile(candidate);
-      setPdfUrl(url);
-    } catch {
-      if (request === importRequest.current) setError("無法讀取檔案，請重新選擇 PDF。");
-    } finally {
-      if (request === importRequest.current) setImporting(false);
-      if (uploadRef.current) uploadRef.current.value = "";
-    }
-  }
-
-  if (showExample) return <VisionReviewWorkspace onBack={() => setShowExample(false)} />;
-  return <div className="vision-app vision-import-app">
-    <WorkHubToolHeader onBack={onBack} />
-    <header className="vision-contextbar">
-      <div className="vision-brand"><span className="vision-brand-mark">AI</span><span><strong>AI 識圖大師</strong><small>工程圖辨識與核對</small></span></div>
-      <div className="vision-actions"><button className="vision-excel-export" disabled title="完成辨識並逐筆確認後即可匯出">匯出 Excel ↓</button></div>
-    </header>
-    <main className="vision-import-main">
-      <ol className="vision-flow" aria-label="識圖流程"><li className="active"><b>1</b>匯入 PDF</li><li><b>2</b>AI 辨識</li><li><b>3</b>逐筆確認</li><li><b>4</b>匯出 Excel</li></ol>
-      <input ref={uploadRef} className="vision-file-input" type="file" accept=".pdf,application/pdf" aria-label="選擇 PDF 工程圖" onChange={(event) => { void importPdf(event.currentTarget.files); }} />
-      {error && <div className="vision-import-error" role="alert">{error}</div>}
-      {!file ? <section className={`vision-upload-card ${dragging ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void importPdf(event.dataTransfer.files); }}>
-        <span className="vision-upload-symbol" aria-hidden="true">↥</span><h1>匯入 PDF 工程圖</h1><p>將檔案拖曳到這裡，或選擇電腦中的 PDF</p><button className="vision-import-primary" disabled={importing} onClick={() => uploadRef.current?.click()}>{importing ? "讀取檔案中…" : "＋ 選擇 PDF"}</button><small>支援多頁工程圖，辨識後依製程逐頁核對球標數字與文字。</small>
-      </section> : <section className="vision-pdf-preview">
-        <div className="vision-pdf-heading"><div><strong>{file.name}</strong><small>{(file.size / 1024 / 1024).toFixed(2)} MB · 已匯入，待辨識</small></div><div><button className="vision-import-secondary" disabled={importing} onClick={() => uploadRef.current?.click()}>重新選擇 PDF</button><button className="vision-import-primary" disabled={importing} onClick={() => setError("目前先提供介面預覽，AI 辨識功能將於後續串接後啟用。")}>開始 AI 辨識 →</button></div></div>
-        <iframe title={`PDF 工程圖預覽：${file.name}`} src={pdfUrl} />
-        <p className="vision-pdf-help">先確認圖面內容，再開始辨識各頁球標的數字、文字與公差。<a href={pdfUrl} target="_blank" rel="noreferrer">另開 PDF 預覽 ↗</a></p>
-      </section>}
-      {!file && <button className="vision-example-link" onClick={() => setShowExample(true)}>查看範例確認流程 →</button>}
-    </main>
-  </div>;
-}
-
-function VisionReviewWorkspace({ onBack }: { onBack: () => void }) {
-  const [fields, setFields] = useState<ReviewField[]>([...initialReviewFields.map((field) => ({ ...field, page: 1, status: "pending" as ReviewStatus })), ...secondProcessFields.filter((field) => !field.unresolved)].map((field) => { const details = (customerReviewRows as Record<string, ReviewDetail[]>)[field.id]; return { ...field, details: details.map((detail) => ({ ...detail })), value: details.map((detail) => detail.value).join("・") }; }));
-  const [activeId, setActiveId] = useState(initialReviewFields[0].id);
-  const [zoom, setZoom] = useState(60);
-
-  const [exported, setExported] = useState(false);
-  const [focusRequest, setFocusRequest] = useState(0);
-  const [notice, setNotice] = useState("請對照原圖逐筆核對，按 ✓ 或 Enter 確認並前往下一個球標。");
-  const editorRef = useRef<HTMLInputElement>(null);
-  const [confirmedIds, setConfirmedIds] = useState<string[]>([]);
-  const [exporting, setExporting] = useState(false);
-  const drawingCanvasRef = useRef<HTMLDivElement>(null);
-  const activeHighlightRef = useRef<HTMLDivElement>(null);
-
-  const activeField = fields.find((field) => field.id === activeId) ?? fields[0];
-  const orderedReviewFields = useMemo(() => [...fields].sort((left, right) => left.marker - right.marker), [fields]);
-
-  const currentPage = activeField.page ?? 1;
-  const pageFields = orderedReviewFields.filter((field) => field.page === currentPage);
-  const pageConfirmed = pageFields.filter((field) => confirmedIds.includes(field.id)).length;
-  const allConfirmed = fields.every((field) => confirmedIds.includes(field.id) && field.value.trim());
-  function selectProcess(page: number) {
-    const candidates = fields.filter((field) => field.page === page);
-    const target = candidates.find((field) => !confirmedIds.includes(field.id)) ?? candidates[0];
-    if (target) selectReviewField(target.id);
-  }
-
-  useEffect(() => {
-    const canvas = drawingCanvasRef.current;
-    const highlight = activeHighlightRef.current;
-    if (!canvas || !highlight) return;
-    const frame = window.requestAnimationFrame(() => {
-      const canvasRect = canvas.getBoundingClientRect();
-      const highlightRect = highlight.getBoundingClientRect();
-      const targetCenterX = canvas.scrollLeft + highlightRect.left - canvasRect.left + highlightRect.width / 2;
-      const targetCenterY = canvas.scrollTop + highlightRect.top - canvasRect.top + highlightRect.height / 2;
-      editorRef.current?.focus({ preventScroll: true });
-      canvas.scrollTo({
-        left: Math.max(0, targetCenterX - canvas.clientWidth / 2),
-        top: Math.max(0, targetCenterY - canvas.clientHeight / 2),
-        behavior: "auto",
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeField.id, zoom, focusRequest]);
-
-  function selectReviewField(id: string) {
-    setActiveId(id);
-    setFocusRequest((current) => current + 1);
-  }
-
-  function changeZoom(update: (current: number) => number) {
-    setZoom(update);
-    setFocusRequest((current) => current + 1);
-  }
-
-  function updateDetail(rowIndex: number, key: keyof Omit<ReviewDetail, "row">, value: string) {
-    setFields((current) => current.map((field) => {
-      if (field.id !== activeId) return field;
-      const details = field.details!.map((detail, index) => index === rowIndex ? { ...detail, [key]: value } : detail);
-      return { ...field, details, value: details.map((detail) => detail.value).join("・"), status: "edited" };
-    }));
-    setConfirmedIds((current) => current.filter((id) => id !== activeId));
-    setExported(false);
-    setNotice(`球標 ${activeField.marker} 已修改，請再次確認`);
-  }
-
-  function confirmAndAdvance() {
-    if (activeField.details?.some((detail) => !detail.value.trim() || ![detail.upper, detail.lower].every((value) => /^(?:-|\d+(?:[.,]\d+)?)$/.test(value.trim())))) {
-      setNotice("請填寫規格值與有效公差（數值或 -），再確認此球標");
-      editorRef.current?.focus({ preventScroll: true });
-      return;
-    }
-    setConfirmedIds((current) => current.includes(activeId) ? current : [...current, activeId]);
-    const index = orderedReviewFields.findIndex((field) => field.id === activeId);
-    const next = orderedReviewFields[index + 1];
-    if (next) {
-      selectReviewField(next.id);
-      setNotice(next.page !== activeField.page ? `一製程已核對至末筆，切換二製程・球標 ${next.marker}` : `球標 ${activeField.marker} 已確認，請確認球標 ${next.marker}`);
-    } else {
-      setNotice("已到最後一個球標，可回選檢查，並於右上角確認後匯出 Excel");
-    }
-  }
-
-  function confirmOnEnter(event: ReactKeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229 && !event.repeat) {
-      event.preventDefault();
-      confirmAndAdvance();
-    }
-  }
-
-  async function exportReview() {
-    if (exporting) return;
-    if (!allConfirmed) { setNotice("請完成全部製程的每一筆球標確認後，再匯出整份 Excel"); return; }
-    if (fields.some((field) => !field.value.trim())) {
-      setNotice("仍有空白辨識值，請補齊後再匯出");
-      selectReviewField(fields.find((field) => !field.value.trim())!.id);
-      return;
-    }
-    setExporting(true);
-    try {
-      await downloadReviewWorkbook(fields);
-      setExported(true);
-      setNotice("已依客戶範本匯出一、二製程；規格填回原列，保留量測與判定公式");
-    } catch {
-      setExported(false);
-      setNotice("Excel 匯出失敗，請稍後重試");
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  return (
-    <div className="vision-app">
-      <WorkHubToolHeader onBack={onBack} />
-      <header className="vision-contextbar">
-        <div className="vision-brand">
-          <span className="vision-brand-mark">AI</span>
-          <span><strong>AI 識圖大師</strong><small>昇達科技・加工圖球標辨識</small></span>
-        </div>
-        <div className="vision-file-meta"><span className="vision-live-dot"></span><span><strong>5.804LY0241001B0檢規.pdf</strong><small>2 頁製程・已確認 {confirmedIds.length} / {fields.length} 項</small></span></div>
-        <div className="vision-actions"><button className="vision-history">版本紀錄</button><button className="vision-excel-export" disabled={exporting || !allConfirmed} title={allConfirmed ? "匯出所有製程到同一份 Excel" : `尚有 ${fields.length - confirmedIds.length} 項待確認`} onClick={exportReview}>{exporting ? "匯出中…" : exported ? "✓ Excel 已匯出" : "匯出全部製程 Excel ↓"}</button></div>
-      </header>
-
-      <div className="vision-notice" role="status"><span>✓</span>{notice}<button onClick={() => setNotice("")} aria-label="關閉提示">×</button></div>
-
-      <main className="vision-layout">
-        <aside className="vision-queue">
-          <div className="process-document"><strong>這份 PDF 的製程</strong><small>5.804LY0241001B0檢規.pdf</small><b>{confirmedIds.length} / {fields.length} 項已確認</b><progress value={confirmedIds.length} max={fields.length} /><small>全部確認後，填回同一張計測統計表</small></div>
-          <nav className="process-page-list" aria-label="PDF 製程頁面">{processPages.map((process) => {
-            const rows = fields.filter((field) => field.page === process.page);
-            const done = rows.filter((field) => confirmedIds.includes(field.id)).length;
-            return <button key={process.page} className={`process-page ${currentPage === process.page ? "active" : ""}`} onClick={() => selectProcess(process.page)} aria-current={currentPage === process.page ? "page" : undefined}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={process.image} alt={`第 ${process.page} 頁・${process.name}縮圖`} /><strong>{process.name}<span>第 {process.page} 頁</span></strong><small>{done === rows.length ? "✓ 全部確認" : `待確認 ${rows.length - done} 項`} · {done} / {rows.length}</small><progress value={done} max={rows.length} />
-            </button>;
-          })}</nav>
-
-        </aside>
-
-        <section className="drawing-workspace">
-          <div className="drawing-toolbar">
-            <div className="drawing-zoom-controls"><button aria-label="縮小工程圖" title="縮小工程圖" onClick={() => changeZoom((value) => Math.max(40, value - 10))}>− 縮小</button><span aria-live="polite">{zoom}%</span><button aria-label="放大工程圖" title="放大工程圖" onClick={() => changeZoom((value) => Math.min(180, value + 10))}>＋ 放大</button><button aria-label="以原始比例顯示工程圖" title="以原始比例顯示" onClick={() => changeZoom(() => 100)}>100%</button><i></i><button onClick={() => changeZoom(() => 60)}>適合頁面</button></div>
-            <div><span className="report-result">{processPages[currentPage - 1].name} · 第 {currentPage} / 2 頁</span><button className="active">辨識框</button></div>
-          </div>
-          <div className="drawing-canvas" ref={drawingCanvasRef}>
-            <div className="drawing-sheet real-report-sheet" style={{ width: `${activeField.imageSize[0] * zoom / 100}px`, height: `${activeField.imageSize[1] * zoom / 100}px` }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={activeField.image} alt={`${processPages[currentPage - 1].name}工程圖，正在定位球標 ${activeField.marker}`} />
-              <div ref={activeHighlightRef} className={`real-source-highlight ${activeField.unresolved ? "unresolved-highlight" : ""}`} style={{ left: `calc(${activeField.highlight.left}% - 12px)`, top: `calc(${activeField.highlight.top}% - 12px)`, width: `calc(${activeField.highlight.width}% + 24px)`, height: `calc(${activeField.highlight.height}% + 24px)` }} title={`球標 ${activeField.marker} 的圖面位置`} />
-              <div className="drawing-inline-editor" style={{ left: `max(390px, calc(${activeField.highlight.left}% - 30px))`, top: `calc(${activeField.highlight.top + activeField.highlight.height}% + 38px)` }}>
-                <label htmlFor="vision-inline-value">球標 {activeField.marker}・圖旁直接修正</label><span>{activeField.label} · {confirmedIds.includes(activeId) ? "已確認" : "待確認"}</span>
-                <div className="drawing-spec-grid"><span>類型</span><span>規格值</span><span>＋公差</span><span>－公差</span>
-                  {activeField.details?.map((detail, index) => <div className="drawing-spec-row" key={detail.row}>
-                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項類型`} value={detail.unit} onChange={(event) => updateDetail(index, "unit", event.target.value)} onKeyDown={confirmOnEnter} />
-                    <input ref={index === 0 ? editorRef : undefined} id={index === 0 ? "vision-inline-value" : undefined} aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項規格`} value={detail.value} onChange={(event) => updateDetail(index, "value", event.target.value)} onFocus={(event) => event.currentTarget.select()} onKeyDown={confirmOnEnter} />
-                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項上公差`} value={detail.upper} onChange={(event) => updateDetail(index, "upper", event.target.value)} onKeyDown={confirmOnEnter} />
-                    <input aria-label={`球標 ${activeField.marker} 第 ${index + 1} 項下公差`} value={detail.lower} onChange={(event) => updateDetail(index, "lower", event.target.value)} onKeyDown={confirmOnEnter} />
-                  </div>)}
-                </div><button className="drawing-confirm-button" type="button" onClick={confirmAndAdvance}>✓ 確認此球標，前往下一個</button><small>Enter 確認 · {activeField.details?.length} 項規格對應客戶 Excel</small>
-              </div>
-            </div>
-          </div>
-          <div className="page-strip vision-marker-strip" aria-label="球標確認進度"><strong aria-live="polite">{processPages[currentPage - 1].name}：{pageConfirmed} / {pageFields.length} 已確認</strong><div className="vision-marker-buttons">{pageFields.map((field) => <button key={field.id} className={`${activeId === field.id ? "active" : ""} ${field.status === "edited" ? "edited" : confirmedIds.includes(field.id) ? "confirmed" : ""}`} title={field.status === "edited" ? "人工已修正" : confirmedIds.includes(field.id) ? "已確認無誤" : "待確認"} aria-current={activeId === field.id ? "step" : undefined} aria-label={`球標 ${field.marker}，${field.status === "edited" ? "人工已修正，" : ""}${confirmedIds.includes(field.id) ? "已確認" : "待確認"}`} onClick={() => selectReviewField(field.id)}>{field.marker}{field.status === "edited" && <span aria-hidden="true">✎</span>}{confirmedIds.includes(field.id) && <span>✓</span>}</button>)}</div>
-            <span className="vision-confirmed-legend">✓ 綠色：確認無誤</span><span className="vision-edited-legend">✎ 紅色：人工已修正</span>
-            <div className="process-navigation"><button disabled={currentPage === 1} onClick={() => selectProcess(currentPage - 1)}>← 上一製程</button><span>第 {currentPage} / 2 頁</span><button disabled={currentPage === 2} onClick={() => selectProcess(currentPage + 1)}>下一製程 →</button></div>
-          </div>
-        </section>
-
-
-      </main>
-    </div>
-  );
-}
-
 function KnowledgeAdminPanel() {
   const [selectedDepartmentId, setSelectedDepartmentId] = useState("shared");
   const [knowledgeBases, setKnowledgeBases] = useState<ManagedKnowledgeBase[]>(() => getDefaultKnowledgeBases(departments[0]));
@@ -1111,7 +812,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
   return (
     <div className="analytics-view">
       <section className="analytics-header">
-        <div><p className="eyebrow">管理者視角</p><h1>{adminSection === "usage" ? "平台成效儀表板" : "知識庫管理後台"}</h1><p>{adminSection === "usage" ? "追蹤 300–350 位同仁的採用狀況與量化效益" : "集中維護全公司與各部門的問答內容、文件與啟用狀態"}</p></div>
+        <div><p className="eyebrow">管理者視角</p><h1>{adminSection === "usage" ? "平台成效儀表板" : "知識庫管理後台"}</h1><p>{adminSection === "usage" ? "以下為舊版示意統計；正式容量與效益公式待客戶核准" : "集中維護全公司與各部門的問答內容、文件與啟用狀態"}</p></div>
         {adminSection === "usage" && <label className="period-select"><span>期間</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option>本月</option><option>近 3 個月</option><option>本年度</option></select></label>}
       </section>
 
@@ -1124,7 +825,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
       <section className="kpi-grid">
         <article><div className="kpi-label"><span className="mini-icon blue">人</span>本月活躍使用者</div><strong>286 <small>/ 328 人</small></strong><p className="positive">↑ 12.4% <span>較上月</span></p></article>
         <article><div className="kpi-label"><span className="mini-icon violet">用</span>整體採用率</div><strong>87.2%</strong><p className="positive">↑ 5.8% <span>較上月</span></p></article>
-        <article><div className="kpi-label"><span className="mini-icon cyan">次</span>工具執行次數</div><strong>{formatNumber(totalRuns)}</strong><p className="positive">↑ 18.6% <span>較上月</span></p></article>
+        <article><div className="kpi-label"><span className="mini-icon cyan">次</span>有效入口點擊（示例）</div><strong>{formatNumber(totalRuns)}</strong><p className="positive">↑ 18.6% <span>較上月</span></p></article>
         <article className="highlight"><div className="kpi-label"><span className="mini-icon orange">時</span>預估節省工時</div><strong>{formatNumber(totalSaved)} <small>小時</small></strong><p>約當 <b>{Math.round(totalSaved / 160)} 人月</b> 工作量</p></article>
       </section>
 
@@ -1142,7 +843,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
         </article>
 
         <article className="panel type-share">
-          <div className="panel-header"><div><h2>工具類型分布</h2><p>依本月執行次數</p></div></div>
+          <div className="panel-header"><div><h2>工具類型分布</h2><p>依示例入口點擊</p></div></div>
           <div className="donut" style={{ background: "conic-gradient(#1e2c49 0 68%, #93a5ba 68% 100%)" }}><div><strong>68%</strong><span>AI 工具</span></div></div>
           <div className="donut-legend"><div><span><i className="purple-dot"></i>AI 工具</span><strong>6,284 次</strong></div><div><span><i className="teal-dot"></i>非 AI 工具</span><strong>2,957 次</strong></div></div>
         </article>
@@ -1179,9 +880,8 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
           <div><span>人均節省工時</span><strong>{(detailSaved / Math.max(detail.active, 1)).toFixed(1)} <small>小時</small></strong></div>
         </div>
         <div className="tool-detail-table" role="table" aria-label={`${detail.name}工具使用與效益`}>
-          <div className="tool-detail-row tool-detail-head" role="row"><span>工具名稱</span><span>類型</span><span>使用人數</span><span>使用次數</span><span>任務完成率</span><span>節省工時</span><span>效益判讀</span></div>
+          <div className="tool-detail-row tool-detail-head" role="row"><span>工具名稱</span><span>類型</span><span>使用人數</span><span>使用次數</span><span>紀錄口徑</span><span>節省工時</span><span>效益判讀</span></div>
           {detailTools.sort((a, b) => b.runs - a.runs).map((tool, index) => {
-            const completion = Math.max(88, 98 - index * 2);
             const reach = Math.round(tool.users / detail.count * 100);
             const impact = tool.saved >= 60 ? "高效益" : tool.saved >= 30 ? "效益穩定" : reach < 45 ? "推廣中" : "持續觀察";
             return <div className="tool-detail-row" role="row" key={tool.id}>
@@ -1189,16 +889,16 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
               <span><em className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type}</em></span>
               <span><b>{tool.users}</b> 人 <small>({reach}%)</small></span>
               <span><b>{formatNumber(tool.runs)}</b> 次</span>
-              <span className="completion-cell"><i><b style={{ width: `${completion}%` }}></b></i><strong>{completion}%</strong></span>
+              <span>入口點擊</span>
               <span><b>{tool.saved}h</b></span>
               <span><em className={impact === "高效益" ? "impact-high" : impact === "效益穩定" ? "impact-steady" : "impact-watch"}>{impact}</em></span>
             </div>;
           })}
         </div>
-        <div className="detail-footer"><span>i</span><p><strong>管理建議：</strong>{detailTools.some((tool) => tool.saved >= 60) ? `${detailTools.sort((a,b) => b.saved - a.saved)[0]?.name}帶來最高節省工時，可評估擴大使用情境。` : "目前工具使用穩定，建議持續觀察完成率與使用覆蓋。"} 低於 50% 覆蓋率的工具可安排教育訓練或訪談。</p></div>
+        <div className="detail-footer"><span>i</span><p><strong>管理建議：</strong>{detailTools.some((tool) => tool.saved >= 60) ? `${detailTools.sort((a,b) => b.saved - a.saved)[0]?.name}帶來最高節省工時，可評估擴大使用情境。` : "示例數值僅供版面展示，正式效益尚待量測。"} 低於 50% 覆蓋率的工具可安排教育訓練或訪談。</p></div>
       </section>
 
-      <section className="measurement-note"><span>i</span><div><strong>效益估算方式</strong><p>由工具負責人設定每次成功任務的基準節省時間，平台只計入「完成」事件。實際效益可在第二階段加入任務成果與主管覆核。</p></div></section>
+      <section className="measurement-note"><span>i</span><div><strong>效益估算方式</strong><p>正式紀錄只計通過權限與入口狀態檢查的有效入口點擊，不推定工作完成。節省時間依客戶核准基準與公式計算；本頁歷史數字僅為版面示例，正式效益尚無資料。</p></div></section>
       </> : <KnowledgeAdminPanel />}
     </div>
   );

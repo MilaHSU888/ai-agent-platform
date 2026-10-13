@@ -7,13 +7,7 @@ const buildDir = path.join(projectRoot, "offline-dist");
 const exportDir = path.join(projectRoot, "exports");
 const outputPath = path.join(exportDir, "昇達AI工具平台_離線展示.html");
 
-const assetMimeTypes = {
-  "ai-balloon-s01.png": "image/png",
-  "ai-balloon-s02.png": "image/png",
-  "ai-balloon-s03.png": "image/png",
-  "ai-balloon-s04.png": "image/png",
-  "ai-vision-export-template.xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-};
+const assetMimeTypes = {};
 
 function resolveBuildAsset(reference) {
   const cleanReference = reference.replace(/^\.\//, "");

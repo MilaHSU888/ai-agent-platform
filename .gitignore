@@ -1,3 +1,4 @@
 .DS_Store
 AI_agent_platform/offline-dist/
 AI_agent_platform/exports/
+*.tsbuildinfo

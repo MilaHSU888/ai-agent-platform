@@ -1,0 +1,1104 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UMT 網站與 PRD 比對</title>
+    
+    <style>
+      /* ════════════════════════════════════════════ */
+      /* Anthropic / Claude 官方品牌風 design tokens     */
+      /* ════════════════════════════════════════════ */
+      :root {
+        --ivory: #faf9f5;
+        --paper: #ffffff;
+        --slate: #141413;
+        --clay: #d97757;
+        --clay-d: #b85c3e;
+        --oat: #e3dacc;
+        --olive: #788c5d;
+        --g100: #f0eee6;
+        --g200: #e6e3da;
+        --g300: #d1cfc5;
+        --g500: #87867f;
+        --g700: #3d3d3a;
+
+        --serif: ui-serif, Georgia, "Times New Roman", Times, serif;
+        --sans:
+          system-ui, -apple-system, "Segoe UI", Roboto, "PingFang TC",
+          "Noto Sans TC", Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+        /* 狀態 semantic（warm-aligned，低調用） */
+        --green: #788c5d;
+        --green-soft: #eff1e8;
+        --green-border: #c8d2b8;
+        --red: #b85c3e;
+        --red-soft: #faebe3;
+        --red-border: #e8c4af;
+        --yellow: #c49845;
+        --yellow-soft: #f8efd9;
+        --yellow-border: #e8d4a0;
+        --olive-soft: #eff1e8;
+        --olive-border: #c8d2b8;
+        --clay-soft: #fbe9df;
+        --orange: #c9740a;
+        --orange-soft: #fbeedc;
+        --orange-border: #eccfa3;
+        --purple: #9333ea;
+        --purple-soft: #faf5ff;
+        --purple-border: #e9d5ff;
+
+        /* ── 兼容舊 component-library snippet ─────────── */
+        /* 通用元件用 --bg / --accent / --text 等命名、alias 到 Anthropic palette */
+        --bg: var(--ivory);
+        --bg-card: var(--paper);
+        --bg-soft: var(--g100);
+        --bg-soft-2: var(--g200);
+        --border: var(--g300);
+        --border-strong: var(--g500);
+        --text: var(--slate);
+        --text-muted: var(--g700);
+        --text-soft: var(--g500);
+        --accent: var(--clay);
+        --accent-soft: #fbe9df;
+        --accent-strong: var(--clay-d);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--ivory);
+        color: var(--slate);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+        /* 保險絲：擋掉合成斜體與合成粗體。中文字體沒有義大利體與部分字重，
+           瀏覽器會機械傾斜／加粗漢字，筆畫變形。寧可不強調也不要變形字。 */
+        font-synthesis: none;
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* Layout                                       */
+      /* ════════════════════════════════════════════ */
+      .wrap {
+        width: min(94vw, 1760px);
+        margin: 0 auto;
+        padding: 0 32px 140px;
+      }
+      /* 長段落文字護欄：寬容器下避免一行上百字難讀（grid/卡片/表格不受限、吃滿寬） */
+      .intro,
+      p.prose,
+      .body-text {
+        max-width: 72ch;
+      }
+      /* 排印細節：pretty 讓段落尾行不留孤字、balance 讓多行標題長度接近。
+         現代瀏覽器都支援，成本為零。 */
+      p,
+      li,
+      td {
+        text-wrap: pretty;
+      }
+      h1,
+      h2,
+      h3 {
+        text-wrap: balance;
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* Masthead / Hero                              */
+      /* ════════════════════════════════════════════ */
+      header.masthead {
+        padding: 80px 0 56px;
+        border-bottom: 1.5px solid var(--g300);
+        margin-bottom: 12px;
+      }
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--g500);
+        margin-bottom: 18px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .eyebrow::before {
+        content: "";
+        width: 24px;
+        height: 1.5px;
+        background: var(--clay);
+      }
+      /* ⚠️ 選擇器要比 Tailwind preflight 高一級。它的 reset 把 h1 的 font-size
+         與 font-weight 設成 inherit，而它的樣式是 JS 動態注入、排在本區塊之後，
+         同優先級下會蓋過來——裸 `h1` 選擇器的字級會整個失效退回 16px。 */
+      body h1 {
+        font-family: var(--serif);
+        font-weight: 500;
+        font-size: clamp(38px, 5.4vw, 62px);
+        line-height: 1.06;
+        letter-spacing: -0.018em;
+        margin: 0 0 8px;
+        max-width: 17ch;
+        color: var(--slate);
+      }
+      /* 中文標題強調 — 不要用斜體（漢字沒有斜體傳統，見上方 font-synthesis 註解）。
+         兩種手法依語氣選：B 換字重（預設、安靜）／ C 螢光筆（重、一頁最多一兩次）。 */
+      h1 em,
+      h2 em,
+      h3 em {
+        font-style: normal;
+        font-weight: 700;
+        color: var(--clay);
+      }
+      .hl {
+        background: linear-gradient(transparent 58%, #f7d9a0 58%);
+        font-style: normal;
+      }
+      /* 內文的 <em>：保險絲擋掉合成斜體後，中文 em 會跟正文一模一樣（強調消失）。
+         補字重讓它看得出來；英文字體有真的義大利體，斜體照樣保留。
+         （標題的 em 另有 700 ＋ clay，選擇器較具體、不受這條影響） */
+      em {
+        font-weight: 600;
+      }
+      .intro {
+        font-size: 16.5px;
+        color: var(--g700);
+        margin: 22px 0 0;
+        max-width: 620px;
+      }
+      .intro a {
+        color: var(--clay);
+        text-decoration-color: var(--oat);
+        text-underline-offset: 3px;
+      }
+      .intro a:hover {
+        text-decoration-color: var(--clay);
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* TOC pills                                    */
+      /* ════════════════════════════════════════════ */
+      nav.toc {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 26px 0 0;
+      }
+      nav.toc a {
+        font-size: 12.5px;
+        padding: 7px 14px;
+        border: 1.5px solid var(--g300);
+        border-radius: 999px;
+        text-decoration: none;
+        color: var(--g700);
+        background: var(--paper);
+        transition:
+          border-color 120ms,
+          color 120ms;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+      nav.toc a .n {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--g500);
+      }
+      nav.toc a:hover {
+        border-color: var(--slate);
+        color: var(--slate);
+      }
+      nav.toc a:hover .n {
+        color: var(--clay);
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* Section                                      */
+      /* ════════════════════════════════════════════ */
+      section {
+        margin-top: 72px;
+        scroll-margin-top: 28px;
+      }
+      .sec-head {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        margin-bottom: 10px;
+      }
+      .sec-head .idx {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--clay);
+        font-weight: 600;
+        width: 34px;
+        flex-shrink: 0;
+      }
+      .sec-head h2 {
+        font-family: var(--serif);
+        font-weight: 500;
+        font-size: 27px;
+        margin: 0;
+        letter-spacing: -0.012em;
+        color: var(--slate);
+      }
+      .sec-head .count {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--g500);
+        background: var(--g100);
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+      .sec-intro {
+        font-size: 14.5px;
+        color: var(--g700);
+        max-width: 700px;
+        margin: 0 0 24px 50px;
+      }
+      /* ── 窄螢幕溢出防護 ─────────────────────────
+         grid／flex 子項的 min-width 預設是 auto，裡面放 pre 或 table 會被內容
+         撐開 → 整頁橫向溢出。自訂 grid 容器時對子項加 min-width: 0，
+         或直接用 .grid-safe。（跑版不在標記裡，一定要用版面健檢量。） */
+      .grid-safe > * {
+        min-width: 0;
+      }
+      pre,
+      table {
+        max-width: 100%;
+      }
+      pre {
+        overflow-x: auto;
+      }
+
+      @media (max-width: 900px) {
+        .sec-intro {
+          margin-left: 0;
+        }
+        /* 區段內容的 50px 視覺軸縮排在手機上是純浪費 */
+        div[style*="margin-left: 50px"] {
+          margin-left: 0 !important;
+        }
+        /* 長指令改換行而非橫捲：手機上捲軸比斷行難用 */
+        pre {
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-size: 11px;
+        }
+        /* 固定佈局讓表格文字換行，不把版面撐破 */
+        table {
+          table-layout: fixed;
+          width: 100%;
+        }
+        table th,
+        table td {
+          word-break: break-word;
+          overflow-wrap: anywhere;
+        }
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* Cards                                        */
+      /* ════════════════════════════════════════════ */
+      .card {
+        background: var(--paper);
+        border: 1.5px solid var(--g300);
+        border-radius: 14px;
+        padding: 24px;
+      }
+      .card-soft {
+        background: var(--g100);
+        border: 1.5px solid var(--g200);
+        border-radius: 10px;
+        padding: 16px;
+      }
+
+      /* link card with hover */
+      a.link-card {
+        display: flex;
+        flex-direction: column;
+        background: var(--paper);
+        border: 1.5px solid var(--g300);
+        border-radius: 14px;
+        text-decoration: none;
+        color: inherit;
+        transition:
+          transform 150ms ease,
+          box-shadow 150ms ease,
+          border-color 150ms ease;
+        overflow: hidden;
+      }
+      a.link-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
+        border-color: var(--slate);
+      }
+      .link-card .body {
+        padding: 18px 20px 16px;
+      }
+      .link-card .title {
+        font-family: var(--serif);
+        font-size: 19px;
+        font-weight: 500;
+        line-height: 1.22;
+        color: var(--slate);
+        margin-bottom: 7px;
+        letter-spacing: -0.008em;
+      }
+      .link-card .desc {
+        font-size: 13.5px;
+        color: var(--g700);
+        line-height: 1.5;
+      }
+      .link-card .file {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--g500);
+        border-top: 1px solid var(--g100);
+        padding-top: 11px;
+        margin-top: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .link-card .file .arrow {
+        transition: transform 150ms ease;
+        color: var(--g300);
+      }
+      a.link-card:hover .file {
+        color: var(--clay);
+      }
+      a.link-card:hover .file .arrow {
+        transform: translateX(3px);
+        color: var(--clay);
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* Pills / Badges                               */
+      /* ════════════════════════════════════════════ */
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border: 1.5px solid var(--g300);
+        border-radius: 999px;
+        font-size: 11.5px;
+        color: var(--g700);
+        background: var(--paper);
+      }
+      .pill.clay {
+        border-color: var(--clay);
+        color: var(--clay);
+      }
+      .pill.olive {
+        border-color: var(--olive);
+        color: var(--olive);
+      }
+
+      /* status badge — warm-aligned semantic */
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: var(--mono);
+        border-radius: 9999px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .badge-green {
+        background: var(--green-soft);
+        color: var(--green);
+        border: 1px solid var(--green-border);
+      }
+      .badge-red {
+        background: var(--red-soft);
+        color: var(--red);
+        border: 1px solid var(--red-border);
+      }
+      .badge-yellow {
+        background: var(--yellow-soft);
+        color: var(--yellow);
+        border: 1px solid var(--yellow-border);
+      }
+      .badge-clay {
+        background: #fbe9df;
+        color: var(--clay-d);
+        border: 1px solid #f0c9b5;
+      }
+      .badge-oat {
+        background: var(--oat);
+        color: var(--g700);
+        border: 1px solid var(--g300);
+      }
+
+      /* ════════════════════════════════════════════ */
+      /* Footer                                       */
+      /* ════════════════════════════════════════════ */
+      footer.foot {
+        margin-top: 100px;
+        border-top: 1.5px solid var(--g300);
+        padding-top: 36px;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: var(--g500);
+      }
+      footer.foot .k {
+        font-family: var(--serif);
+        font-style: italic;
+        color: var(--g700);
+        font-size: 15px;
+      }
+      footer.foot a {
+        color: var(--clay);
+        text-decoration-color: var(--oat);
+        text-underline-offset: 3px;
+      }
+          /* ── 手機：收掉桌機的水平留白 ─────────────────
+         390px 螢幕上，容器 32px ＋ 卡片 24px 的左右內距吃掉 112px，加上 94vw
+         的寬度限制，文字只剩七成八。桌機上那是呼吸空間，手機上是純損失。
+         （2026-09-21 實測：清單項在 390px 只剩 218px 寬。）*/
+      @media (max-width: 640px) {
+        .wrap {
+          width: 100%;
+          padding-left: 14px;
+          padding-right: 14px;
+        }
+        .card {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+        ul,
+        ol {
+          padding-left: 20px;
+        }
+      }
+    </style>
+  <style>.audit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.audit-finding{margin:20px 0;padding:24px}.audit-tag{color:var(--clay-d);font-weight:700}.audit-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{padding:14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--g200);overflow-wrap:anywhere}th{background:var(--g100)}section{margin:48px 0}h3{margin:12px 0}nav a{color:var(--clay-d)}details{margin-top:14px}summary{cursor:pointer}header{padding-top:24px}.card{background:var(--paper);border:1px solid var(--g200);border-radius:12px;padding:22px}@media(max-width:600px){.wrap{padding:0 16px 80px}th,td{padding:9px;font-size:14px}}</style></head>
+  <body><div class="wrap"><header><div class="eyebrow">需求與網站比對 · 2026/10/08</div><h1>UMT 網站與 PRD 的落差</h1><p class="intro">已有工具入口與管理介面雛形，但尚未涵蓋完整 Phase 1。最需要補齊的是 AI 識圖、OpenWebUI、主管分析，以及畫面背後的正式整合。</p><nav><a href="#map">全貌</a> · <a href="#findings">逐項差異</a> · <a href="#extra">額外內容</a> · <a href="#priority">處理順序</a> · <a href="#limits">待確認</a></nav></header>
+<section id="map"><h2>比對的是哪兩份內容？</h2><div class="audit-grid"><article class="card"><h3>網站</h3><p>UMT_AI工具平台_寄信用／網站原始碼。前次本機首頁 HTTP 200；本次逐項檢閱完整頁面原始碼。</p></article><article class="card"><h3>需求基準</h3><p>PRD v0.18＋2026/10/08 試點補充、四份附件與 DEC-015／016。ai-agent-platform 是舊 Demo，僅補充流程參考。</p></article></div><p>分類：不一致＝行為或內容有衝突；缺少＝本次網站未呈現；部分示意＝有介面但流程未接通；未能驗證＝需外部環境證據。下列 18 項是分組發現，不是需求完成率。</p></section>
+<section id="findings"><h2>逐項差異與缺少內容</h2><article class="card audit-finding"><span class="audit-tag">不一致</span><h3>01　正式試點變成業務報價助手</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>正式試點為採購報價單彙整工具；盤點屬採購部，是否使用 LLM 仍待確認。</td><td>網站為業務部「報價彙整助手」，描述歷史報價、料件成本與報價草稿，指定 GPT Enterprise 雲端。</td></tr></tbody></table></div><p><b>建議：</b>需還原正式名稱與用途；Owner、模型及 URL 標待確認。若為不同工具，應另列示例。</p><details class="reveal"><summary>需求與查核依據</summary><p>PRD §2.2、P1-TOOL-001/005/007</p><p>網站 app/page.tsx:38（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">不一致</span><h3>02　維護、下架沒有阻擋首頁開啟</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>通過權限與入口狀態檢查後才記錄有效點擊。</td><td>首頁僅判斷 tool.access；發布狀態另存 releases。派工查詢預設維護中，首頁仍可開啟；openTool 直接增加計數。</td></tr></tbody></table></div><p><b>建議：</b>將工具目錄、發布狀態及後端入口檢查接成同一流程。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-005、P1-OBS-001</p><p>網站 app/page.tsx:150（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">不一致</span><h3>03　新增與模型異動未連動工具目錄</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>後台新增、修改、上下架及模型設定生效，不需改平台程式。</td><td>提交僅加入發布清單；首頁仍讀固定六個工具。模型修改只更新發布資料，工具說明仍讀原資料。</td></tr></tbody></table></div><p><b>建議：</b>正式工具資料須有單一來源及持久保存。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-006、P1-ADMIN-001、P1-TOOL-008</p><p>網站 app/page.tsx:162（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">不一致</span><h3>04　工具入口實為平台內模擬頁</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>導向正式 URL，保留原工具介面與流程並驗證可信身分。</td><td>開啟只改畫面與網址片段；tools.umt.internal 是顯示文字。除 CNC 排程示意外皆為共用上傳空殼。</td></tr></tbody></table></div><p><b>建議：</b>接入既有工具 URL；不可將模擬工作區視為工具整合完成。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-004、P1-TOOL-002</p><p>網站 app/page.tsx:361（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">不一致</span><h3>05　全公司共用與常用的語意不同</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>全公司／部門分類與授權一致；常用紀錄與有效入口點擊一致。</td><td>「全公司共用」實際列出所有部門工具；「我的常用」是預填收藏，可手動加星。</td></tr></tbody></table></div><p><b>建議：</b>區分所有授權工具、全公司共用、我的收藏與最近／常用紀錄。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-002/007</p><p>網站 app/page.tsx:122（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">待確認</span><h3>06　未授權工具摘要可見</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>未授權功能與資料封鎖；可申請公開摘要是否顯示，待 UI 規格確認。</td><td>FAI 規格比對以「需申請權限」顯示，管理員角色及全部導覽固定。</td></tr></tbody></table></div><p><b>建議：</b>公開摘要方案不直接判定違規，但須確認可揭露欄位與角色規則。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-001、PRD §3.1</p><p>網站 app/page.tsx:197（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">待確認</span><h3>07　資料政策文案超出已確認行為</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>依管理者核准模型範圍限制；不自動辨識輸入是否敏感。</td><td>設定有「阻擋機敏資料送往雲端」開關；機敏與雲端可同時在提交表單選取，僅顯示提醒。</td></tr></tbody></table></div><p><b>建議：</b>明確寫成工具政策限制，避免暗示內容自動偵測；後端拒絕未核准模型組合。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-LLM-002/005/006、TBD-DATA-001</p><p>網站 app/page.tsx:322（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">缺少</span><h3>08　AI 識圖完整流程</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>上傳檢查、5090 辨識、圖面定位縮放、修正、整體確認、原始與修正值分存、正式 Excel 與失敗重試。</td><td>只有「FAI 規格比對」卡片，未見上述獨立操作流程；也未見硬體及量測證據。</td></tr></tbody></table></div><p><b>建議：</b>建立獨立識圖模組；不能用 FAI 比對名稱取代原需求。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-VIS-001～015（005、009保留不用）</p><p>網站 app/page.tsx:39（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">缺少</span><h3>09　OpenWebUI 授權入口</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>已承諾授權入口及正式 URL 導流；分部門 URL 與知識庫深度整合另議。</td><td>六個工具與頁面沒有 OpenWebUI。</td></tr></tbody></table></div><p><b>建議：</b>補正式入口與權限／點擊流程；URL 待客戶提供。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-TOOL-006</p><p>網站 app/page.tsx:35（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">缺少</span><h3>10　正式登入、角色與權限管理</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>AD／SSO、部門／個人授權、撤權、登出、工具端驗證、主管資料範圍。</td><td>固定管理員身分；無登入流程；身分設定分頁及權限編輯按鈕未實作功能。</td></tr></tbody></table></div><p><b>建議：</b>需身分服務與後端授權；不能以部門下拉選單充當授權。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-AUTH-001～007</p><p>網站 app/page.tsx:180（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">缺少</span><h3>11　主管使用與效益分析</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>依期間、部門、使用者、工具查詢，含核准節省時間公式、Token、AI／非 AI 與地端／雲端統計。</td><td>僅維運頁的工具次數與固定模型比例，沒有主管專頁及上述維度／Token／效益欄位。</td></tr></tbody></table></div><p><b>建議：</b>補主管視角；資料不足顯示尚無資料，不用示例次數推算效益。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-OBS-003～006</p><p>網站 app/page.tsx:267（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">部分示意</span><h3>12　有效入口點擊與個人使用紀錄</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>後端保存使用者、部門、工具、時間及去重；模型紀錄另計。</td><td>初始計數寫死，點擊後只更新本次頁面狀態；無個人歷史與事件儲存呼叫。</td></tr></tbody></table></div><p><b>建議：</b>補持久事件與查詢；目前次數只可標為示例。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-OBS-001/002、P1-TOOL-004</p><p>網站 app/page.tsx:114（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">部分示意</span><h3>13　LLM Proxy 與模型管理</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>逐工具核准模型、端點、版本、配額、Token、錯誤與故障切換。</td><td>有模型選單，無實際 Proxy 呼叫、端點編輯、配額、版本及政策執行。一般工具也能在管理抽屜選 AI 模型。</td></tr></tbody></table></div><p><b>建議：</b>補模型服務；一般工具隱藏不適用設定。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-LLM-001～007</p><p>網站 app/page.tsx:358（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">部分示意</span><h3>14　上架、檢查、發布與版本回復</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>真實建置、AI 程式碼檢查、修正確認、獨立測試、核准發布與資料相容回復。</td><td>提交經計時器加入清單；回復只顯示提示，前版號由字串減一推算；沒有檢查報告、修正重送與測試證據。</td></tr></tbody></table></div><p><b>建議：</b>以作業狀態與版本紀錄取代模擬；不得僅憑成功訊息宣告完成。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-DEPLOY-001、P1-RELEASE-001、PRD §5.1</p><p>網站 app/page.tsx:162（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">部分示意</span><h3>15　權限申請、通知與問題回報</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>保存申請、通知管理者、核准結果與問題分流。</td><td>申請僅改狀態；附件只留檔名；送出顯示固定 MSG-1043，未新增到問題清單。</td></tr></tbody></table></div><p><b>建議：</b>補實際提交與通知；整體平台問題不應被強制選某個工具阻擋。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-008、TBD-UX-001</p><p>網站 app/page.tsx:341（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">缺少</span><h3>16　完整工具登錄及日常治理</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>URL、GPU、必要網路明細、持久資料；Owner 更新業務資料；六個月未用通知；基底 image 與年度檢視。</td><td>表單有 CPU／記憶體與網路模式，但缺 GPU、網路清單及持久儲存設定；未見業務資料管理、六個月治理或基底維護程序。</td></tr></tbody></table></div><p><b>建議：</b>依接入附件補齊；不同語言或工具數量不可寫死為限制。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-TOOL-001、P1-GOV-001～003</p><p>網站 app/page.tsx:347（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">未能驗證</span><h3>17　備份、安全、負載及客戶演練</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>還原演練、容器隔離、掃描／安全複測、異常告警、核准負載及五項客戶操作。</td><td>網站有健康與安全文案，附件資料夾未見對應部署及驗收證據。</td></tr></tbody></table></div><p><b>建議：</b>不能由前端畫面判定外部設施不存在；須另核對後端、部署環境與驗收報告。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-OPS-001、P1-SEC-001/002、P1-NFR-*、PRD §6</p><p>網站 app/page.tsx:263（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article><article class="card audit-finding"><span class="audit-tag">缺少</span><h3>18　AI／一般工具篩選及說明可達性</h3><div class="audit-scroll"><table><thead><tr><th>PRD 要求</th><th>網站現況</th></tr></thead><tbody><tr><td>可依 AI／一般工具篩選，使用前取得用途、對象、資料限制及目前模型。</td><td>有 AI 圖示但無類型篩選；已授權工具直接進模擬頁，詳細模型與資料限制彈窗只在未授權工具開啟。</td></tr></tbody></table></div><p><b>建議：</b>補類型篩選及不妨礙直接啟動的工具說明入口。</p><details class="reveal"><summary>需求與查核依據</summary><p>P1-PORTAL-002/007</p><p>網站 app/page.tsx:125（原始碼快照）；正式需求以 docs/phase1/PRD.md 與附件為準。</p></details></article></section><section id="extra"><h2>新增的是哪些內容？</h2><div class="audit-scroll"><table><thead><tr><th>項目</th><th>判讀</th></tr></thead><tbody><tr><td>拖曳分類、分類說明書</td><td>屬分類管理的具體設計延伸，可保留；PRD 未指定拖曳、每類說明書或名稱最多 10 字。</td></tr><tr><td>手動收藏與首頁新工具公告</td><td>與常用／通知方向相近，屬設計延伸；手動收藏不能取代使用紀錄。</td></tr><tr><td>低使用量 150／250 次門檻</td><td>網站自行以近 30 日次數分級；不能取代 PRD「連續六個月未使用」治理規則。</td></tr><tr><td>會議紀錄助手、工安翻譯助手、FAI 規格比對</td><td>為額外示例名稱與用途，非已核准代建清單；工安翻譯不等同盤點的 CNC 作業指導書翻譯。</td></tr><tr><td>固定模型、Owner、容量與數字</td><td>Qwen 32B／14B、GPT Enterprise、人物、500 MB、CPU／記憶體選項、98.7% 等未獲 PRD 核准，不應被讀成承諾。CNC 盤點為雲端 LLM，網站預設地端，切換本身允許但須確認正式路由。</td></tr><tr><td>維運操作台與聯絡事項看板</td><td>重啟、日誌、優先級、派單屬既有維運／問題回報需求的細化，不直接算新增大範圍；通知與責任仍待確認。</td></tr></tbody></table></div><div class="card"><h3>這些不是超出 v0.18 的新增範圍</h3><p>開發者中心、自助上架、容器建置、AI 程式碼檢查、發布／回復、模型切換、問題回報與維運，均有現行 PRD 依據。舊 README 將部分列為 Phase 2，已與現行基準不同。OpenWebUI 知識庫深度整合、Prompt／Skill／MCP 及 ERP 寫回未出現在本網站，也不應列為本期缺漏。</p></div></section>
+<section id="priority"><h2>建議處理順序</h2><div class="audit-grid"><article class="card"><h3>先校正展示內容</h3><p>正式試點名稱與用途、示例數值標示、維護／下架阻擋、資料政策文案，以及固定成功訊息。</p></article><article class="card"><h3>再補產品流程</h3><p>OpenWebUI 入口、AI 識圖、主管分析、角色差異、類型篩選與完整工具登錄。</p></article><article class="card"><h3>最後以實際整合驗收</h3><p>SSO、後端授權、持久資料、Proxy、事件、建置發布、通知、備份安全及客戶演練。</p></article></div></section>
+<section id="limits"><h2>還需要確認的邊界</h2><div class="audit-scroll"><table><thead><tr><th>領域</th><th>仍未關閉的決策</th></tr></thead><tbody><tr><td>身分、模型、資料與發布</td><td>TBD-AUTH-001、TBD-LLM-001、TBD-DATA-001、TBD-RELEASE-001</td></tr><tr><td>試點與入口</td><td>TBD-PILOT-001（首個試點已選定，接入細節仍待確認）、TBD-OPENWEBUI-001</td></tr><tr><td>識圖與分析</td><td>TBD-VIS-001/002/003、TBD-KPI-001/002</td></tr><tr><td>維運、介面與驗收</td><td>TBD-NFR-001/004、TBD-UX-001、TBD-UPLOAD-001、TBD-SEC-001、TBD-UAT-001、TBD-SERVICE-001</td></tr></tbody></table></div><p>本次是內容與原始碼審查，沒有執行正式 UAT、角色攻防、模型呼叫或部署驗證；前次瀏覽器自動化工具啟動失敗，因此不把程式碼推論寫成點擊實測結果。未見外部後端不代表外部後端確定不存在。</p><p>未修改網站、PRD、決策或 UAT 狀態；本次只產出比對報告。未以尚未成立的逾期預設代替決策。</p><details class="reveal"><summary>版本衝突與資料來源</summary><p>正式 PRD：docs/phase1/PRD.md；決策：docs/phase1/DECISIONS.md；附件 01～04。舊 Demo：ai-agent-platform/README.md。</p><p>phase1-delivery skill 的 100 人與一般工具完成／失敗事件敘述已落後於 v0.18，本報告依上位專案指引及現行 PRD，不沿用該兩條舊規則。</p></details></section><footer><p>2026/10/08 · UMT 需求差異盤點 · 未代表正式驗收結論</p></footer></div>    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 全頁評論系統 — 預設內建、可手動移除                       -->
+    <!-- 完整 snippet 見 references/interaction-patterns.md       -->
+    <!-- § 全頁評論系統（page-wide commenting，預設內建）         -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <style>
+      .vt-comment-trigger {
+        position: fixed;
+        z-index: 9998;
+        background: var(--paper);
+        border: 1.5px solid var(--clay);
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: var(--clay);
+        font-family: var(--mono);
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(20, 20, 19, 0.12);
+        display: none;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s;
+      }
+      .vt-comment-trigger:hover {
+        background: var(--clay);
+        color: var(--paper);
+      }
+      .vt-comment-popup {
+        position: fixed;
+        z-index: 9999;
+        background: var(--paper);
+        border: 1.5px solid var(--g300);
+        border-radius: 12px;
+        box-shadow: 0 12px 32px rgba(20, 20, 19, 0.15);
+        padding: 14px 16px;
+        width: 340px;
+        display: none;
+      }
+      .vt-comment-popup .quote {
+        background: var(--g100);
+        border-left: 3px solid var(--clay);
+        padding: 8px 10px;
+        font-size: 12.5px;
+        color: var(--g700);
+        line-height: 1.45;
+        margin-bottom: 10px;
+        max-height: 80px;
+        overflow-y: auto;
+      }
+      .vt-comment-popup textarea {
+        width: 100%;
+        border: 1.5px solid var(--g300);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        font-family: var(--sans);
+        resize: vertical;
+        min-height: 60px;
+        color: var(--slate);
+        box-sizing: border-box;
+      }
+      .vt-comment-popup textarea:focus {
+        outline: none;
+        border-color: var(--clay);
+      }
+      .vt-comment-popup .actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 10px;
+        font-size: 11.5px;
+      }
+      .vt-comment-popup .hint {
+        color: var(--g500);
+        font-family: var(--mono);
+      }
+      .vt-comment-popup button.send {
+        background: var(--clay);
+        color: var(--paper);
+        border: none;
+        border-radius: 8px;
+        padding: 6px 14px;
+        font-size: 12.5px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .vt-comment-popup button.send:hover {
+        background: var(--clay-d);
+      }
+      .vt-comment-popup button.cancel {
+        background: transparent;
+        border: 1px solid var(--g300);
+        color: var(--g500);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 12.5px;
+        cursor: pointer;
+        margin-right: 8px;
+      }
+      mark.vt-comment-mark {
+        background: var(--oat);
+        padding: 0 2px;
+        border-radius: 2px;
+        cursor: pointer;
+      }
+      mark.vt-comment-mark:hover {
+        background: #d5c4a8;
+      }
+      .vt-comment-pill {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 9990;
+        background: var(--paper);
+        border: 1.5px solid var(--clay);
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--clay);
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(20, 20, 19, 0.1);
+        display: none;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s;
+      }
+      .vt-comment-pill.is-active {
+        display: inline-flex;
+      }
+      .vt-comment-pill:hover {
+        background: var(--clay);
+        color: var(--paper);
+      }
+      .vt-comment-pill strong {
+        font-weight: 600;
+      }
+      .vt-comment-list {
+        position: fixed;
+        right: 16px;
+        bottom: 60px;
+        width: 360px;
+        max-height: 60vh;
+        z-index: 9991;
+        background: var(--paper);
+        border: 1.5px solid var(--g300);
+        border-radius: 14px;
+        box-shadow: 0 12px 32px rgba(20, 20, 19, 0.15);
+        display: none;
+        flex-direction: column;
+      }
+      .vt-comment-list.is-open {
+        display: flex;
+      }
+      .vt-comment-list-header {
+        background: var(--paper);
+        border-bottom: 1.5px solid var(--g200);
+        padding: 12px 16px;
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--g500);
+        font-weight: 600;
+        border-radius: 14px 14px 0 0;
+      }
+      .vt-comment-list-items {
+        overflow-y: auto;
+        flex: 1;
+      }
+      .vt-comment-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--g200);
+      }
+      .vt-comment-item:last-child {
+        border-bottom: none;
+      }
+      .vt-comment-item .item-quote {
+        font-size: 11.5px;
+        color: var(--g500);
+        font-style: italic;
+        border-left: 2px solid var(--oat);
+        padding-left: 8px;
+        line-height: 1.4;
+        margin-bottom: 6px;
+      }
+      .vt-comment-item .item-body {
+        font-size: 13px;
+        color: var(--slate);
+        line-height: 1.5;
+      }
+      .vt-comment-item .item-del {
+        font-size: 11px;
+        color: var(--g500);
+        background: none;
+        border: none;
+        cursor: pointer;
+        margin-top: 4px;
+        padding: 0;
+        font-family: inherit;
+      }
+      .vt-comment-item .item-del:hover {
+        color: var(--red);
+      }
+      .vt-comment-list-footer {
+        border-top: 1.5px solid var(--g200);
+        padding: 10px 16px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        border-radius: 0 0 14px 14px;
+        background: var(--g100);
+      }
+      .vt-comment-list-footer button {
+        background: transparent;
+        border: 1.5px solid var(--g300);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: var(--g700);
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .vt-comment-list-footer button:hover {
+        border-color: var(--slate);
+        color: var(--slate);
+      }
+      .vt-comment-list-footer button.copy {
+        background: var(--clay);
+        color: var(--paper);
+        border-color: var(--clay);
+      }
+      .vt-comment-list-footer button.copy:hover {
+        background: var(--clay-d);
+      }
+      body.vt-has-existing-export .vt-comment-list-footer button.copy {
+        display: none;
+      }
+    </style>
+    <button class="vt-comment-trigger" id="vt-comment-trigger">💬 評論</button>
+    <div class="vt-comment-popup" id="vt-comment-popup">
+      <div class="quote" id="vt-popup-quote"></div>
+      <textarea
+        id="vt-popup-textarea"
+        placeholder="對這段文字的評論 / 疑問 / 補充..."
+      ></textarea>
+      <div class="actions">
+        <span class="hint">⌘ + Enter 送出 · Esc 取消</span>
+        <div>
+          <button class="cancel" id="vt-popup-cancel">取消</button
+          ><button class="send" id="vt-popup-send">送出</button>
+        </div>
+      </div>
+    </div>
+    <button class="vt-comment-pill" id="vt-comment-pill">
+      💬 <strong id="vt-count">0</strong>
+    </button>
+    <div class="vt-comment-list" id="vt-comment-list">
+      <div class="vt-comment-list-header">— 我的評論</div>
+      <div class="vt-comment-list-items" id="vt-comment-list-items"></div>
+      <div class="vt-comment-list-footer">
+        <button id="vt-clear-all">全部清除</button>
+        <button class="copy" id="vt-copy-fallback">📋 複製評論</button>
+      </div>
+    </div>
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 共用複製工具 — file:// 下瀏覽器停用 navigator.clipboard，   -->
+    <!-- 一定會落到 execCommand 備援；備援也可能失敗，必須誠實回報   -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <script>
+      // 三段式：clipboard API → execCommand 備援 → 都失敗回 false（不假報成功）
+      window.vtCopyText = async function (text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return true;
+          } catch (err) {
+            // 落到 execCommand 備援
+          }
+        }
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "-9999px";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        try {
+          ta.select();
+          ta.setSelectionRange(0, ta.value.length);
+          return document.execCommand("copy") === true;
+        } catch (err) {
+          return false;
+        } finally {
+          ta.remove();
+        }
+      };
+
+      // 複製失敗時的出路：把文字放進可選取區域並全選，使用者按一次 Cmd+C 即可
+      // target 有給就用頁面既有的預覽區（wrap 為它的外層、會自動展開）；
+      // 沒有預覽區就建一個臨時可選取區（雙擊可關閉）。
+      window.vtSelectForManualCopy = function (text, target, wrap) {
+        let node = target;
+        if (node) {
+          node.textContent = text;
+          if (wrap) wrap.classList.remove("hidden");
+        } else {
+          node = document.getElementById("vt-manual-copy-box");
+          if (!node) {
+            node = document.createElement("pre");
+            node.id = "vt-manual-copy-box";
+            node.title = "雙擊關閉";
+            node.style.cssText =
+              "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:10000;" +
+              "max-width:min(720px,92vw);max-height:40vh;overflow:auto;white-space:pre-wrap;" +
+              "background:#fff;color:#111;border:1.5px solid #999;border-radius:10px;" +
+              "padding:14px 16px;font-size:12.5px;line-height:1.6;" +
+              "box-shadow:0 12px 40px rgba(0,0,0,.28)";
+            node.addEventListener("dblclick", function () {
+              node.remove();
+            });
+            document.body.appendChild(node);
+          }
+          node.textContent = text;
+        }
+        node.scrollIntoView({ block: "nearest" });
+        const sel = window.getSelection();
+        if (sel) {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        return node;
+      };
+    </script>
+
+    <script>
+      (function () {
+        const S = "vt-comments-" + location.pathname,
+          L = 80;
+        let c = JSON.parse(localStorage.getItem(S) || "[]"),
+          sel = null;
+        const $ = (i) => document.getElementById(i),
+          tr = $("vt-comment-trigger"),
+          p = $("vt-comment-popup"),
+          pq = $("vt-popup-quote"),
+          pt = $("vt-popup-textarea"),
+          pi = $("vt-comment-pill"),
+          ce = $("vt-count"),
+          le = $("vt-comment-list"),
+          li = $("vt-comment-list-items");
+        window.vtCollectComments = function () {
+          if (!c.length) return "";
+          return (
+            "\n\n---\n\n" +
+            c
+              .map((x) => {
+                const q =
+                  x.quote.length > L ? x.quote.slice(0, L) + "…" : x.quote;
+                return `@評論「${q}」\n  → ${x.body}`;
+              })
+              .join("\n\n")
+          );
+        };
+        function hs(e) {
+          if (
+            e.target.closest(
+              ".vt-comment-popup,.vt-comment-trigger,.vt-comment-pill,.vt-comment-list,button,input,select,textarea",
+            )
+          )
+            return;
+          setTimeout(() => {
+            const s = getSelection(),
+              t = s.toString().trim();
+            if (!t || t.length < 2) {
+              tr.style.display = "none";
+              return;
+            }
+            const r = s.getRangeAt(0),
+              b = r.getBoundingClientRect();
+            sel = { text: t, range: r.cloneRange() };
+            tr.style.display = "inline-flex";
+            tr.style.top = Math.max(8, b.top - 38) + "px";
+            tr.style.left = Math.max(8, b.left + b.width / 2 - 40) + "px";
+          }, 10);
+        }
+        document.addEventListener("mouseup", hs);
+        document.addEventListener("touchend", hs);
+        tr.addEventListener("click", op);
+        function op() {
+          if (!sel) return;
+          const q = sel.text.length > L ? sel.text.slice(0, L) + "…" : sel.text;
+          pq.textContent = q;
+          pt.value = "";
+          const t = tr.getBoundingClientRect();
+          let l = t.left;
+          if (l + 340 > innerWidth - 16) l = innerWidth - 356;
+          let to = t.bottom + 6;
+          if (to + 220 > innerHeight) to = t.top - 230;
+          p.style.left = Math.max(8, l) + "px";
+          p.style.top = Math.max(8, to) + "px";
+          tr.style.display = "none";
+          p.style.display = "block";
+          setTimeout(() => pt.focus(), 50);
+        }
+        $("vt-popup-cancel").addEventListener("click", cp);
+        $("vt-popup-send").addEventListener("click", sc);
+        pt.addEventListener("keydown", (e) => {
+          if (e.isComposing || e.keyCode === 229) return;
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            e.stopPropagation();
+            sc();
+          }
+          if (e.key === "Escape") cp();
+        });
+        function cp() {
+          p.style.display = "none";
+          sel = null;
+        }
+        function sc() {
+          const b = pt.value.trim();
+          if (!b || !sel) return cp();
+          const id = "c-" + Date.now(),
+            q = sel.text;
+          try {
+            const m = document.createElement("mark");
+            m.className = "vt-comment-mark";
+            m.dataset.commentId = id;
+            sel.range.surroundContents(m);
+          } catch (e) {}
+          c.push({ id, quote: q, body: b, ts: Date.now() });
+          ps();
+          rn();
+          cp();
+          getSelection().removeAllRanges();
+        }
+        function ps() {
+          localStorage.setItem(S, JSON.stringify(c));
+        }
+        function rn() {
+          ce.textContent = c.length;
+          pi.classList.toggle("is-active", c.length > 0);
+          if (!c.length) le.classList.remove("is-open");
+          li.innerHTML = c
+            .map((x) => {
+              const q =
+                x.quote.length > 60 ? x.quote.slice(0, 60) + "…" : x.quote;
+              return `<div class="vt-comment-item" data-id="${x.id}"><div class="item-quote">「${eh(q)}」</div><div class="item-body">${eh(x.body)}</div><button class="item-del" data-del="${x.id}">刪除</button></div>`;
+            })
+            .join("");
+          li.querySelectorAll("[data-del]").forEach((b) =>
+            b.addEventListener("click", () => dc(b.dataset.del)),
+          );
+        }
+        function dc(id) {
+          c = c.filter((x) => x.id !== id);
+          document
+            .querySelectorAll(`mark.vt-comment-mark[data-comment-id="${id}"]`)
+            .forEach((m) => {
+              const pr = m.parentNode;
+              while (m.firstChild) pr.insertBefore(m.firstChild, m);
+              pr.removeChild(m);
+              pr.normalize();
+            });
+          ps();
+          rn();
+        }
+        function eh(s) {
+          return String(s).replace(
+            /[&<>"']/g,
+            (ch) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[ch],
+          );
+        }
+        pi.addEventListener("click", () => le.classList.toggle("is-open"));
+        $("vt-clear-all").addEventListener("click", () => {
+          if (!c.length) return;
+          if (!confirm("確定清除全部 " + c.length + " 條評論？")) return;
+          document.querySelectorAll("mark.vt-comment-mark").forEach((m) => {
+            const pr = m.parentNode;
+            while (m.firstChild) pr.insertBefore(m.firstChild, m);
+            pr.removeChild(m);
+            pr.normalize();
+          });
+          c = [];
+          ps();
+          rn();
+        });
+        $("vt-copy-fallback").addEventListener("click", async (e) => {
+          if (!c.length) return;
+          const t = window.vtCollectComments().replace(/^\n\n---\n\n/, ""),
+            b = e.currentTarget,
+            o = b.textContent;
+          const ok = await window.vtCopyText(t);
+          if (ok) {
+            b.textContent = "✅ 已複製";
+          } else {
+            // 複製不到就不假報成功：把評論放進臨時區域並全選
+            window.vtSelectForManualCopy(t);
+            b.textContent = "已選取 → 請按 Cmd+C";
+          }
+          setTimeout(() => (b.textContent = o), ok ? 2000 : 6000);
+        });
+        setTimeout(() => {
+          if (typeof window.vtBuildDecisionExport === "function")
+            document.body.classList.add("vt-has-existing-export");
+        }, 100);
+        document.addEventListener("click", (e) => {
+          if (
+            p.style.display === "block" &&
+            !e.target.closest(".vt-comment-popup,.vt-comment-trigger")
+          )
+            cp();
+        });
+        rn();
+      })();
+    </script>
+  
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Session 識別 — 多視窗並行時分辨這份是哪個 session 產的     -->
+    <!-- 產出時把 scripts/session-label.sh 的結果填進下面兩個值      -->
+    <!-- 留空 = 整段停用（範本原檔即此狀態）                        -->
+    <!-- 完整說明見 references/session-identity.md                 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <script>
+      window.VT_SESSION = { label: "UMT 需求比對", id: "01a11a7e", project: "AI Agent Proposal" };
+    </script>
+    <style>
+      .vt-session-badge {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 5px 16px;
+        background: var(--vt-session-color, #666);
+        color: #fff;
+        font-family: var(--mono, ui-monospace, monospace);
+        font-size: 11.5px;
+        letter-spacing: 0.06em;
+      }
+      .vt-session-badge .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #fff;
+        opacity: 0.85;
+        flex-shrink: 0;
+      }
+      .vt-session-badge .lb {
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .vt-session-badge .id {
+        margin-left: auto;
+        opacity: 0.75;
+      }
+    </style>
+    <script>
+      (function () {
+        const s = window.VT_SESSION || {};
+        if (!s.label) return;
+        const seed = s.id || s.label;
+        let hue = 7;
+        for (const c of seed) hue = (hue * 31 + c.charCodeAt(0)) % 360;
+        const col = `hsl(${hue} 58% 42%)`;
+        document.title = `${s.label} · ${document.title}`;
+        try {
+          const cv = document.createElement("canvas");
+          cv.width = cv.height = 64;
+          const g = cv.getContext("2d");
+          g.fillStyle = col;
+          if (g.roundRect) {
+            g.beginPath();
+            g.roundRect(2, 2, 60, 60, 14);
+            g.fill();
+          } else {
+            g.fillRect(2, 2, 60, 60);
+          }
+          g.fillStyle = "#fff";
+          g.font = '700 38px ui-sans-serif, system-ui, "PingFang TC"';
+          g.textAlign = "center";
+          g.textBaseline = "middle";
+          const ch = (s.label.match(/[A-Za-z0-9\u4e00-\u9fff]/) || ["?"])[0];
+          g.fillText(ch.toUpperCase(), 32, 36);
+          const link = document.createElement("link");
+          link.rel = "icon";
+          link.href = cv.toDataURL();
+          document.head.appendChild(link);
+        } catch (e) {}
+        const b = document.createElement("div");
+        b.className = "vt-session-badge";
+        b.style.setProperty("--vt-session-color", col);
+        b.innerHTML =
+          '<span class="dot"></span><span class="lb"></span><span class="id"></span>';
+        b.querySelector(".lb").textContent = s.label;
+        b.querySelector(".id").textContent = s.id || "";
+        const host = document.querySelector("header") || document.body;
+        host.insertBefore(b, host.firstChild);
+      })();
+    </script>
+  </body>
+</html>
