@@ -963,3 +963,5 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .mg-center .oc-goto button.onb-link { padding: 0; border: 0; background: none; color: #263e5c; text-decoration: underline; }
 .oc-maint { display: flex; gap: 10px; align-items: center; margin: -4px 0 14px; }
 .oc-maint input { flex: 1; }
+.mg-center a.onb-kit { display: inline-flex; align-items: center; padding: 9px 14px; border: 1px solid #cfd9e5; border-radius: 8px; background: #fff; color: #263e5c; text-decoration: none; font-size: 13px; white-space: nowrap; }
+.mg-center a.onb-kit:hover { background: #edf3f8; }

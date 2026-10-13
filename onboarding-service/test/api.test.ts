@@ -502,6 +502,19 @@ test('上架資料包：一個 ZIP 內含 SOP、範本、預檢工具與給 AI �
     const sop = readEntry(buf, entries.find((e) => e.name.endsWith('.md'))!).toString('utf8');
     assert.match(sop, /## 12\. 交給 AI agent 打包/);
     assert.match(readEntry(buf, entries.find((e) => e.name.endsWith('workhub.yaml'))!).toString('utf8'), /schemaVersion: workhub\/v1/);
+    const prompt = readEntry(buf, entries.find((e) => e.name.endsWith('.txt'))!).toString('utf8');
+    assert.match(prompt, /第一次上架/); assert.match(prompt, /wisely-5090/); assert.ok(!prompt.includes('{{'));
+    // 版更資料包：帶入 tool.id、上線版本與建議版本
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    const r2 = await fetch(`${t.base}/api/onboarding/kit?toolId=demo-tool`, { headers: { 'X-WorkHub-Proxy-Token': 'test-proxy-token-0001' } });
+    assert.equal(r2.status, 200);
+    const buf2 = Buffer.from(await r2.arrayBuffer());
+    const e2 = readCentralDirectory(buf2, t.cfg).entries;
+    const p2 = readEntry(buf2, e2.find((e) => e.name.endsWith('.txt'))!).toString('utf8');
+    assert.match(p2, /tool\.id：demo-tool/); assert.match(p2, /目前上線版本：1\.0\.0/); assert.match(p2, /建議：1\.0\.1/);
+    assert.match(readEntry(buf2, e2.find((e) => e.name.endsWith('workhub.yaml'))!).toString('utf8'), /id: demo-tool[\s\S]*version: 1\.0\.1/);
+    assert.equal((await fetch(`${t.base}/api/onboarding/kit?toolId=nope`, { headers: { 'X-WorkHub-Proxy-Token': 'test-proxy-token-0001' } })).status, 409);
   } finally { await t.close(); }
 });
 

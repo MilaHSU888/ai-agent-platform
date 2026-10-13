@@ -9,7 +9,7 @@ import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
 import { opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
-import { buildKit } from './kit.ts';
+import { buildKit, type KitTarget } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
@@ -115,9 +115,20 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     { method: 'GET', re: /^\/api\/onboarding\/session$/, auth: false, fn: ({ res, session }) => {
       send(res, 200, session ? { authenticated: true, actor: session.actor, environment: cfg.environment } : { authenticated: false, environment: cfg.environment });
     } },
-    { method: 'GET', re: /^\/api\/onboarding\/kit$/, auth: true, fn: ({ res }) => {
-      const { zip, missing } = buildKit(TEMPLATE);
-      send(res, 200, zip, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="workhub-kit.zip"`, ...(missing.length ? { 'X-Kit-Missing': encodeURIComponent(missing.join(',')) } : {}) });
+    { method: 'GET', re: /^\/api\/onboarding\/kit$/, auth: true, fn: ({ res, url }) => {
+      const toolId = url.searchParams.get('toolId');
+      let target: KitTarget = null;
+      if (toolId) {
+        const tool = store.get<{ id: string; name: string }>('SELECT id, name FROM tools WHERE id=?', toolId);
+        if (!tool) throw new GateError(['找不到此工具']);
+        const latest = store.get<{ version: string; manifest_json: string }>('SELECT version, manifest_json FROM submissions WHERE tool_id=? ORDER BY revision DESC LIMIT 1', toolId)!;
+        const live = store.get<{ version: string }>("SELECT s.version FROM releases r JOIN submissions s ON s.id=r.submission_id WHERE r.tool_id=? AND r.status IN ('active','offline') ORDER BY r.updated_at DESC LIMIT 1", toolId);
+        const model = (JSON.parse(latest.manifest_json) as { model?: { uses?: boolean; approvedEndpoint?: string } }).model;
+        target = { toolId, name: tool.name, released: live?.version ?? null, latest: latest.version, approvedEndpoint: model?.uses ? model.approvedEndpoint ?? null : null };
+      }
+      const { zip, missing } = buildKit(TEMPLATE, cfg.approvedModelEndpoints, target);
+      const fname = toolId ? `workhub-kit-${toolId}.zip` : 'workhub-kit.zip';
+      send(res, 200, zip, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${fname}"`, ...(missing.length ? { 'X-Kit-Missing': encodeURIComponent(missing.join(',')) } : {}) });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/template$/, auth: true, fn: ({ res }) => {
       send(res, 200, TEMPLATE, { 'Content-Type': 'text/yaml; charset=utf-8', 'Content-Disposition': 'attachment; filename="workhub.yaml"' });

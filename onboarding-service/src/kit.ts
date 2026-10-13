@@ -14,8 +14,39 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCES: [string, string][] = [
   ['WorkHub工具上架SOP.md', join(ROOT, '..', 'docs', 'sop', 'WorkHub工具上架SOP.md')],
   ['workhub-check.mjs', join(ROOT, 'dist-kit', 'workhub-check.mjs')],
-  ['給AI的打包指令.txt', join(ROOT, 'kit', '給AI的打包指令.txt')],
 ];
+const PROMPT = join(ROOT, 'kit', '給AI的打包指令.txt');
+
+/** 版更資料包要帶入的工具資訊；沒有就是第一次上架用的通用資料包 */
+export type KitTarget = { toolId: string; name: string; released: string | null; latest: string; approvedEndpoint: string | null } | null;
+
+/** 建議的下一個版本號：預覽版尾碼數字 +1（2.12.0-pilot.5 → 2.12.0-pilot.6），否則第三碼 +1 */
+export function nextVersion(v: string): string {
+  const pre = v.match(/^(.*[.-])(\d+)$/);
+  if (v.includes('-') && pre) return `${pre[1]}${Number(pre[2]) + 1}`;
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : v;
+}
+
+export function promptText(target: KitTarget, approved: string[]): string {
+  const base = existsSync(PROMPT) ? readFileSync(PROMPT, 'utf8') : '{{TARGET}}\n\n{{ENDPOINTS}}\n';
+  const t = target
+    ? [`這次是：版本更新（請勿更改 tool.id）`,
+       `- 工具：${target.name}`,
+       `- tool.id：${target.toolId}`,
+       `- 目前上線版本：${target.released ?? '（尚未上線）'}`,
+       `- 最新提交版本：${target.latest}`,
+       `- 新版本號必須大於最新提交版本，建議：${nextVersion(target.latest)}`,
+       `- 上傳時請在 WorkHub 開發者中心該工具那一列按「提交新版本」`].join('\n')
+    : ['這次是：第一次上架（新工具）',
+       '- tool.id 請和我確認：3～41 個小寫英數字或連字號、英文字母開頭，上架後不能更改',
+       '- 版本號從 1.0.0 開始',
+       '- 若其實是更新既有工具，請改用該工具在 WorkHub 開發者中心的「下載更新資料包」，裡面會帶入 tool.id 與版本號'].join('\n');
+  const e = [`模型端點：工具如果需要呼叫 AI 模型，model.approvedEndpoint 只能填平台核准的代號：${approved.join('、') || '（目前沒有）'}。`,
+    target?.approvedEndpoint ? `此工具目前使用：${target.approvedEndpoint}（沿用即可）。` : '工具不使用 AI 時，model.uses 設為 false。',
+    '實際網址、金鑰與模型名稱由平台注入 OPENAI_BASE_URL／OPENAI_API_KEY／OPENAI_MODEL，不要寫在程式或 ZIP 裡。'].join('\n');
+  return base.replace('{{TARGET}}', t).replace('{{ENDPOINTS}}', e);
+}
 
 /** 最小 ZIP 產生器：deflate、UTF-8 檔名（中文檔名在 Mac／Windows 都正確） */
 export function makeZip(files: { name: string; data: Buffer }[]): Buffer {
@@ -46,9 +77,11 @@ export function makeZip(files: { name: string; data: Buffer }[]): Buffer {
   return Buffer.concat([...locals, cd, eocd]);
 }
 
-export function buildKit(template: string): { zip: Buffer; missing: string[] } {
+export function buildKit(template: string, approved: string[], target: KitTarget = null): { zip: Buffer; missing: string[] } {
   const missing = SOURCES.filter(([, p]) => !existsSync(p)).map(([n]) => n);
   const files = SOURCES.filter(([, p]) => existsSync(p)).map(([n, p]) => ({ name: `workhub-kit/${n}`, data: readFileSync(p) }));
-  files.push({ name: 'workhub-kit/workhub.yaml', data: Buffer.from(template, 'utf8') });
+  files.push({ name: 'workhub-kit/給AI的打包指令.txt', data: Buffer.from(promptText(target, approved), 'utf8') });
+  const yaml = target ? template.replace(/id: my-tool\b/, `id: ${target.toolId}`).replace(/name: 我的工具/, `name: ${target.name}`).replace(/version: 1\.0\.0/, `version: ${nextVersion(target.latest)}`) : template;
+  files.push({ name: 'workhub-kit/workhub.yaml', data: Buffer.from(yaml, 'utf8') });
   return { zip: makeZip(files), missing };
 }
