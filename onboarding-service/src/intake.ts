@@ -19,7 +19,7 @@ export function inspectZip(buf: Buffer, cfg: Config): { issues: Issue[]; warning
   const files = new Set(entries.filter((e) => !e.isDir && e.name.startsWith(prefix)).map((e) => e.name.slice(prefix.length)));
   const manifestEntry = entries.find((e) => e.name === `${prefix}workhub.yaml`);
   if (!manifestEntry) {
-    issues.push({ file: 'workhub.yaml', reason: 'ZIP 最上層找不到 workhub.yaml', fix: '下載平台範本，放在 ZIP 最上層（與 Dockerfile 同一層）' });
+    issues.push({ file: 'workhub.yaml', reason: 'ZIP 最上層找不到 workhub.yaml', fix: '用開發者中心「下載上架資料包」裡的 workhub.yaml 範本，放在 ZIP 最上層（與 Dockerfile 同一層）' });
     return { issues, warnings: [], prefix };
   }
   let text = '';

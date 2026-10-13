@@ -9,6 +9,7 @@ import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
 import { opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
+import { buildKit } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
@@ -51,7 +52,7 @@ model:
 type Ctx = { req: IncomingMessage; res: ServerResponse; url: URL; session: { actor: string } | null };
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
-  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  const text = Buffer.isBuffer(body) || typeof body === 'string' ? body : JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -113,6 +114,10 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     } },
     { method: 'GET', re: /^\/api\/onboarding\/session$/, auth: false, fn: ({ res, session }) => {
       send(res, 200, session ? { authenticated: true, actor: session.actor, environment: cfg.environment } : { authenticated: false, environment: cfg.environment });
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/kit$/, auth: true, fn: ({ res }) => {
+      const { zip, missing } = buildKit(TEMPLATE);
+      send(res, 200, zip, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="workhub-kit.zip"`, ...(missing.length ? { 'X-Kit-Missing': encodeURIComponent(missing.join(',')) } : {}) });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/template$/, auth: true, fn: ({ res }) => {
       send(res, 200, TEMPLATE, { 'Content-Type': 'text/yaml; charset=utf-8', 'Content-Disposition': 'attachment; filename="workhub.yaml"' });

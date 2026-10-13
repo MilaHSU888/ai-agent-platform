@@ -49,7 +49,7 @@ export function validateManifest(text: string, files: Set<string>, cfg: Config):
   } catch (e) {
     return { issues: [{ file: FILE, reason: `YAML 格式錯誤：${(e as Error).message.split('\n')[0]}`, fix: '用範本對照縮排與冒號後重新提交' }], warnings };
   }
-  if (!isObj(doc)) return { issues: [{ file: FILE, reason: '內容不是設定物件', fix: '請從平台提供的 workhub.yaml 範本開始填寫' }], warnings };
+  if (!isObj(doc)) return { issues: [{ file: FILE, reason: '內容不是設定物件', fix: '請從「下載上架資料包」裡的 workhub.yaml 範本開始填寫' }], warnings };
 
   for (const k of Object.keys(doc)) {
     if (!['schemaVersion', 'tool', 'build', 'run', 'test', 'env', 'model'].includes(k)) warn(k, '未知欄位，平台會忽略', '確認拼字或移除此欄位');

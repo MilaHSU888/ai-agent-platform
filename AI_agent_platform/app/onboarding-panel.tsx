@@ -160,7 +160,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
     </section>
     {submissionForm && <section ref={formRef} className="mg-panel" aria-label={submissionForm.tool ? '提交新版本' : '新增工具'}>
       <div className="mg-row"><div><h2>{submissionForm.tool ? `提交新版本：${submissionForm.tool.toolName}` : '新增工具'}</h2><p className="mg-muted">ZIP 最上層需有 <code>workhub.yaml</code> 與 <code>Dockerfile</code>。上傳後由上架服務自動驗證、建置、檢查、測試並啟動預覽；關閉瀏覽器不影響進度。</p></div>
-        <a className="onb-link" href="/api/onboarding/template" download>下載 workhub.yaml 範本 ↓</a></div>
+        <a className="onb-link" href="/api/onboarding/kit" download="workhub-kit.zip" title="內含上架 SOP、workhub.yaml 範本、預檢工具與給 AI 的打包指令">下載上架資料包 ↓</a></div>
       {health && (!health.docker || !health.trivy) && <p className="onb-error">{!health.docker ? '找不到 Docker，無法建置。' : ''}{!health.trivy ? '找不到漏洞掃描器（trivy），掃描步驟會顯示「未完成」且不能送交。' : ''}</p>}
       {submissionForm.tool && <p className="onb-note">更新工具：<code>{submissionForm.tool.toolId}</code>。ZIP 中的 tool.id 必須相同，並填寫新版本號。<b>送出後，目前這一版的測試確認、漏洞例外與核准都會失效</b>，需重新建置、測試與核准；只想繼續目前這一版，請按「取消」並在下方提交詳情操作。</p>}
       <form key={submissionForm.tool?.id ?? 'new'} className="mg-fields onb-upload" onSubmit={(e) => {

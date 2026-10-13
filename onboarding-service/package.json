@@ -11,7 +11,8 @@
     "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/main.ts",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.check.json",
-    "test:relay": "python3 -m unittest relay/test_llm_relay.py"
+    "test:relay": "python3 -m unittest relay/test_llm_relay.py",
+    "build:kit": "npx -y esbuild@0.25.10 tools/workhub-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-kit/workhub-check.mjs \"--banner:js=// WorkHub 提交包預檢（由 onboarding-service/tools/workhub-check.ts 打包，請勿手改）\nimport { createRequire as __wh_cr } from 'node:module'; const require = __wh_cr(import.meta.url);\""
   },
   "dependencies": {
     "yaml": "2.8.1"

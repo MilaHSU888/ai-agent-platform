@@ -487,6 +487,24 @@ test('維運：維護模式只關入口不停容器；重新啟動經健康檢�
   } finally { await t.close(); }
 });
 
+test('上架資料包：一個 ZIP 內含 SOP、範本、預檢工具與給 AI 的指令，中文檔名正確', async () => {
+  const t = await setup();
+  try {
+    const r = await fetch(`${t.base}/api/onboarding/kit`, { headers: { 'X-WorkHub-Proxy-Token': 'test-proxy-token-0001' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('content-type'), 'application/zip');
+    const buf = Buffer.from(await r.arrayBuffer());
+    const { readCentralDirectory, readEntry } = await import('../src/zip-intake.ts');
+    const { entries, issues } = readCentralDirectory(buf, t.cfg);
+    assert.deepEqual(issues, []);
+    const names = entries.map((e) => e.name).sort();
+    assert.deepEqual(names, ['workhub-kit/WorkHub工具上架SOP.md', 'workhub-kit/workhub-check.mjs', 'workhub-kit/workhub.yaml', 'workhub-kit/給AI的打包指令.txt'].sort());
+    const sop = readEntry(buf, entries.find((e) => e.name.endsWith('.md'))!).toString('utf8');
+    assert.match(sop, /## 12\. 交給 AI agent 打包/);
+    assert.match(readEntry(buf, entries.find((e) => e.name.endsWith('workhub.yaml'))!).toString('utf8'), /schemaVersion: workhub\/v1/);
+  } finally { await t.close(); }
+});
+
 test('入口事件：點擊與阻擋分開記錄，同一事件重送不重複計數', async () => {
   const t = await setup();
   try {
