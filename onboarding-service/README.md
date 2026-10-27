@@ -35,6 +35,8 @@ MODEL_BASE_URL=https://… node --experimental-strip-types tools/set-model-endpo
 - **漏洞政策（DEC-020）**：只記錄、不阻擋（CRITICAL 標 `warning`）；掃描器無法執行時才阻擋。
 - **隔離網路與模型轉接**：每個工具一個 internal docker 網路 `wh-net-<toolId>`，瀏覽器經 `<容器>-gw` 閘道開啟；工具只連得到 `wh-llm-relay`（`http://llm-relay:8080/v1`），拿到工具專用通行碼 `whr_…`，真實金鑰只在轉接服務。轉接只允許模型清單與對話 API、限制可用模型，記錄中繼資料到 `onboarding-data/relay-logs`。
 - **發布**：發布同一份已測試 image；更新前停舊版並備份資料卷，健康檢查失敗自動還原；可切換到任何曾上線版本（保留資料／還原備份）、下架與重新上架。
+- **試用／公開（DEC-032）**：工具有 `visibility`（trial／public）。首次發布後為 trial；開發者 `POST /tools/:id/trial-passed`、AI Team `POST /tools/:id/publish` 後為 public；`/unpublish` 退回 trial。已公開工具的新版以 `wh-trial-<tool>` 並行（空白資料卷、另一個埠；Owner 自行上傳測試資料），publish 時才走一般更新流程並移除試用版；`/end-trial` 捨棄試用版；開發者 `/trial-failed`（需原因）記錄測試未通過，並行試用版會自動結束。catalog 回傳 `visibility`、`trialPassed`、`trial`，由網站依角色過濾：開發者只看得到自己當 Owner 的試用工具，AI Team 看得到全部（本機無登入，後端不檢查角色）。
+- **封存**：`POST /tools/:id/archive`（發布管理「封存工具」）停止工具的正式、試用、預覽容器，並從入口、開發者中心、發布管理、維運中心移除；資料卷與所有紀錄保留，不是永久刪除。
 - **資料包**：`GET /api/onboarding/kit` 下載上架資料包；`?toolId=` 下載預填該工具 `tool.id`、下一版號與模型端點代號的更新資料包。
 
 ## 尚未實作
