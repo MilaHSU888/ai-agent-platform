@@ -7,7 +7,7 @@ import { newId, now, type Store } from './db.ts';
 import { validateManifest, type Manifest } from './manifest.ts';
 import { detectPrefix, extract, readCentralDirectory, readEntry, scanSecrets, type Issue } from './zip-intake.ts';
 
-export type IntakeForm = { department: string; owner: string; actor: string; originalFilename: string; mode?: string; expectedToolId?: string; name?: string };
+export type IntakeForm = { department: string; owner: string; actor: string; originalFilename: string; mode?: string; expectedToolId?: string; name?: string; description?: string; scenario?: string };
 
 export function validToolName(name: string): string | null {
   const n = name.trim();
@@ -94,7 +94,9 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   store.tx(() => {
     const tool = store.get<{ id: string }>('SELECT id FROM tools WHERE id=?', m.tool.id);
     if (!tool) {
-      store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at,visibility) VALUES (?,?,?,?,?,?,'trial')", m.tool.id, toolName.trim(), form.department, form.owner, t, t);
+      // 用途說明：表單為準，沒填才用 workhub.yaml 的 tool.description
+      store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at,visibility,description,scenario) VALUES (?,?,?,?,?,?,'trial',?,?)", m.tool.id, toolName.trim(), form.department, form.owner, t, t,
+        (form.description ?? '').trim().slice(0, 80) || m.tool.description.trim().slice(0, 80) || null, (form.scenario ?? '').trim().slice(0, 80) || null);
       store.audit(form.actor, 'tool.registered', m.tool.id, { name: toolName.trim(), department: form.department, owner: form.owner });
     } else {
       store.run('UPDATE tools SET updated_at=? WHERE id=?', t, m.tool.id);

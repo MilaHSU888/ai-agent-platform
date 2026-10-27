@@ -32,6 +32,10 @@ type Tool = {
   color: string;
   icon: string;
   url?: string;
+  /** AI Team 在發布管理設定的內建圖示（0～5）；未設定時依卡片位置輪替 */
+  symbol?: number;
+  /** 適用情境（平台上的工具由開發者／AI Team 填寫） */
+  scenario?: string;
 };
 
 const departments: Department[] = [
@@ -153,7 +157,8 @@ function getToolScenario(tool: Tool) {
     vision: "RF 工程圖球標辨識、規格核對與校正匯出",
     quote: "多家供應商報價整併、數量級距與價格比較",
   };
-  return scenarios[tool.id] ?? (tool.type === "AI" ? "需要快速整理、比對或產生工作初稿時" : "需要快速完成日常資料處理與查詢時");
+  // 已上架工具以平台（開發者填、AI Team 可改）的適用情境為準；沒填就不顯示，不再套預設句
+  return tool.scenario ?? scenarios[tool.id] ?? "";
 }
 
 export default function Home() {
@@ -212,7 +217,7 @@ export default function Home() {
   const matchDemo = useCallback((r: CatalogTool) => tools.find((t) => t.id === RELEASED_ALIAS[r.toolId]) ?? tools.find((t) => t.name === r.name) ?? demo.added.find((t) => t.name === r.name), [demo.added]);
   const releasedExtra = useMemo<Tool[]>(() => released
     .filter((r) => !matchDemo(r))
-    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: '已透過上架服務發布的工具', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: 'blue', icon: r.name.slice(0, 1) }) as Tool), [released, matchDemo]);
+    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: r.description || '已透過上架服務發布的工具', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: r.icon?.color ?? 'blue', symbol: r.icon?.symbol, icon: r.name.slice(0, 1) }) as Tool), [released, matchDemo]);
   const releasedById = useMemo(() => Object.fromEntries(released.map((r) => {
     const match = matchDemo(r);
     return [match?.id ?? `rel-${r.toolId}`, r];
@@ -223,14 +228,17 @@ export default function Home() {
     for (const [id, r] of Object.entries(releasedById)) {
       const tool = [...tools, ...demo.added, ...releasedExtra].find((t) => t.id === id);
       if (!tool) continue;
-      configs[id] = { ...(configs[id] ?? defaultConfig(tool)), status: r.offline ? '已下架' : r.maintenance ? '維護中' : r.healthy ? '運行中' : '維護中', version: r.version, owner: r.owner, url: r.url ?? '', access: true, model: r.usesModel ? normalizeModel(configs[id]?.model ?? DEFAULT_LOCAL_MODEL) : '不使用模型' };
+      configs[id] = { ...(configs[id] ?? defaultConfig(tool)), status: r.offline ? '已下架' : r.maintenance ? '維護中' : r.healthy ? '運行中' : '維護中', version: r.version, owner: r.owner, url: r.url ?? '', access: true, model: r.kind === 'url' ? (r.usesModel ? '外部網站自有模型（不經平台模型轉接）' : '不使用模型') : r.usesModel ? normalizeModel(configs[id]?.model ?? DEFAULT_LOCAL_MODEL) : '不使用模型', ...(r.description ? { description: r.description } : {}) };
     }
     return { ...demo, configs };
   }, [demo, releasedById, releasedExtra]);
   const catalog = useMemo(() => [...tools, ...demo.added, ...releasedExtra].map(tool => {
     const c = shown.configs[tool.id];
     const name = releasedById[tool.id]?.name ?? tool.name; // 已發布工具的名稱以平台為準
-    return c ? {...tool, name, description:c.description, ...(c.url || tool.url !== undefined ? {url:c.url} : {})} : {...tool, name};
+    const ic = releasedById[tool.id]?.icon; // 圖示以平台（AI Team 設定）為準
+    const r = releasedById[tool.id];
+    const look = { ...(ic ? { color: ic.color, symbol: ic.symbol } : {}), ...(r ? { scenario: r.scenario ?? '', type: (r.usesModel ? 'AI' : '非 AI') as Tool['type'] } : {}) }; // 已上架工具是否為 AI 以平台資料為準
+    return c ? {...tool, name, ...look, description:c.description, ...(c.url || tool.url !== undefined ? {url:c.url} : {})} : {...tool, name, ...look};
   }), [demo.added, shown.configs, releasedExtra, releasedById]);
   const changeDemo = (fn: (s: DemoState) => DemoState) => setDemo(fn);
   const recordClick = (id:string) => {
@@ -254,7 +262,8 @@ export default function Home() {
   }, [activeDepartment, query, type, catalog, categoryFilter, favoritesOnly, demo.favorites, shown.configs, role, developer, releasedById]);
   // 示範用開發者清單：已上架工具與提交紀錄裡出現過的 Owner
   const owners = useMemo(() => [...new Set([...released.map((r) => r.owner), ...submissionOwners])].sort(), [released, submissionOwners]);
-  const devName = developer || owners[0] || "";
+  // 記住的開發者若已不在 Owner 清單（例如工具已封存），改用清單第一位，避免下拉選單顯示的人和實際篩選的人不一致
+  const devName = (owners.includes(developer) ? developer : owners[0]) || "";
   const seesTrial = (id: string) => { const r = releasedById[id]; return !!r && canSeeTrial(role, devName, r.owner); };
   const deptName = (id: string) => departments.find((d) => d.id === id)?.name ?? id;
   const usable = (tool: Tool) => canUseTool(role, myDepartment, tool.department, devName, releasedById[tool.id]?.owner);
@@ -362,9 +371,9 @@ export default function Home() {
               <section className="tool-grid">
                 {visibleTools.map((tool, index) => (
                   <button className={`tool-card ${selectedToolId === tool.id ? "selected" : ""}`} key={tool.id} onClick={() => setSelectedToolId((current) => current === tool.id ? "" : tool.id)} aria-expanded={selectedToolId === tool.id}>
-                    <span className={`tool-icon metal-tile ${tool.color}`}><i className={`metal-symbol symbol-${index % 6}`}></i></span>
+                    <span className={`tool-icon metal-tile ${tool.color}`}><i className={`metal-symbol symbol-${tool.symbol ?? index % 6}`}></i></span>
                     <strong>{tool.name}</strong>
-                    <small>{tool.type === "AI" ? "AI" : "TOOL"} · {(shown.configs[tool.id] ?? defaultConfig(tool)).status}{!(shown.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}{trialLabel(tool.id)}</small>
+                    <small>{(shown.configs[tool.id] ?? defaultConfig(tool)).status}{!(shown.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}{trialLabel(tool.id)}</small>
                   </button>
                 ))}
               </section>
@@ -372,11 +381,11 @@ export default function Home() {
               <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
             )}
 
-            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small>{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.visibility === "trial" && <small className="trial-note">試用中（未公開）：只有 Owner（{releasedById[selectedTool.id].owner}）與 AI Team 看得到；AI Team 公開後才開放給一般使用者。</small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.trial?.url && <small className="trial-note">新版 {releasedById[selectedTool.id].trial!.version} 試用中（一般使用者仍使用 {releasedById[selectedTool.id].version}）：<a href={releasedById[selectedTool.id].trial!.url!} target="_blank" rel="noopener noreferrer" onClick={() => void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: releasedById[selectedTool.id].toolId, kind: "click", trial: true }).catch(() => {})}>開啟試用版 ↗</a></small>}</div><div className="demo-entry-actions"><small>{(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).model}</small><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{!usable(selectedTool) ? <span>僅限{deptName(selectedTool.department)}同仁使用</span> : entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
+            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className={`metal-symbol symbol-${selectedTool.symbol ?? 1}`}></i></span><div><div><h2>{selectedTool.name}</h2></div><p>{selectedTool.description}</p>{getToolScenario(selectedTool) && <small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.visibility === "trial" && <small className="trial-note">試用中（未公開）：只有 Owner（{releasedById[selectedTool.id].owner}）與 AI Team 看得到；AI Team 公開後才開放給一般使用者。</small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.trial?.url && <small className="trial-note">新版 {releasedById[selectedTool.id].trial!.version} 試用中（一般使用者仍使用 {releasedById[selectedTool.id].version}）：<a href={releasedById[selectedTool.id].trial!.url!} target="_blank" rel="noopener noreferrer" onClick={() => void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: releasedById[selectedTool.id].toolId, kind: "click", trial: true }).catch(() => {})}>開啟試用版 ↗</a></small>}</div><div className="demo-entry-actions"><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{!usable(selectedTool) ? <span>僅限{deptName(selectedTool.department)}同仁使用</span> : entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
           </div>
         ) : view === "analytics" ? (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
-        ) : <ManagementCenter role={role} developer={devName} view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} goTo={setView} /> }
+        ) : <ManagementCenter role={role} developer={devName} view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} urlToolIds={released.filter((r) => r.kind === 'url').map((r) => r.toolId)} goTo={setView} /> }
       </main>
 
     </div>
@@ -420,7 +429,7 @@ function GeneralToolWorkspace({ tool, onBack }: { tool: Tool; onBack: () => void
 
       <main className="direct-tool-main">
         <section className="direct-tool-intro">
-          <div className={`tool-icon metal-tile ${tool.color} large`}><i className="metal-symbol symbol-1"></i></div>
+          <div className={`tool-icon metal-tile ${tool.color} large`}><i className={`metal-symbol symbol-${tool.symbol ?? 1}`}></i></div>
           <div>
             <span className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type} 工具</span>
             <h1>{tool.name}</h1>
@@ -961,7 +970,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
             const reach = Math.round(tool.users / detail.count * 100);
             const impact = tool.saved >= 60 ? "高效益" : tool.saved >= 30 ? "效益穩定" : reach < 45 ? "推廣中" : "持續觀察";
             return <div className="tool-detail-row" role="row" key={tool.id}>
-              <span className="detail-tool-name"><i className="tool-icon metal-tile admin-tool-icon"><span className={`metal-symbol symbol-${index % 6}`}></span></i><span><strong>{tool.name}</strong><small>{tool.description}</small></span></span>
+              <span className="detail-tool-name"><i className="tool-icon metal-tile admin-tool-icon"><span className={`metal-symbol symbol-${tool.symbol ?? index % 6}`}></span></i><span><strong>{tool.name}</strong><small>{tool.description}</small></span></span>
               <span><em className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type}</em></span>
               <span><b>{tool.users}</b> 人 <small>({reach}%)</small></span>
               <span><b>{formatNumber(tool.runs)}</b> 次</span>

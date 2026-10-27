@@ -19,6 +19,7 @@ import { makeMasker } from './exec.ts';
 import { memoryToBytes, type Manifest } from './manifest.ts';
 import { allocatePort, waitHealthy } from './pipeline.ts';
 import { prepareModelAccess } from './relay.ts';
+import type { UrlConfig } from './url-tools.ts';
 import type { Ctx, Runtime, ServiceSpec } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
@@ -165,6 +166,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
   const job = store.get<{ release_id: string; kind: string }>('SELECT release_id, kind FROM jobs WHERE id=?', jobId)!;
   const rel = store.get<Rel>('SELECT * FROM releases WHERE id=?', job.release_id)!;
   const detail = JSON.parse(rel.detail_json) as Detail;
+  if (store.get<{ kind: string }>('SELECT kind FROM submissions WHERE id=?', rel.submission_id)?.kind === 'url') return runUrlReleaseJob(store, rt, jobId, rel, detail);
   if (detail.kind === 'trial') return runTrialJob(store, cfg, rt, secrets, jobId, rel, detail, signal);
   const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', rel.submission_id)!;
   const m = JSON.parse(sub.manifest_json) as Manifest;
@@ -342,32 +344,52 @@ export function trialPassed(store: Store, subId: string): boolean {
 
 /** WorkHub 入口：列出上線中（或下架中）的版本，附公開狀態與試用版；並即時探測服務是否回應。
  *  依角色過濾在網站端進行（本機試點無登入）；正式環境須由後端依登入身分過濾（P1-AUTH-006）。 */
+/** 一個版本的入口網址與健康狀態：ZIP 工具探測本機容器的健康檢查；URL 工具探測外部網址（< 400 視為正常） */
+async function entryOf(rt: Runtime, port: number | null, manifestJson: string): Promise<{ url: string | null; healthy: boolean; usesModel: boolean }> {
+  const m = JSON.parse(manifestJson) as Manifest | UrlConfig;
+  if ((m as UrlConfig).kind === 'url') {
+    const c = m as UrlConfig;
+    const st = await rt.probe(c.url);
+    return { url: c.url, healthy: st !== null && st < 400, usesModel: c.usesAi };
+  }
+  const z = m as Manifest;
+  const st = port ? await rt.probe(`http://127.0.0.1:${port}${z.run.healthCheck.path}`) : null;
+  return { url: port ? `http://127.0.0.1:${port}/` : null, healthy: st === z.run.healthCheck.expectStatus, usesModel: z.model.uses };
+}
+
+/** WorkHub 入口：列出上線中（或下架中）的版本，附公開狀態、試用版與圖示；並即時探測服務是否回應。
+ *  依角色過濾在網站端進行（本機試點無登入）；正式環境須由後端依登入身分過濾（P1-AUTH-006）。 */
 export async function catalog(store: Store, rt: Runtime) {
-  const rows = store.all<Rel & { name: string; department: string; owner: string; version: string; manifest_json: string; maintenance_json: string | null; visibility: string }>(
-    `SELECT r.*, t.name, t.department, t.owner, t.maintenance_json, t.visibility, s.version, s.manifest_json FROM releases r
+  const rows = store.all<Rel & { name: string; department: string; owner: string; version: string; manifest_json: string; maintenance_json: string | null; visibility: string; kind: string; icon_json: string | null; description: string | null; scenario: string | null }>(
+    `SELECT r.*, t.name, t.department, t.owner, t.maintenance_json, t.visibility, t.kind, t.icon_json, t.description, t.scenario, s.version, s.manifest_json FROM releases r
      JOIN tools t ON t.id=r.tool_id JOIN submissions s ON s.id=r.submission_id
      WHERE t.archived_json IS NULL AND (r.status='active' OR (r.status='offline' AND NOT EXISTS (SELECT 1 FROM releases a WHERE a.tool_id=r.tool_id AND a.status='active')
        AND r.id=(SELECT o.id FROM releases o WHERE o.tool_id=r.tool_id AND o.status='offline' ORDER BY o.updated_at DESC LIMIT 1)))`);
   return Promise.all(rows.map(async (r) => {
-    const m = JSON.parse(r.manifest_json) as Manifest;
     const offline = r.status === 'offline';
-    const status = r.port && !offline ? await rt.probe(`http://127.0.0.1:${r.port}${m.run.healthCheck.path}`) : null;
+    const live = offline ? { url: null, healthy: false, usesModel: (JSON.parse(r.manifest_json) as { model?: { uses: boolean }; usesAi?: boolean }).model?.uses ?? !!(JSON.parse(r.manifest_json) as UrlConfig).usesAi } : await entryOf(rt, r.port, r.manifest_json);
     const tr = trialRelease(store, r.tool_id);
     const trSub = tr ? store.get<{ version: string; manifest_json: string }>('SELECT version, manifest_json FROM submissions WHERE id=?', tr.submission_id) : undefined;
-    const trStatus = tr?.port && trSub ? await rt.probe(`http://127.0.0.1:${tr.port}${(JSON.parse(trSub.manifest_json) as Manifest).run.healthCheck.path}`) : null;
+    const trEntry = tr && trSub ? await entryOf(rt, tr.port, trSub.manifest_json) : null;
     const visibility: Visibility = r.visibility === 'public' ? 'public' : 'trial';
     return {
       toolId: r.tool_id, name: r.name, department: r.department, owner: r.owner, version: r.version, releaseId: r.id,
-      url: r.port && !offline ? `http://127.0.0.1:${r.port}/` : null, healthy: !offline && status === m.run.healthCheck.expectStatus, offline,
+      kind: r.kind === 'url' ? 'url' as const : 'zip' as const,
+      icon: r.icon_json ? JSON.parse(r.icon_json) as { symbol: number; color: string } : null,
+      // URL 工具的用途說明（ZIP 工具沒有，網站沿用預設說明）
+      description: r.description || (r.kind === 'url' ? (JSON.parse(r.manifest_json) as UrlConfig).description : (JSON.parse(r.manifest_json) as { tool?: { description?: string } }).tool?.description) || null,
+      scenario: r.scenario || null,
+      guide: r.kind === 'url' ? (JSON.parse(r.manifest_json) as UrlConfig).guide || null : null,
+      url: live.url, healthy: !offline && live.healthy, offline,
       maintenance: r.maintenance_json ? JSON.parse(r.maintenance_json) as { at: string; actor: string; reason: string } : null,
-      usesModel: m.model.uses, releasedAt: r.updated_at,
+      usesModel: live.usesModel, releasedAt: r.updated_at,
       visibility,
       // 試用中的工具：上線版本本身就是試用版，記錄是否已按「試用通過」
       trialPassed: visibility === 'trial' && !offline ? trialPassed(store, r.submission_id) : undefined,
       trialResult: visibility === 'trial' && !offline ? trialResult(store, r.submission_id) : null,
       // 已公開工具的新版試用：與正式版本並行
-      trial: tr && trSub ? { releaseId: tr.id, submissionId: tr.submission_id, version: trSub.version, url: tr.port ? `http://127.0.0.1:${tr.port}/` : null,
-        healthy: !!trStatus && trStatus === (JSON.parse(trSub.manifest_json) as Manifest).run.healthCheck.expectStatus, passed: trialPassed(store, tr.submission_id), result: trialResult(store, tr.submission_id), since: tr.updated_at } : null,
+      trial: tr && trSub && trEntry ? { releaseId: tr.id, submissionId: tr.submission_id, version: trSub.version, url: trEntry.url,
+        healthy: trEntry.healthy, passed: trialPassed(store, tr.submission_id), result: trialResult(store, tr.submission_id), since: tr.updated_at } : null,
     };
   }));
 }
@@ -376,7 +398,7 @@ export function releaseHistory(store: Store, toolId?: string) {
   return store.all<Rel & { version: string; name: string }>(
     `SELECT r.*, s.version, t.name FROM releases r JOIN submissions s ON s.id=r.submission_id JOIN tools t ON t.id=r.tool_id
      WHERE t.archived_json IS NULL ${toolId ? 'AND r.tool_id=?' : ''} ORDER BY r.created_at DESC LIMIT 100`, ...(toolId ? [toolId] : []))
-    .map((r) => ({ id: r.id, toolId: r.tool_id, submissionId: r.submission_id, name: r.name, version: r.version, status: r.status, url: r.port ? `http://127.0.0.1:${r.port}/` : null,
+    .map((r) => ({ id: r.id, toolId: r.tool_id, submissionId: r.submission_id, name: r.name, version: r.version, status: r.status, url: r.port ? `http://127.0.0.1:${r.port}/` : ((JSON.parse(r.detail_json) as Detail).url ?? null),
       createdAt: r.created_at, updatedAt: r.updated_at, previousReleaseId: r.previous_release_id, detail: JSON.parse(r.detail_json) as Detail }));
 }
 
@@ -392,3 +414,51 @@ export function recordEntryEvent(store: Store, actor: string, e: { clientEventId
     e.clientEventId, e.toolId, e.kind, e.reason?.slice(0, 200) ?? null, rel?.id ?? null, version ?? null, actor, now(), trial ? 1 : 0);
   return { recorded: Number(r.changes) > 0 };
 }
+
+/** URL 工具的發布、試用、公開、回復與切換：不啟動容器，只切換入口網址；連線檢查不阻擋（內部網站可能只在公司網路連得到）。 */
+async function runUrlReleaseJob(store: Store, rt: Runtime, jobId: string, rel: Rel, detail: Detail) {
+  const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', rel.submission_id)!;
+  const c = JSON.parse(sub.manifest_json) as UrlConfig;
+  const step = (name: string, status: Step['status'], d?: string) => {
+    detail.steps.push({ name, status, at: now(), detail: d });
+    store.run('UPDATE releases SET detail_json=?, updated_at=? WHERE id=?', JSON.stringify(detail), now(), rel.id);
+  };
+  store.run("UPDATE jobs SET status='running', started_at=? WHERE id=?", now(), jobId);
+  store.run("UPDATE releases SET status='starting', updated_at=? WHERE id=?", now(), rel.id);
+  const chk = await rt.checkUrl(c.url);
+  const reachable = chk.reachable && chk.status !== null && chk.status < 400 && chk.tls !== 'error';
+  step('連線檢查', reachable ? 'passed' : 'skipped', reachable ? `${c.url} → ${chk.status}` : `連不上（${chk.error ?? chk.status ?? '無回應'}），不阻擋；內部網站可能只在公司網路連得到`);
+  detail.url = c.url;
+  const t = now();
+  if (detail.kind === 'trial') {
+    step('試用入口', 'passed', '新設定以試用入口並行，一般使用者仍使用目前的網址');
+    store.tx(() => {
+      store.run("UPDATE releases SET status='trial', detail_json=?, updated_at=? WHERE id=?", JSON.stringify(detail), t, rel.id);
+      store.setSubmissionStatus(sub.id, 'trial');
+      store.run("UPDATE jobs SET status='succeeded', finished_at=? WHERE id=?", t, jobId);
+      store.audit(detail.actor ?? 'system', 'trial.succeeded', rel.id, { tool: sub.tool_id, version: sub.version, url: c.url });
+    });
+    return;
+  }
+  const current = detail.kind === 'rollback' ? store.get<Rel>('SELECT * FROM releases WHERE id=?', detail.from!) : activeRelease(store, sub.tool_id);
+  const wasOffline = !current && detail.from ? store.get<Rel>("SELECT * FROM releases WHERE id=? AND status='offline'", detail.from) : undefined;
+  step('切換入口', 'passed', c.url);
+  store.tx(() => {
+    if (current) store.run('UPDATE releases SET status=?, updated_at=? WHERE id=?', detail.kind === 'rollback' ? 'rolled_back' : 'superseded', t, current.id);
+    if (wasOffline) store.run("UPDATE releases SET status='superseded', updated_at=? WHERE id=?", t, wasOffline.id);
+    store.run("UPDATE releases SET status='active', detail_json=?, updated_at=? WHERE id=?", JSON.stringify(detail), t, rel.id);
+    store.setSubmissionStatus(sub.id, 'released');
+    if (detail.kind === 'release' && !detail.fromTrial && !current) store.run("UPDATE tools SET visibility='trial', updated_at=? WHERE id=?", t, sub.tool_id);
+    if (detail.fromTrial) {
+      const tr = store.get<Rel>('SELECT * FROM releases WHERE id=?', detail.fromTrial);
+      if (tr) {
+        const td = JSON.parse(tr.detail_json) as Detail;
+        td.ended = { at: t, actor: detail.actor ?? 'system', reason: '已公開', promotedTo: rel.id };
+        store.run("UPDATE releases SET status='trial_ended', detail_json=?, updated_at=? WHERE id=?", JSON.stringify(td), t, tr.id);
+      }
+    }
+    store.run("UPDATE jobs SET status='succeeded', finished_at=? WHERE id=?", t, jobId);
+    store.audit(detail.actor ?? 'system', `${detail.fromTrial ? 'publish' : detail.kind}.succeeded`, rel.id, { tool: sub.tool_id, version: sub.version, url: c.url });
+  });
+}
+

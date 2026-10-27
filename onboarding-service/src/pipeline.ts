@@ -2,6 +2,7 @@
  * 驗證工作：validate → build → scan → code_review（人工程式碼檢查，等待確認）→ platform_test → business_test → preview。
  * 每步寫入 step_results 與證據檔；任何一步失敗、未驗證或掃描未完成，提交都不可送交確認。
  */
+import { runUrlCheckJob } from './url-tools.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from './config.ts';
@@ -101,6 +102,8 @@ export async function waitHealthy(rt: Runtime, url: string, expect: number, time
 export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, jobId: string, signal: AbortSignal) {
   const job = store.get<{ submission_id: string }>('SELECT submission_id FROM jobs WHERE id=?', jobId)!;
   const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', job.submission_id)!;
+  // URL 工具：只檢查網址，不建置（PRD §10）
+  if ((sub as unknown as { kind?: string }).kind === 'url') { await runUrlCheckJob(store, rt, jobId, sub.id); return; }
   const m = JSON.parse(sub.manifest_json) as Manifest;
   const evDir = join(cfg.dataDir, 'evidence', sub.id, jobId);
   mkdirSync(evDir, { recursive: true });

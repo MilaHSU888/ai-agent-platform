@@ -993,3 +993,29 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .onb-notice-links button{background:#263e5c;color:#fff;border:0;border-radius:8px;padding:9px 14px;cursor:pointer;text-align:left}
 .onb-flash{animation:onbFlash 2.4s ease}
 @keyframes onbFlash{0%,60%{box-shadow:0 0 0 3px #f0b44c}100%{box-shadow:none}}
+
+/* 工具圖示（AI Team 設定，PRD §10） */
+.icon-tile { display:inline-grid; place-items:center; flex:none; }
+.icon-tile.sm { width:46px; height:46px; border-radius:12px; }
+.icon-tile.sm .metal-symbol { transform:scale(.82); }
+.icon-tile.xs { width:34px; height:34px; border-radius:9px; }
+.icon-tile.xs .metal-symbol { transform:scale(.6); }
+.icon-picker { display:grid; gap:10px; padding:12px 0; }
+.icon-picker-head { display:flex; gap:12px; align-items:center; }
+.icon-picker-head small { display:block; color:#7c8494; font-size:12px; margin-top:2px; }
+.icon-picker-row { display:flex; flex-wrap:wrap; gap:8px; }
+.icon-picker-row button { padding:3px; background:#fff; border:2px solid transparent; border-radius:12px; cursor:pointer; }
+.icon-picker-row button.on { border-color:#2d3a8c; }
+.icon-picker-row .icon-swatch { width:34px; height:34px; display:grid; place-items:center; }
+.icon-picker-row .icon-swatch span { width:18px; height:18px; border-radius:50%; background:currentColor; }
+.onb-kind-tag { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:5px; background:#eef1fb; color:#3b4a9c; font-size:11px; font-weight:800; vertical-align:middle; }
+.onb-kind-switch { display:flex; gap:8px; margin:6px 0 12px; flex-wrap:wrap; }
+.onb-kind-switch button { flex:1 1 220px; text-align:left; padding:10px 12px; border:1.5px solid #dfe3ee; border-radius:10px; background:#fff; cursor:pointer; }
+.onb-kind-switch button[aria-pressed="true"] { border-color:#2d3a8c; background:#f4f6ff; }
+.onb-kind-switch button small { display:block; color:#7c8494; font-size:12px; margin-top:2px; }
+.onb-url-form .onb-wide { grid-column:1 / -1; }
+.onb-url-form textarea { min-height:64px; }
+.onb-check { display:flex !important; flex-direction:row !important; gap:8px; align-items:flex-start; font-weight:500; }
+.onb-check input { width:auto !important; margin-top:3px; }
+.onb-kit-note { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; }
+.onb-upload .onb-span2 { grid-column: span 2; }

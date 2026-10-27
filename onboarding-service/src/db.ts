@@ -7,7 +7,7 @@ export type SubmissionStatus =
 
 export type StepStatus =
   | 'pending' | 'running' | 'passed' | 'warning' | 'failed' | 'blocked' | 'skipped'
-  | 'not_verified' | 'incomplete' | 'cancelled' | 'interrupted' | 'awaiting';
+  | 'not_verified' | 'incomplete' | 'cancelled' | 'interrupted' | 'awaiting' | 'not_applicable';
 
 export const STEPS = ['validate', 'build', 'scan', 'code_review', 'platform_test', 'business_test', 'preview'] as const;
 export type StepName = (typeof STEPS)[number];
@@ -86,6 +86,14 @@ export class Store {
     }
     // 封存：從網站移除（測試用工具等），資料與紀錄保留
     if (!this.all<{ name: string }>('PRAGMA table_info(tools)').some((c) => c.name === 'archived_json')) this.db.exec('ALTER TABLE tools ADD COLUMN archived_json TEXT');
+    // URL 上架與工具圖示（2026/10/27）
+    const t2 = this.all<{ name: string }>('PRAGMA table_info(tools)').map((c) => c.name);
+    if (!t2.includes('kind')) this.db.exec("ALTER TABLE tools ADD COLUMN kind TEXT NOT NULL DEFAULT 'zip'");
+    if (!t2.includes('icon_json')) this.db.exec('ALTER TABLE tools ADD COLUMN icon_json TEXT');
+    // 用途說明與適用情境（工具層級；開發者第一次上架時填，之後由 AI Team 在發布管理修改）
+    if (!t2.includes('description')) this.db.exec('ALTER TABLE tools ADD COLUMN description TEXT');
+    if (!t2.includes('scenario')) this.db.exec('ALTER TABLE tools ADD COLUMN scenario TEXT');
+    if (!this.all<{ name: string }>('PRAGMA table_info(submissions)').some((c) => c.name === 'kind')) this.db.exec("ALTER TABLE submissions ADD COLUMN kind TEXT NOT NULL DEFAULT 'zip'");
     const ecols = this.all<{ name: string }>('PRAGMA table_info(entry_events)').map((c) => c.name);
     if (!ecols.includes('trial')) this.db.exec('ALTER TABLE entry_events ADD COLUMN trial INTEGER NOT NULL DEFAULT 0');
   }

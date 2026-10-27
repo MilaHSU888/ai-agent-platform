@@ -90,7 +90,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
 
 const ok = (stdout = ''): ExecResult => ({ code: 0, timedOut: false, cancelled: false, stdout, stderr: '' });
 
-export type FakeOpts = { build?: boolean; trivy?: 'clean' | 'critical' | 'missing'; healthy?: boolean; businessExit?: number; slowBuildMs?: number; badImages?: Set<string>; backupOk?: boolean };
+export type FakeOpts = { build?: boolean; trivy?: 'clean' | 'critical' | 'missing'; healthy?: boolean; businessExit?: number; slowBuildMs?: number; badImages?: Set<string>; backupOk?: boolean; urlReachable?: boolean };
 
 export class FakeRuntime implements Runtime {
   opts: FakeOpts;
@@ -135,7 +135,15 @@ export class FakeRuntime implements Runtime {
   async logsText(name: string, tail: number, mask: (s: string) => string) { return mask(`fake log for ${name} (${tail}) Bearer whr_secret_token_value`); }
   async ensureNetwork(name: string, internal: boolean) { this.networks.set(name, internal); return true; }
   async ensureRelay(spec: RelaySpec) { this.relays.push(spec); return { ok: true, detail: 'fake relay' }; }
+  urlChecks: string[] = [];
+  async checkUrl(url: string) {
+    this.urlChecks.push(url);
+    return this.opts.urlReachable === false
+      ? { reachable: false, status: null, finalUrl: url, redirects: [], tls: 'n/a' as const, error: 'ENOTFOUND', ms: 5 }
+      : { reachable: true, status: 200, finalUrl: url, redirects: [], tls: url.startsWith('https:') ? 'ok' as const : 'n/a' as const, ms: 5 };
+  }
   async probe(url: string) {
+    if (!/^http:\/\/127\.0\.0\.1:/.test(url)) return this.opts.urlReachable === false ? null : 200;
     const port = Number(new URL(url).port);
     const spec = [...this.running.values()].find((s) => s.hostPort === port);
     if (spec && this.opts.badImages?.has(spec.image)) return 503;

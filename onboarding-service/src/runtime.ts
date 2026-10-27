@@ -38,6 +38,8 @@ export interface Runtime {
   stop(name: string, ctx?: Ctx): Promise<void>;
   /** 以平台自帶的 busybox 小映像備份／還原資料卷（不使用提交的 image） */
   backupVolume(volume: string, file: string, ctx: Ctx): Promise<boolean>;
+  /** URL 工具：檢查網址能否連上（逐步跟隨轉址，最多 5 次） */
+  checkUrl(url: string): Promise<import('./url-tools.ts').UrlCheck>;
   restoreVolume(volume: string, file: string, ctx: Ctx): Promise<boolean>;
   removeVolume(name: string, ctx?: Ctx): Promise<void>;
   logs(name: string, ctx: Ctx): Promise<void>;
@@ -239,6 +241,25 @@ export class DockerRuntime implements Runtime {
       if (c.code !== 0) return { ok: false, detail: `轉接服務無法接上 ${n}：${c.stderr.slice(0, 200)}` };
     }
     return { ok: true, detail: `轉接服務運作中（${spec.networks.length} 個工具網路）` };
+  }
+
+  async checkUrl(url: string) {
+    const t0 = Date.now();
+    const redirects: string[] = [];
+    let current = url;
+    try {
+      for (let i = 0; i < 6; i++) {
+        const r = await fetch(current, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'WorkHub-URL-Check/0.1' } });
+        const loc = r.headers.get('location');
+        if (r.status >= 300 && r.status < 400 && loc && i < 5) { current = new URL(loc, current).href; redirects.push(current); continue; }
+        return { reachable: true, status: r.status, finalUrl: current, redirects, tls: current.startsWith('https:') ? 'ok' as const : 'n/a' as const, ms: Date.now() - t0 };
+      }
+      return { reachable: true, status: null, finalUrl: current, redirects, tls: 'n/a' as const, error: '轉址次數過多', ms: Date.now() - t0 };
+    } catch (e) {
+      const cause = (e as { cause?: { code?: string; message?: string } }).cause;
+      const tlsErr = /CERT|SSL|TLS/i.test(`${cause?.code ?? ''} ${cause?.message ?? ''}`);
+      return { reachable: false, status: null, finalUrl: current, redirects, tls: tlsErr ? 'error' as const : current.startsWith('https:') ? 'n/a' as const : 'n/a' as const, error: cause?.code ?? (e as Error).message, ms: Date.now() - t0 };
+    }
   }
 
   async probe(url: string) {

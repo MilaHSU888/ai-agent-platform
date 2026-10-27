@@ -38,6 +38,11 @@ export function missingExceptions(store: Store, sub: Sub): string[] {
 export function releaseBlockers(store: Store, cfg: Config, sub: Sub): string[] {
   const s = latestSteps(store, sub.id);
   const reasons: string[] = [];
+  // URL 工具：只需完成網址檢查（連不上只提醒，由 AI Team 判斷）
+  if (store.get<{ kind: string }>('SELECT kind FROM submissions WHERE id=?', sub.id)?.kind === 'url') {
+    if (!['passed', 'warning'].includes(s.platform_test?.status ?? '')) reasons.push('網址檢查尚未完成');
+    return reasons;
+  }
   if (!sub.image_digest) reasons.push('尚未建置成功');
   if (s.build?.status !== 'passed') reasons.push('建置未通過');
   if (s.platform_test?.status !== 'passed') reasons.push('平台共通檢查未通過');

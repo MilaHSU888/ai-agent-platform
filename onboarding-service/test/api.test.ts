@@ -747,3 +747,102 @@ test('測試未通過：未公開工具記錄結果、不能公開、可重新�
   } finally { await t.close(); }
 });
 
+// ── URL 上架（PRD §10） ─────────────────────────────────────────────
+const urlForm = (over: Record<string, unknown> = {}) => ({ mode: 'new', name: 'OpenWebUI', department: 'shared', owner: 'Mila', url: 'https://chat.example.com/', description: '公司 AI 問答', usesAi: true, aiConfirmed: true, guide: '', ...over });
+
+test('URL 上架：表單檢查、網址檢查不適用的步驟標示不適用、核准 → 試用 → 公開；圖示只能從內建清單選', async () => {
+  const t = await setup();
+  try {
+    // 表單檢查
+    const bad = await t.call('POST', '/api/onboarding/submissions/url', urlForm({ url: 'ftp://x', description: '', usesAi: true, aiConfirmed: false }));
+    assert.equal(bad.status, 422);
+    const fields = (bad.data.issues as { field: string }[]).map((i) => i.field);
+    assert.ok(fields.includes('url') && fields.includes('description') && fields.includes('aiConfirmed'));
+    assert.equal((await t.call('POST', '/api/onboarding/submissions/url', urlForm({ url: 'https://user:pw@chat.example.com/' }))).status, 422, '網址不可帶帳密');
+    // 送審 → 網址檢查
+    const up = await t.call('POST', '/api/onboarding/submissions/url', urlForm());
+    assert.equal(up.status, 201);
+    const sub0 = up.data.submission as Record<string, any>;
+    assert.equal(sub0.kind, 'url');
+    await t.runQueue();
+    let sub = (await t.call('GET', `/api/onboarding/submissions/${sub0.id}`)).data.submission as Record<string, any>;
+    assert.equal(sub.status, 'awaiting_approval', 'URL 工具不需開發者確認測試，檢查完直接待核准');
+    assert.equal(sub.steps.platform_test.status, 'passed');
+    assert.equal(sub.steps.build.status, 'not_applicable');
+    assert.equal(sub.steps.code_review.status, 'not_applicable');
+    assert.deepEqual(sub.releaseBlockers, []);
+    assert.deepEqual(t.rt.urlChecks, ['https://chat.example.com/']);
+    // 核准 → 發布 → 試用中（不啟動容器）
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${sub0.id}/approvals`, { reason: '核准' })).status, 200);
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${sub0.id}/release`)).status, 202);
+    await t.runQueue();
+    let cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
+    assert.equal(cat.kind, 'url');
+    assert.equal(cat.url, 'https://chat.example.com/');
+    assert.equal(cat.healthy, true);
+    assert.equal(cat.visibility, 'trial');
+    assert.equal(t.rt.started.length, 0, 'URL 工具不啟動容器');
+    await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/trial-passed`, {});
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/publish`, { note: '公開' })).status, 200);
+    // 重新啟動、日誌不適用
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/restart`, { reason: 'x' })).status, 409);
+    // 修改網址 → 已公開工具：新網址以試用入口並行，公開後才切換
+    const same = await t.call('POST', '/api/onboarding/submissions/url', urlForm({ mode: 'update', toolId: sub0.toolId }));
+    assert.equal(same.status, 422, '設定沒變更不需送審');
+    const up2 = await t.call('POST', '/api/onboarding/submissions/url', urlForm({ mode: 'update', toolId: sub0.toolId, url: 'https://chat2.example.com/' }));
+    assert.equal(up2.status, 201);
+    const id2 = (up2.data.submission as { id: string }).id;
+    await t.runQueue();
+    await t.call('POST', `/api/onboarding/submissions/${id2}/approvals`, { reason: '核准新網址' });
+    await t.call('POST', `/api/onboarding/submissions/${id2}/release`); await t.runQueue();
+    cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
+    assert.equal(cat.url, 'https://chat.example.com/', '一般使用者仍用舊網址');
+    assert.equal(cat.trial.url, 'https://chat2.example.com/');
+    await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/trial-passed`, {});
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/publish`, { note: '公開新網址' })).status, 202);
+    await t.runQueue();
+    cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
+    assert.equal(cat.url, 'https://chat2.example.com/');
+    assert.equal(cat.trial, null);
+    // 圖示
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/icon`, { symbol: 9, color: 'blue' })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/icon`, { symbol: 2, color: 'black' })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/icon`, { symbol: 2, color: 'green' })).status, 200);
+    assert.deepEqual((await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!.icon, { symbol: 2, color: 'green' });
+    // 用途說明與適用情境：第一次上架由表單帶入，AI Team 可修改；修改網址時不影響
+    assert.equal((await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!.description, '公司 AI 問答');
+    assert.equal((await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!.scenario, null);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/profile`, { description: '', scenario: 'x' })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/profile`, { description: '公司內部 AI 問答', scenario: '查詢內規、整理文件初稿' })).status, 200);
+    cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
+    assert.equal(cat.description, '公司內部 AI 問答');
+    assert.equal(cat.scenario, '查詢內規、整理文件初稿');
+    // 下架 → 重新上線 → 封存
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/offline`, { reason: '暫停使用' })).status, 200);
+    cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
+    assert.equal(cat.offline, true);
+    assert.equal(cat.url, null, '下架後入口關閉');
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/online`, { reason: '恢復' })).status, 202);
+    await t.runQueue();
+    cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
+    assert.equal(cat.offline, false);
+    assert.equal(cat.url, 'https://chat2.example.com/');
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/archive`, { reason: '測試工具' })).status, 200);
+    assert.equal((await catalogOf(t)).find((c) => c.toolId === sub0.toolId), undefined, '封存後不再出現');
+  } finally { await t.close(); }
+});
+
+test('URL 上架：連不上只提醒不阻擋', async () => {
+  const t = await setup({ urlReachable: false });
+  try {
+    const up = await t.call('POST', '/api/onboarding/submissions/url', urlForm({ url: 'http://n8n.intra.local/form/abc', usesAi: false, aiConfirmed: false }));
+    assert.equal(up.status, 201);
+    const id = (up.data.submission as { id: string }).id;
+    await t.runQueue();
+    const sub = (await t.call('GET', `/api/onboarding/submissions/${id}`)).data.submission as Record<string, any>;
+    assert.equal(sub.steps.platform_test.status, 'warning');
+    assert.equal(sub.status, 'awaiting_approval');
+    assert.equal(sub.urlConfig.url, 'http://n8n.intra.local/form/abc');
+  } finally { await t.close(); }
+});
+

@@ -9,7 +9,14 @@ export type Submission = {
   job: { id: string; status: string; current_step: string | null; error: string | null } | null;
   steps: Record<string, StepState>; approvals: Approval[]; pendingExceptions: string[]; releaseBlockers: string[];
   release: { id: string; status: string; updated_at: string } | null;
+  /** zip＝上傳原始碼的小工具；url＝登錄既有網站（PRD §10） */ kind?: 'zip' | 'url'; urlConfig?: UrlConfig | null; icon?: ToolIcon | null;
+  /** 工具層級的用途說明與適用情境（AI Team 可修改） */ profile?: ToolProfile;
 };
+export type ToolProfile = { description: string | null; scenario: string | null };
+export type UrlConfig = { url: string; description: string; usesAi: boolean; aiConfirmed: boolean; guide: string; tool: { id: string; version: string } };
+export type UrlForm = { mode: 'new' | 'update'; toolId?: string; name?: string; department?: string; owner?: string; url: string; description: string; scenario?: string; usesAi: boolean; aiConfirmed: boolean; guide: string };
+/** 工具圖示：symbol 為平台內建圖示 0～5，color 為內建顏色；只有 AI Team 可設定 */
+export type ToolIcon = { symbol: number; color: string };
 export type VulnItem = {
   id: string; severity: string; category: string; title: string; description: string; url: string | null;
   published: string | null; fixable: boolean; packages: { name: string; installed: string; fixed: string | null }[];
@@ -17,7 +24,8 @@ export type VulnItem = {
 export type TrialResult = { result: 'passed' | 'failed'; note: string; actor: string; at: string };
 export type TrialInfo = { releaseId: string; submissionId: string; version: string; url: string | null; healthy: boolean; passed: boolean; result: TrialResult | null; since: string };
 export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; maintenance?: { at: string; actor: string; reason: string } | null; usesModel: boolean; releasedAt: string;
-  /** trial＝試用中（未公開，只有開發者與 AI Team 看得到）；public＝公開 */ visibility: 'trial' | 'public'; trialPassed?: boolean; trialResult?: TrialResult | null; trial: TrialInfo | null };
+  /** trial＝試用中（未公開，只有開發者與 AI Team 看得到）；public＝公開 */ visibility: 'trial' | 'public'; trialPassed?: boolean; trialResult?: TrialResult | null; trial: TrialInfo | null;
+  kind?: 'zip' | 'url'; icon?: ToolIcon | null; description?: string | null; scenario?: string | null; guide?: string | null };
 export type OpsEvent = { at: string; actor: string; action: string; label: string; toolId?: string; toolName: string | null; bad: boolean; reason?: string; version?: string };
 export type ReleaseStep = { name: string; status: 'passed' | 'failed' | 'skipped'; at: string; detail?: string };
 export type ReleaseRecord = {
@@ -61,10 +69,13 @@ export const onboardingApi = {
   health: () => call<{ ok: boolean; docker: boolean; trivy: boolean; environment: string; queue: string }>('GET', '/health'),
   list: () => call<{ submissions: Submission[] }>('GET', '/submissions').then((r) => r.submissions),
   get: (id: string) => call<{ submission: Submission }>('GET', `/submissions/${id}`).then((r) => r.submission),
-  upload: (file: File, department: string, owner: string, expectedToolId?: string, name?: string) =>
+  upload: (file: File, department: string, owner: string, expectedToolId?: string, name?: string, profile?: { description: string; scenario: string }) =>
     call<{ submission: Submission; warnings: Issue[] }>('POST',
-      `/submissions?department=${encodeURIComponent(department)}&owner=${encodeURIComponent(owner)}&filename=${encodeURIComponent(file.name)}&mode=${expectedToolId ? 'update' : 'new'}${expectedToolId ? `&expectedToolId=${encodeURIComponent(expectedToolId)}` : ''}${name ? `&name=${encodeURIComponent(name.trim())}` : ''}`,
+      `/submissions?department=${encodeURIComponent(department)}&owner=${encodeURIComponent(owner)}&filename=${encodeURIComponent(file.name)}&mode=${expectedToolId ? 'update' : 'new'}${expectedToolId ? `&expectedToolId=${encodeURIComponent(expectedToolId)}` : ''}${name ? `&name=${encodeURIComponent(name.trim())}` : ''}${profile ? `&description=${encodeURIComponent(profile.description.trim())}&scenario=${encodeURIComponent(profile.scenario.trim())}` : ''}`,
       file, 'application/zip'),
+  submitUrl: (f: UrlForm) => call<{ submission: Submission; warnings: Issue[] }>('POST', '/submissions/url', f),
+  setProfile: (toolId: string, p: { description: string; scenario: string }) => call<{ toolId: string }>('POST', `/tools/${toolId}/profile`, p),
+  setIcon: (toolId: string, icon: ToolIcon) => call<{ toolId: string; icon: ToolIcon }>('POST', `/tools/${toolId}/icon`, icon),
   retry: (id: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/retry`),
   cancel: (jobId: string) => call('POST', `/jobs/${jobId}/cancel`),
   log: async (jobId: string, step: string) => {

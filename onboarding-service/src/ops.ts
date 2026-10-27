@@ -13,6 +13,7 @@ import { makeMasker } from './exec.ts';
 import type { Manifest } from './manifest.ts';
 import { waitHealthy } from './pipeline.ts';
 import { activeRelease, containerName, trialContainerName } from './releases.ts';
+import { isUrlTool } from './url-tools.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
@@ -70,6 +71,7 @@ export function setMaintenance(store: Store, toolId: string, on: boolean, actor:
 }
 
 export async function restartTool(store: Store, cfg: Config, rt: Runtime, toolId: string, actor: string, reason: string) {
+  if (isUrlTool(store, toolId)) throw new GateError(['URL 工具不在平台上執行，無法重新啟動或查看日誌；請聯絡該網站的維運人員']);
   const rel = activeRelease(store, toolId);
   if (!rel?.port) throw new GateError(['此工具目前沒有上線中的版本']);
   if (busy(store, toolId)) throw new GateError(['此工具已有發布或回復工作進行中']);
@@ -87,6 +89,7 @@ export async function restartTool(store: Store, cfg: Config, rt: Runtime, toolId
 }
 
 export async function toolLogs(store: Store, rt: Runtime, secrets: Secrets, toolId: string, tail = 200) {
+  if (isUrlTool(store, toolId)) throw new GateError(['URL 工具不在平台上執行，無法重新啟動或查看日誌；請聯絡該網站的維運人員']);
   const rel = activeRelease(store, toolId);
   if (!rel) throw new GateError(['此工具目前沒有上線中的版本']);
   return rt.logsText(containerName(toolId), Math.min(Math.max(tail, 20), 1000), makeMasker(secrets.allSecretValues()));

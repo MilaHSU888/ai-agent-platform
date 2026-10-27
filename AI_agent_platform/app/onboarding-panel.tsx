@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { IconPicker } from './tool-icon';
 import { ArchiveControl, isTrialing, TrialCard, trialResultOf, VisibilityControl } from './trial-panel';
 import type { Role } from './role';
 
@@ -10,7 +11,7 @@ const STEP_LABELS: [string, string][] = [
 ];
 const STEP_STATUS: Record<string, string> = {
   pending: '等待中', running: '執行中', passed: '通過', warning: '有 CRITICAL 漏洞（不阻擋）', failed: '失敗', blocked: '需核准例外', skipped: '略過',
-  not_verified: '未驗證', incomplete: '未完成', cancelled: '已取消', interrupted: '已中斷', awaiting: '待人工確認',
+  not_verified: '未驗證', incomplete: '未完成', not_applicable: '不適用', cancelled: '已取消', interrupted: '已中斷', awaiting: '待人工確認',
 };
 const SUB_STATUS: Record<string, string> = {
   queued: '排隊中', running: '建置與測試中', failed: '未通過', cancelled: '已取消', interrupted: '已中斷（可重試）',
@@ -45,6 +46,19 @@ function stepDetail(step: string, s: Record<string, unknown>): string {
   return s.error ? String(s.error) : '';
 }
 
+/** URL 工具只有兩個步驟：表單檢查、連線檢查（其餘不適用，不顯示） */
+const URL_STEPS: [string, string][] = [['validate', '表單檢查'], ['platform_test', '連線檢查']];
+function urlStepDetail(step: string, s: Record<string, unknown>): string {
+  if (!s || !Object.keys(s).length) return '';
+  if (step === 'validate') return `網址格式正確 · 第 ${String(s.revision ?? '')} 版設定`;
+  if (step === 'platform_test') {
+    const redirects = (s.redirects as string[] | undefined) ?? [];
+    if (!s.reachable) return `連不上：${String(s.error ?? '無回應')}。不阻擋送審，請 AI Team 判斷（內部網站可能只在公司網路連得到）`;
+    return `HTTP ${String(s.status)}（${String(s.ms)} ms）${redirects.length ? ` · 轉址 ${redirects.length} 次 → ${String(s.finalUrl)}` : ''}${s.tls === 'ok' ? ' · HTTPS 憑證正常' : s.tls === 'n/a' ? ' · 未使用 HTTPS' : ''}${s.tls === 'error' ? ' · HTTPS 憑證有問題' : ''}`;
+  }
+  return '';
+}
+
 function csvCell(v: string) { return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }
 function downloadVulnCsv(tool: string, items: VulnItem[]) {
   const rows = [['嚴重度', '漏洞編號', '類型', '受影響套件', '目前版本', '修正版本', '標題', '說明', '連結'],
@@ -64,17 +78,20 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const [items, setItems] = useState<Submission[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [submissionForm, setSubmissionForm] = useState<{ tool: Submission | null } | null>(null);
+  const [submissionForm, setSubmissionForm] = useState<{ tool: Submission | null; kind: 'zip' | 'url' } | null>(null);
+  const emptyUrl = { url: '', usesAi: false, aiConfirmed: false, guide: '' };
+  const [urlForm, setUrlForm] = useState(emptyUrl);
   const formRef = useRef<HTMLElement | null>(null);
   // 開啟新增／新版本表單時捲到表單並聚焦檔案欄位（表單在頁面上方，按鈕常在下方的提交詳情）
   useEffect(() => {
     if (!submissionForm || !formRef.current) return;
     formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    formRef.current.querySelector<HTMLInputElement>('input[type="file"]')?.focus({ preventScroll: true });
+    formRef.current.querySelector<HTMLInputElement>('input[type="file"], input[type="url"]')?.focus({ preventScroll: true });
   }, [submissionForm]);
   const [department, setDepartment] = useState(departments.find((d) => d.id === 'purchase')?.id ?? departments[0]?.id ?? '');
   const [owner, setOwner] = useState('');
   const [toolName, setToolName] = useState('');
+  const [profile, setProfile] = useState({ description: '', scenario: '' });
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [warnings, setWarnings] = useState<Issue[]>([]);
@@ -123,10 +140,13 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
 
   // 每個工具只列最新一筆提交（items 由新到舊）
   const myTools = visible.filter((x, i) => visible.findIndex((y) => y.toolId === x.toolId) === i);
-  const openSubmission = (tool: Submission | null) => {
-    setSubmissionForm({ tool }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
+  const openSubmission = (tool: Submission | null, kind: 'zip' | 'url' = 'zip') => {
+    setSubmissionForm({ tool, kind: tool ? (tool.kind === 'url' ? 'url' : 'zip') : kind }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
+    const uc = tool?.urlConfig;
+    setUrlForm(uc ? { url: uc.url, usesAi: uc.usesAi, aiConfirmed: uc.aiConfirmed, guide: uc.guide } : emptyUrl);
     setOwner(tool?.owner ?? '');
     setToolName(tool?.toolName ?? '');
+    setProfile({ description: '', scenario: '' });
     setDepartment(tool?.department ?? departments.find((d) => d.id === 'purchase')?.id ?? departments[0]?.id ?? '');
   };
 
@@ -158,62 +178,104 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const needsReview = !!selected && ['running', 'awaiting_confirmation'].includes(selected.status) && ['awaiting', 'skipped'].includes(steps.code_review?.status ?? '') && ['passed', 'warning'].includes(steps.scan?.status ?? '');
 
   return <div className="onb">
-    <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」；已上架的工具要更新，請在下方該工具旁按「提交新版本」。還沒有 ZIP？先下載上架資料包（SOP、範本、預檢工具與給 AI 的打包指令），交給 AI agent 打包。</p></div>
-      <div className="onb-head-actions"><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a><button className="onb-primary-sm" disabled={busy} onClick={() => openSubmission(null)}>＋ 新增工具</button></div></div>
+    <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」，再選擇上傳 ZIP 小工具，或登錄已經有網址的網站；已上架的工具要更新，請在下方該工具旁操作。</p></div>
+      <div className="onb-head-actions"><button className="onb-primary-sm" disabled={busy} onClick={() => openSubmission(null)}>＋ 新增工具</button></div></div>
       {myTools.length > 0 && <div className="onb-tool-list">{myTools.map((t) => {
         const building = items.some((x) => x.toolId === t.toolId && ACTIVE.includes(x.status));
         return <div className="onb-tool-row" key={t.toolId}>
-          <span><b>{t.toolName}</b><small>tool.id <code>{t.toolId}</code> · 最新提交 {t.version} · {SUB_STATUS[t.status] ?? t.status}{building ? ' · 建置中，完成後才能提交新版本' : ''}</small></span>
-          <span className="onb-head-actions"><a className="onb-kit" href={`/api/onboarding/kit?toolId=${encodeURIComponent(t.toolId)}`} download={`workhub-kit-${t.toolId}.zip`} title="給 AI 的指令已帶入 tool.id、目前版本、建議的新版本號與模型端點">下載更新資料包 ↓</a>
-          <button className="onb-primary-sm" disabled={busy || building} onClick={() => openSubmission(t)}>↻ 提交新版本</button></span>
+          <span><b>{t.toolName}</b>{t.kind === 'url' && <span className="onb-kind-tag">URL</span>}<small>{t.kind === 'url' ? <>網址 {t.urlConfig?.url}</> : <>tool.id <code>{t.toolId}</code></>} · 最新提交 {t.version} · {SUB_STATUS[t.status] ?? t.status}{building ? (t.kind === 'url' ? ' · 檢查中' : ' · 建置中，完成後才能提交新版本') : ''}</small></span>
+          {t.kind === 'url' ? <span className="onb-head-actions"><button className="onb-primary-sm" disabled={busy || building} onClick={() => openSubmission(t)}>✎ 修改網址設定</button></span>
+          : <span className="onb-head-actions"><a className="onb-kit" href={`/api/onboarding/kit?toolId=${encodeURIComponent(t.toolId)}`} download={`workhub-kit-${t.toolId}.zip`} title="給 AI 的指令已帶入 tool.id、目前版本、建議的新版本號與模型端點">下載更新資料包 ↓</a>
+          <button className="onb-primary-sm" disabled={busy || building} onClick={() => openSubmission(t)}>↻ 提交新版本</button></span>}
         </div>;
       })}</div>}
     </section>
-    {submissionForm && <section ref={formRef} className="mg-panel" aria-label={submissionForm.tool ? '提交新版本' : '新增工具'}>
-      <div className="mg-row"><div><h2>{submissionForm.tool ? `提交新版本：${submissionForm.tool.toolName}` : '新增工具'}</h2><p className="mg-muted">ZIP 最上層需有 <code>workhub.yaml</code> 與 <code>Dockerfile</code>。上傳後由上架服務自動驗證、建置、檢查、測試並啟動預覽；關閉瀏覽器不影響進度。</p></div></div>
+    {submissionForm && <section ref={formRef} className="mg-panel" aria-label={submissionForm.tool ? (submissionForm.kind === 'url' ? '修改網址設定' : '提交新版本') : '新增工具'}>
+      <div className="mg-row"><div><h2>{submissionForm.tool ? (submissionForm.kind === 'url' ? `修改網址設定：${submissionForm.tool.toolName}` : `提交新版本：${submissionForm.tool.toolName}`) : '新增工具'}</h2></div></div>
+      {!submissionForm.tool && <div className="onb-kind-switch" role="group" aria-label="上架方式">
+        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(null, 'zip')}><b>小工具（上傳 ZIP）</b><small>由平台建置、檢查、測試並執行</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'url'} onClick={() => openSubmission(null, 'url')}><b>已有網址的網站（URL）</b><small>網站已在其他地方運作，例如 OpenWebUI、n8n 表單</small></button>
+      </div>}
+      {submissionForm.kind === 'url' ? <>
+      <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），試用通過再由 AI Team 公開。工具圖示由 AI Team 設定。</p>
+      {submissionForm.tool && <p className="onb-note">工具名稱、用途說明與適用情境請由 AI Team 在發布管理修改。修改網址後需重新經 AI Team 審核。工具已公開時，新網址會先以試用入口並行，一般使用者仍使用目前網址，AI Team 公開後才切換。</p>}
+      <form key={`url-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-url-form" onSubmit={(e) => {
+        e.preventDefault();
+        const t = submissionForm.tool;
+        void act(async () => {
+          const r = await onboardingApi.submitUrl({ mode: t ? 'update' : 'new', toolId: t?.toolId, name: toolName, department, owner, ...urlForm, description: t ? '' : profile.description, scenario: t ? '' : profile.scenario });
+          setWarnings(r.warnings); setSelectedId(r.submission.id); setSubmissionForm(null); setLog(null); setNote('');
+        }, '已送出，開始檢查網址');
+      }}>
+        <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 公司 AI 問答" title={submissionForm.tool ? '要改名請到發布管理的工具發布詳情' : undefined} /></label>
+        <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+        <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
+        <label className="onb-wide">網址（使用者實際開啟的網頁）<input type="url" value={urlForm.url} onChange={(e) => setUrlForm({ ...urlForm, url: e.target.value })} placeholder="https://chat.example.com/" /></label>
+        {!submissionForm.tool && <>
+          <label className="onb-wide">用途說明（顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼，例如 公司內部 AI 問答與文件摘要" /></label>
+          <label className="onb-wide">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 查詢內規、整理文件初稿" /></label>
+        </>}
+        <label className="onb-wide">使用說明（選填，例如需先申請帳號、建議瀏覽器）<textarea value={urlForm.guide} maxLength={300} onChange={(e) => setUrlForm({ ...urlForm, guide: e.target.value })} /></label>
+        <label className="onb-check onb-wide"><input type="checkbox" checked={urlForm.usesAi} onChange={(e) => setUrlForm({ ...urlForm, usesAi: e.target.checked, aiConfirmed: e.target.checked && urlForm.aiConfirmed })} />這個網站會使用 AI 模型</label>
+        {urlForm.usesAi && <label className="onb-check onb-wide"><input type="checkbox" checked={urlForm.aiConfirmed} onChange={(e) => setUrlForm({ ...urlForm, aiConfirmed: e.target.checked })} />我確認此網站使用的模型與資料流符合公司規定（外部網站不會經過平台的 LLM Proxy）</label>}
+        <div className="mg-actions onb-wide">
+          <button disabled={busy || !urlForm.url.trim() || (!submissionForm.tool && !profile.description.trim()) || (urlForm.usesAi && !urlForm.aiConfirmed) || !owner.trim() || (!submissionForm.tool && !toolName.trim())}>{busy ? '處理中…' : submissionForm.tool ? '送出修改' : '送出並檢查網址'}</button>
+          <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setIssues([]); setWarnings([]); }}>取消</button>
+        </div>
+      </form>
+      </> : <>
+      <p className="mg-muted">ZIP 最上層需有 <code>workhub.yaml</code> 與 <code>Dockerfile</code>。上傳後由上架服務自動驗證、建置、檢查、測試並啟動預覽；關閉瀏覽器不影響進度。</p>
+      {!submissionForm.tool && <div className="onb-note onb-kit-note"><span>還沒有 ZIP？先下載上架資料包（SOP、範本、預檢工具與給 AI 的打包指令），交給 AI agent 打包。</span><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a></div>}
       {health && (!health.docker || !health.trivy) && <p className="onb-error">{!health.docker ? '找不到 Docker，無法建置。' : ''}{!health.trivy ? '找不到漏洞掃描器（trivy），掃描步驟會顯示「未完成」且不能送交。' : ''}</p>}
       {submissionForm.tool && <p className="onb-note">更新工具：<code>{submissionForm.tool.toolId}</code>。ZIP 中的 tool.id 必須相同，並填寫新版本號。<b>送出後，目前這一版的測試確認、漏洞例外與核准都會失效</b>，需重新建置、測試與核准；只想繼續目前這一版，請按「取消」並在下方提交詳情操作。</p>}
       <form key={submissionForm.tool?.id ?? 'new'} className="mg-fields onb-upload" onSubmit={(e) => {
         e.preventDefault(); if (!file) return;
-        void act(async () => { const r = await onboardingApi.upload(file, department, owner, submissionForm.tool?.toolId, submissionForm.tool ? undefined : toolName); setWarnings(r.warnings); setSelectedId(r.submission.id); setFile(null); setSubmissionForm(null); setLog(null); setNote(''); }, '已收件，開始建置與測試');
+        void act(async () => { const r = await onboardingApi.upload(file, department, owner, submissionForm.tool?.toolId, submissionForm.tool ? undefined : toolName, submissionForm.tool ? undefined : profile); setWarnings(r.warnings); setSelectedId(r.submission.id); setFile(null); setSubmissionForm(null); setLog(null); setNote(''); }, '已收件，開始建置與測試');
       }}>
         <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 出貨進度查詢" title={submissionForm.tool ? '要改名請到發布管理的工具發布詳情' : undefined} /></label>
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>原始碼 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
-        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
+        {!submissionForm.tool && <>
+          <label className="onb-span2">用途說明（顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
+          <label className="onb-span2">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 多家供應商報價整併、價格比較" /></label>
+        </>}
+        <button disabled={!file || !owner.trim() || (!submissionForm.tool && (!toolName.trim() || !profile.description.trim())) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
-      <IssueTable title="提交包未通過檢查（已停止建置）" issues={issues} />
+      </>}
+      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : '提交包未通過檢查（已停止建置）'} issues={issues} />
       <IssueTable title="提醒" issues={warnings} />
     </section>}
 
     <div className="onb-grid">
       <section className="mg-panel"><div className="mg-row"><div><h2>{role === 'aiteam' ? '全部提交' : '我的提交'}</h2><small className="mg-muted">{role === 'aiteam' ? 'AI Team 看得到所有開發者的提交' : `${developer || '（未選擇開發者）'} 當 Owner 的工具`}</small></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
-        {visible.length === 0 ? <p className="mg-submission-empty">尚無提交紀錄，請從「新增工具」上傳第一個 ZIP。</p> : visible.map((s) =>
+        {visible.length === 0 ? <p className="mg-submission-empty">尚無提交紀錄，請從「新增工具」上傳第一個 ZIP 或登錄網址。</p> : visible.map((s) =>
           <button key={s.id} className={`mg-submission ${selected?.id === s.id ? 'current' : ''}`} onClick={() => { setSelectedId(s.id); setLog(null); setReasons([]); setNote(''); }}>
-            <span><b>{s.toolName}</b><small>{s.version} · 第 {s.revision} 版 · {new Date(s.createdAt).toLocaleString('zh-TW')}</small></span>
+            <span><b>{s.toolName}</b>{s.kind === 'url' && <span className="onb-kind-tag">URL</span>}<small>{s.version} · 第 {s.revision} 版 · {new Date(s.createdAt).toLocaleString('zh-TW')}</small></span>
             <span className={`mg-status ${tone(s.status)}`}>{SUB_STATUS[s.status] ?? s.status}</span>
           </button>)}
       </section>
 
       {selected && <section className="mg-panel onb-detail">
         <div className="mg-row"><div><h2>提交詳情</h2><h3>{selected.toolName} · {selected.version}</h3>
-          <p className="mg-muted">第 {selected.revision} 版提交 · {selected.originalFilename} · 來源雜湊 <code>{selected.sourceHash.slice(0, 12)}</code>{selected.imageDigest && <> · image <code>{selected.imageDigest.slice(0, 19)}</code></>}</p></div>
+          {selected.kind === 'url' ? <p className="mg-muted">第 {selected.revision} 版設定 · 網址 <a href={selected.urlConfig?.url} target="_blank" rel="noreferrer">{selected.urlConfig?.url}</a></p> :
+          <p className="mg-muted">第 {selected.revision} 版提交 · {selected.originalFilename} · 來源雜湊 <code>{selected.sourceHash.slice(0, 12)}</code>{selected.imageDigest && <> · image <code>{selected.imageDigest.slice(0, 19)}</code></>}</p>}</div>
           <div className="onb-head-actions"><span className={`mg-status ${tone(selected.status)}`}>{SUB_STATUS[selected.status] ?? selected.status}</span></div></div>
-        <ol className="onb-steps">{STEP_LABELS.map(([key, label]) => {
+        <ol className="onb-steps">{(selected.kind === 'url' ? URL_STEPS : STEP_LABELS).map(([key, label]) => {
           const st = steps[key];
+          const isUrl = selected.kind === 'url';
           const status = st?.status ?? 'pending';
           // 漏洞檢查：CRITICAL 全部核准本機例外後顯示「已核准例外」（後端原始狀態仍為 blocked，發布時會再檢查）
           const excepted = key === 'scan' && status === 'blocked' && selected.pendingExceptions.length === 0;
           const shown = excepted ? 'good' : tone(status);
           return <li key={key} className={`onb-step ${shown}`}>
-            <div><b>{label}</b><span className={`mg-status ${shown}`}>{excepted ? '已核准例外' : STEP_STATUS[status] ?? status}</span></div>
-            <small>{stepDetail(key, st?.summary ?? {})}</small>
+            <div><b>{label}</b><span className={`mg-status ${shown}`}>{excepted ? '已核准例外' : isUrl && status === 'warning' ? '未通過（不阻擋）' : STEP_STATUS[status] ?? status}</span></div>
+            <small>{isUrl ? urlStepDetail(key, st?.summary ?? {}) : stepDetail(key, st?.summary ?? {})}</small>
             <div className="onb-step-links">
               {key === 'scan' && ['passed', 'warning', 'blocked'].includes(status) &&
                 <button className="onb-link" onClick={() => void onboardingApi.vulns(selected.id).then((r) => { setVulnFilter('all'); setVulns({ tool: `${selected.toolName} · ${selected.version}`, ...r }); }).catch(fail)}>查看漏洞清單</button>}
-              {selected.job && !['pending', 'skipped'].includes(status) && key !== 'code_review' &&
+              {!isUrl && selected.job && !['pending', 'skipped'].includes(status) && key !== 'code_review' &&
                 <button className="onb-link" onClick={() => void onboardingApi.log(selected.job!.id, key).then((text) => setLog({ step: label, text }))}>查看日誌</button>}
             </div>
           </li>;
@@ -264,7 +326,12 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         </div>}
 
 
-        {selected.status === 'awaiting_approval' && <p className="onb-note">已確認測試結果，等待管理者在「發布管理」審核發布。</p>}
+        {selected.kind === 'url' && selected.urlConfig && <ul className="onb-review-facts">
+          <li>用途：{selected.profile?.description ?? selected.urlConfig.description}{selected.profile?.scenario && ` · 適用情境：${selected.profile.scenario}`}</li>
+          <li>使用 AI：{selected.urlConfig.usesAi ? '是，已確認模型與資料流符合公司規定' : '否'}</li>
+          {selected.urlConfig.guide && <li>使用說明：{selected.urlConfig.guide}</li>}
+        </ul>}
+        {selected.status === 'awaiting_approval' && <p className="onb-note">{selected.kind === 'url' ? '網址檢查完成，等待 AI Team 在「發布管理」審核。' : '已確認測試結果，等待管理者在「發布管理」審核發布。'}</p>}
 
         {reasons.length > 0 && <ul className="onb-error">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
         {selected.approvals.length > 0 && <div><h3>確認與核准紀錄</h3>{selected.approvals.map((a, i) =>
@@ -320,13 +387,13 @@ const CATS: { id: Cat; label: string; hint: string }[] = [
   { id: 'public', label: '已公開', hint: '一般使用者依部門使用中' },
   { id: 'offline', label: '已下架', hint: '服務停止，資料保留' },
 ];
-type Row = { key: string; cat: Cat; toolId: string; name: string; version: string; department: string; who: string; status: string; tone: string; at: string };
+type Row = { key: string; cat: Cat; toolId: string; kind?: 'zip' | 'url'; name: string; version: string; department: string; who: string; status: string; tone: string; at: string };
 
 /**
  * 發布管理（AI Team）：上方狀態卡片兼分頁（待審核／試用中／已公開／已下架），下方一個工具一列；點選後右側滑出工具詳情，
  * 詳情只突出「現在該做的那一步」，版本紀錄與少用的操作（下架、封存）放在下方。只列出經上架服務處理的真實工具。
  */
-export function ReleaseCenter({ notice, departments = [], role, renderSettings }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string) => ReactNode }) {
+export function ReleaseCenter({ notice, departments = [], role, renderSettings }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string, kind: 'zip' | 'url') => ReactNode }) {
   const [state, setState] = useState<'checking' | 'offline' | 'ready'>('checking');
   const [items, setItems] = useState<Submission[]>([]);
   const [history, setHistory] = useState<ReleaseRecord[]>([]);
@@ -374,11 +441,11 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   for (const sub of items) {
     const rel = history.find((h) => h.id === sub.release?.id);
     const inFlight = rel && ['pending', 'starting'].includes(rel.status);
-    rows.push({ key: `p-${sub.id}`, cat: 'pending', toolId: sub.toolId, name: sub.toolName, version: sub.version, department: sub.department, who: `${sub.createdBy}／${sub.owner}`,
+    rows.push({ key: `p-${sub.id}`, cat: 'pending', toolId: sub.toolId, kind: sub.kind, name: sub.toolName, version: sub.version, department: sub.department, who: `${sub.createdBy}／${sub.owner}`,
       status: inFlight ? '發布中' : rel?.status === 'failed' ? '發布失敗' : sub.status === 'approved' ? '已核准，待發布' : '待核准', tone: rel?.status === 'failed' ? 'bad' : 'warn', at: sub.updatedAt });
   }
   for (const c of cat) {
-    const base = { toolId: c.toolId, name: c.name, department: c.department, who: c.owner, at: c.releasedAt };
+    const base = { toolId: c.toolId, kind: c.kind, name: c.name, department: c.department, who: c.owner, at: c.releasedAt };
     if (c.offline) { rows.push({ ...base, key: `o-${c.toolId}`, cat: 'offline', version: c.version, status: '已下架', tone: '' }); continue; }
     if (c.visibility === 'public') rows.push({ ...base, key: `u-${c.toolId}`, cat: 'public', version: c.version, status: c.maintenance ? '維護中' : c.healthy ? '服務正常' : '服務未回應', tone: c.maintenance ? 'warn' : c.healthy ? 'good' : 'bad' });
     if (isTrialing(c)) {
@@ -387,6 +454,9 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
     }
   }
   const counts = Object.fromEntries(CATS.map((x) => [x.id, rows.filter((r) => r.cat === x.id).length])) as Record<Cat, number>;
+  // 最上方公告：需要 AI Team 動手的項目（待核准、已核准待發布、發布失敗、試用通過待公開）
+  const todo = rows.filter((r) => (r.cat === 'pending' && r.status !== '發布中') || (r.cat === 'trial' && r.status === '試用通過，待公開'));
+  const todoLabel = (r: Row) => r.cat === 'trial' ? '試用通過，請確認後公開' : r.status === '待核准' ? '待審核核准' : r.status === '發布失敗' ? '發布失敗，請查看' : '已核准，請發布';
   const current: Cat = tab || (CATS.find((x) => counts[x.id] > 0)?.id ?? 'pending');
   const q = query.trim().toLowerCase();
   const shown = rows.filter((r) => r.cat === current && (dept === 'all' || r.department === dept) && (!q || r.name.toLowerCase().includes(q) || r.toolId.includes(q)));
@@ -399,11 +469,13 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
     const list = history.filter((h) => h.toolId === open);
     const name = c?.name ?? subs[0]?.toolName ?? list[0]?.name ?? open;
     const active = list.find((h) => h.status === 'active');
+    const kind = c?.kind ?? subs[0]?.kind ?? 'zip';
     return <div className="mg-release-backdrop"><section className="mg-panel mg-release-drawer rc-drawer" role="dialog" aria-modal="true" aria-label={`${name} 工具詳情`}>
       <div className="mg-row"><h2>{name}</h2><button onClick={() => setOpen('')} aria-label="關閉工具詳情">×</button></div>
       <dl className="rc-meta">
         <div><dt>部門</dt><dd>{deptName(c?.department ?? subs[0]?.department ?? '')}</dd></div>
         <div><dt>Owner</dt><dd>{c?.owner ?? subs[0]?.owner ?? '—'}</dd></div>
+        <div><dt>上架方式</dt><dd>{kind === 'url' ? 'URL（外部網站，平台只控制入口）' : 'ZIP（平台執行）'}</dd></div>
         <div><dt>公開狀態</dt><dd>{!c ? '尚未發布' : c.offline ? '已下架' : c.visibility === 'public' ? '公開' : '試用中（未公開）'}</dd></div>
         <div><dt>上線版本</dt><dd>{active ? <>{active.version}{active.url && <> · <a href={active.url} target="_blank" rel="noreferrer">開啟 ↗</a></>} <span className={`mg-status ${health[active.id] ? 'good' : 'bad'}`}>{health[active.id] ? '服務正常' : '服務未回應'}</span></> : '—'}</dd></div>
       </dl>
@@ -423,7 +495,9 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
 
       <section className="rc-section"><h3 className="rc-title">設定</h3>
         <ToolNameEditor key={`${open}-${name}`} toolId={open} name={name} notice={notice} />
-        {renderSettings?.(open, name)}
+        {(() => { const desc = c?.description ?? subs[0]?.profile?.description ?? ''; const scen = c?.scenario ?? subs[0]?.profile?.scenario ?? ''; return <ToolProfileEditor key={`${open}-${desc}-${scen}`} toolId={open} description={desc} scenario={scen} notice={notice} onDone={load} />; })()}
+        {role === 'aiteam' && <IconPicker key={`icon-${open}-${JSON.stringify(c?.icon ?? subs[0]?.icon ?? null)}`} toolId={open} icon={c?.icon ?? subs[0]?.icon} notice={notice} onDone={load} />}
+        {renderSettings?.(open, name, kind)}
       </section>
 
       {list.length > 0 && <details className="rc-more"><summary>其他操作：下架、封存</summary>
@@ -442,15 +516,24 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
     const inFlight = rel && ['pending', 'starting'].includes(rel.status);
     const toTrial = !!cat.find((c) => c.toolId === sub.toolId && c.visibility === 'public' && !c.offline);
     return <article key={sub.id} className="onb-trial-card">
-      <div className="mg-row"><div><h3>{sub.version}</h3><p className="onb-submitter">提交：<b>{deptName(sub.department)}</b> · <b>{sub.createdBy}</b> · {new Date(sub.createdAt).toLocaleString('zh-TW')}</p><small className="mg-muted">工具 Owner {sub.owner} · 第 {sub.revision} 版提交 · image <code>{(sub.imageDigest ?? '').slice(0, 19)}</code></small></div>
+      <div className="mg-row"><div><h3>{sub.version}</h3><p className="onb-submitter">提交：<b>{deptName(sub.department)}</b> · <b>{sub.createdBy}</b> · {new Date(sub.createdAt).toLocaleString('zh-TW')}</p><small className="mg-muted">工具 Owner {sub.owner} · 第 {sub.revision} 版提交{sub.kind === 'url' ? <> · <span className="onb-kind-tag">URL</span></> : <> · image <code>{(sub.imageDigest ?? '').slice(0, 19)}</code></>}</small></div>
         <span className={`mg-status ${inFlight ? 'warn' : sub.status === 'approved' ? 'good' : 'warn'}`}>{inFlight ? '發布中' : sub.status === 'approved' ? '已核准（待發布）' : '待核准'}</span></div>
-      <ul className="onb-review-facts">
+      {sub.kind === 'url' && sub.urlConfig ? <ul className="onb-review-facts">
+        <li>網址：<a href={sub.urlConfig.url} target="_blank" rel="noreferrer">{sub.urlConfig.url}</a></li>
+        <li>用途：{sub.profile?.description ?? sub.urlConfig.description}{sub.profile?.scenario && ` · 適用情境：${sub.profile.scenario}`}</li>
+        <li>權限：工具中心依部門開放入口（全公司共用＝所有人）。網站若處理敏感資料，請確認網站端也已限制 AD 群組，避免拿到網址的人直接開啟。</li>
+        <li>使用 AI：{sub.urlConfig.usesAi ? '是（開發者已確認模型與資料流符合公司規定；外部網站不經過平台的 LLM Proxy）' : '否'}</li>
+        <li className={sub.steps.platform_test?.status === 'warning' ? 'onb-error' : undefined}>連線檢查：{sub.steps.platform_test?.status === 'passed' ? '通過' : '未通過（不阻擋）'} · {urlStepDetail('platform_test', sub.steps.platform_test?.summary ?? {})}</li>
+        {sub.urlConfig.guide && <li>使用說明：{sub.urlConfig.guide}</li>}
+        {rel?.status === 'failed' && <li className="onb-error">上次發布失敗：{rel.detail.error}（入口維持原狀，可修正後再發布）</li>}
+      </ul> : <ul className="onb-review-facts">
+        <li>用途：{sub.profile?.description || '（未填）'}{sub.profile?.scenario && ` · 適用情境：${sub.profile.scenario}`}</li>
         <li>建置 {ok('build') ? '通過' : '未通過'} · 平台共通檢查 {ok('platform_test') ? '通過' : '未通過'} · 業務測試 {ok('business_test') ? '通過' : '未通過'}</li>
         <li>程式碼檢查：{(() => { const cr = sub.approvals.filter((a) => a.kind === 'code_review' && !a.revoked_at).at(-1); return cr ? `${cr.actor} 已檢查（${new Date(cr.created_at).toLocaleString('zh-TW')}）${cr.reason ? `：${cr.reason}` : ''}` : '尚未檢查'; })()}</li>
         <li className={(scan.counts?.CRITICAL ?? 0) > 0 ? 'onb-error' : undefined}>漏洞（僅記錄，不阻擋）：CRITICAL {scan.counts?.CRITICAL ?? 0} · HIGH {scan.counts?.HIGH ?? 0}{exceptions.length > 0 && `；已核准例外 ${exceptions.map((e) => e.subject).join('、')}`}</li>
         {confirmNote && <li>測試確認（{confirmNote.actor}，{new Date(confirmNote.created_at).toLocaleString('zh-TW')}）：{confirmNote.reason}</li>}
         {rel?.status === 'failed' && <li className="onb-error">上次發布失敗：{rel.detail.error}（入口維持原狀，可修正後再發布）</li>}
-      </ul>
+      </ul>}
       {rel && rel.detail.steps.length > 0 && <ol className="onb-release-steps">{rel.detail.steps.map((st, i) => <li key={i} className={st.status === 'failed' ? 'onb-error' : undefined}><b>{st.name}</b>：{st.status === 'passed' ? '完成' : st.status === 'failed' ? '失敗' : '略過'}{st.detail && ` · ${st.detail}`}</li>)}</ol>}
       {(errors[sub.id]?.length ?? 0) > 0 && <ul className="onb-error">{errors[sub.id].map((r) => <li key={r}>{r}</li>)}</ul>}
       {sub.status === 'awaiting_approval' && <>
@@ -467,6 +550,10 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   };
 
   return <>
+    {todo.length > 0 && <section className="onb-notice rc-todo" role="status">
+      <div><b>有 {todo.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情。</p></div>
+      <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}</div>
+    </section>}
     <div className="rc-cards" role="tablist" aria-label="發布狀態">
       {CATS.map((x) => <button key={x.id} role="tab" aria-selected={current === x.id} className={`rc-card ${current === x.id ? 'active' : ''} ${x.id === 'pending' && counts.pending > 0 ? 'attention' : ''}`} onClick={() => setTab(x.id)}>
         <small>{x.label}</small><strong>{counts[x.id]}</strong><span>{x.hint}</span></button>)}
@@ -481,7 +568,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
       {shown.length === 0 ? <p className="mg-submission-empty">{rows.length === 0 ? '尚未有經上架服務處理的工具。' : '此狀態下沒有工具。'}</p> :
         <div className="mg-table-scroll"><table className="rc-table"><thead><tr><th>工具</th><th>版本</th><th>部門</th><th>{current === 'pending' ? '提交者／Owner' : 'Owner'}</th><th>狀態</th><th>更新時間</th><th></th></tr></thead><tbody>
           {shown.map((r) => <tr key={r.key} className="rc-row" tabIndex={0} onClick={() => setOpen(r.toolId)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(r.toolId); }}>
-            <td><b>{r.name}</b></td><td>{r.version}</td><td>{deptName(r.department)}</td><td>{r.who}</td>
+            <td><b>{r.name}</b>{r.kind === 'url' && <span className="onb-kind-tag">URL</span>}</td><td>{r.version}</td><td>{deptName(r.department)}</td><td>{r.who}</td>
             <td><span className={`mg-status ${r.tone}`}>{r.status}</span></td><td>{when(r.at)}</td><td className="rc-go">查看 ›</td></tr>)}
         </tbody></table></div>}
     </section>
@@ -611,6 +698,27 @@ export function ToolNameEditor({ toolId, name, notice }: { toolId: string; name:
     <label>工具名稱<input value={value} maxLength={40} onChange={(e) => setValue(e.target.value)} /></label>
     <button className="onb-primary-sm" disabled={busy || !changed || !value.trim()} onClick={() => void save()}>{busy ? '儲存中…' : '儲存名稱'}</button>
     <small className="mg-muted">tool.id <code>{toolId}</code> 不會改變；改名立即生效，不需重新上架。</small>
+    {error && <p className="onb-error">{error}</p>}
+  </div>;
+}
+
+/** 用途說明與適用情境：AI Team 在發布管理修改，立即生效、留稽核紀錄，不需重新審核；適用情境沒填時工具中心不顯示該行。 */
+export function ToolProfileEditor({ toolId, description, scenario, notice, onDone }: { toolId: string; description: string; scenario: string; notice: (m: string) => void; onDone?: () => void }) {
+  const [d, setD] = useState(description);
+  const [sc, setSc] = useState(scenario);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const changed = d.trim() !== description || sc.trim() !== scenario;
+  const save = async () => {
+    setBusy(true); setError('');
+    try { await onboardingApi.setProfile(toolId, { description: d, scenario: sc }); notice('已更新用途說明與適用情境'); window.dispatchEvent(new Event('workhub:catalog-refresh')); onDone?.(); }
+    catch (e) { setError(e instanceof ApiError ? (e.reasons[0] ?? e.message) : '上架服務沒有回應'); }
+    finally { setBusy(false); }
+  };
+  return <div className="onb-rename">
+    <label>用途說明<input value={d} maxLength={80} onChange={(e) => setD(e.target.value)} placeholder="一句話說明這個工具做什麼" /></label>
+    <label>適用情境（選填）<input value={sc} maxLength={80} onChange={(e) => setSc(e.target.value)} placeholder="沒填時工具中心不顯示「適用情境」" /></label>
+    <button className="onb-primary-sm" disabled={busy || !changed || !d.trim()} onClick={() => void save()}>{busy ? '儲存中…' : '儲存說明'}</button>
     {error && <p className="onb-error">{error}</p>}
   </div>;
 }

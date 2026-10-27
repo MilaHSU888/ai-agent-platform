@@ -10,6 +10,7 @@ import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
 import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { endTrial, failTrial, passTrial, publish, unpublish } from './trial.ts';
+import { setToolIcon, submitUrlTool } from './url-tools.ts';
 import { buildKit, type KitTarget } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmCodeReview, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
@@ -91,13 +92,16 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
   const auth = new Auth(cfg, proxyToken);
 
   const submissionView = (id: string) => {
-    const s = store.get<Record<string, unknown>>('SELECT s.*, t.name AS tool_name, t.department, t.owner FROM submissions s JOIN tools t ON t.id=s.tool_id WHERE s.id=?', id);
+    const s = store.get<Record<string, unknown>>('SELECT s.*, t.name AS tool_name, t.department, t.owner, t.icon_json, t.description AS tool_description, t.scenario AS tool_scenario FROM submissions s JOIN tools t ON t.id=s.tool_id WHERE s.id=?', id);
     if (!s) return null;
     const job = store.get<Record<string, unknown>>("SELECT id,status,current_step,error,created_at,started_at,finished_at FROM jobs WHERE submission_id=? ORDER BY created_at DESC LIMIT 1", id);
     const steps = latestSteps(store, id);
     const sub = { id, status: String(s.status), source_hash: String(s.source_hash), image_digest: (s.image_digest as string | null), tool_id: String(s.tool_id), version: String(s.version) };
     return {
       id, toolId: s.tool_id, toolName: s.tool_name, department: s.department, owner: s.owner, version: s.version, revision: s.revision,
+      kind: s.kind === 'url' ? 'url' : 'zip', urlConfig: s.kind === 'url' ? JSON.parse(String(s.manifest_json)) : null,
+      icon: s.icon_json ? JSON.parse(String(s.icon_json)) : null,
+      profile: { description: (s.tool_description as string | null) ?? null, scenario: (s.tool_scenario as string | null) ?? null },
       status: s.status, sourceHash: s.source_hash, imageRef: s.image_ref, imageDigest: s.image_digest, originalFilename: s.original_filename,
       previewUrl: s.preview_port && ['awaiting_confirmation', 'awaiting_approval', 'approved'].includes(String(s.status)) ? `http://127.0.0.1:${s.preview_port}/` : null,
       warnings: JSON.parse(String(s.warnings_json)), createdBy: s.created_by, createdAt: s.created_at, updatedAt: s.updated_at,
@@ -115,6 +119,20 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     } },
     { method: 'GET', re: /^\/api\/onboarding\/session$/, auth: false, fn: ({ res, session }) => {
       send(res, 200, session ? { authenticated: true, actor: session.actor, environment: cfg.environment } : { authenticated: false, environment: cfg.environment });
+    } },
+    // 用途說明與適用情境：AI Team 在發布管理修改，立即生效、留稽核紀錄，不需重新審核
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/profile$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      const description = String(body.description ?? '').trim();
+      const scenario = String(body.scenario ?? '').trim();
+      if (!description) throw new GateError(['請填寫用途說明']);
+      if (description.length > 80 || scenario.length > 80) throw new GateError(['用途說明與適用情境各限 80 字']);
+      if (!store.get('SELECT id FROM tools WHERE id=?', m[1])) throw new GateError(['找不到此工具']);
+      store.tx(() => {
+        store.run('UPDATE tools SET description=?, scenario=?, updated_at=? WHERE id=?', description, scenario || null, now(), m[1]);
+        store.audit(session!.actor, 'tool.profile_changed', m[1], { description, scenario });
+      });
+      send(res, 200, { toolId: m[1], description, scenario: scenario || null });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/name$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
@@ -161,6 +179,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
         originalFilename: url.searchParams.get('filename') ?? 'upload.zip', actor: session!.actor,
         mode: url.searchParams.get('mode') ?? undefined, expectedToolId: url.searchParams.get('expectedToolId') ?? undefined,
         name: url.searchParams.get('name') ?? undefined,
+        description: url.searchParams.get('description') ?? undefined, scenario: url.searchParams.get('scenario') ?? undefined,
       });
       if (!r.ok) {
         store.audit(session!.actor, 'submission.rejected', null, { filename: url.searchParams.get('filename'), issues: r.issues.slice(0, 50) });
@@ -168,6 +187,16 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
         return;
       }
       send(res, 201, { submission: submissionView(r.submissionId), warnings: r.warnings });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/submissions\/url$/, auth: true, fn: async ({ req, res, session }) => {
+      const b = await json(req);
+      const r = submitUrlTool(store, cfg, {
+        mode: b.mode === 'update' ? 'update' : 'new', toolId: b.toolId ? String(b.toolId) : undefined, name: String(b.name ?? ''), department: String(b.department ?? ''), owner: String(b.owner ?? ''),
+        url: String(b.url ?? ''), description: String(b.description ?? ''), scenario: String(b.scenario ?? ''), usesAi: b.usesAi === true, aiConfirmed: b.aiConfirmed === true, guide: String(b.guide ?? ''), actor: session!.actor,
+      });
+      if (!r.ok) { send(res, 422, { error: 'URL 上架資料未通過檢查', issues: r.issues, warnings: [] }); return; }
+      queue.tick();
+      send(res, 201, { submission: submissionView(r.submissionId), warnings: [] });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/submissions\/([\w-]+)$/, auth: true, fn: ({ res }, m) => {
       const v = submissionView(m[1]);
@@ -284,6 +313,12 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const body = await json(req);
       await endTrial(store, rt, m[1], session!.actor, String(body.reason ?? ''));
       send(res, 200, { toolId: m[1] });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/icon$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      const reasons = setToolIcon(store, m[1], session!.actor, Number(body.symbol), String(body.color ?? ''));
+      if (reasons.length) throw new GateError(reasons);
+      send(res, 200, { toolId: m[1], icon: { symbol: Number(body.symbol), color: String(body.color) } });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/archive$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);

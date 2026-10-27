@@ -8,13 +8,13 @@ import { ApiError, onboardingApi, type OpsEvent } from './onboarding-api';
 import { defaultConfig, modelKind, modelsOf, normalizeModel, type DemoConfig, type DemoState, type DemoStatus, type DemoTool } from './demo-management';
 
 type Change = (fn: (s: DemoState) => DemoState) => void;
-type Props = { state: DemoState; tools: DemoTool[]; change: Change; notice: (m: string) => void; releasedIds: Record<string, string>; openRelease: (t: DemoTool) => void };
+type Props = { state: DemoState; tools: DemoTool[]; change: Change; notice: (m: string) => void; releasedIds: Record<string, string>; urlToolIds?: string[]; openRelease: (t: DemoTool) => void };
 
 const STEPS: [string, string][] = [['偵測', '監控與告警'], ['隔離', '切換維護模式'], ['處理', '重啟或回復版本'], ['驗證', '健康檢查'], ['恢復', '重新開放使用']];
 const SERVICES = ['入口網站', '存取代理', 'LLM 閘道', '地端模型'];
 const stamp = () => new Date().toLocaleString('zh-TW');
 
-export function MonitorCenter({ state, tools, change, notice, releasedIds, openRelease }: Props) {
+export function MonitorCenter({ state, tools, change, notice, releasedIds, urlToolIds = [], openRelease }: Props) {
   const managed = tools.filter((t) => !t.id.startsWith('knowledge-'));
   const [selected, setSelected] = useState(managed.find((t) => (state.configs[t.id]?.status ?? '運行中') === '維護中')?.id ?? managed[0]?.id ?? '');
   const [showAll, setShowAll] = useState(false);
@@ -22,6 +22,8 @@ export function MonitorCenter({ state, tools, change, notice, releasedIds, openR
   const cfg: DemoConfig = state.configs[tool.id] ?? defaultConfig(tool);
   const realId = releasedIds[tool.id];
   const real = !!realId;
+  // URL 工具不在平台上執行：只能進入維護／恢復（關閉或開放入口），不能重新啟動或查看日誌
+  const isUrl = urlToolIds.includes(realId);
   const [ops, setOps] = useState<OpsEvent[]>([]);
   const [working, setWorking] = useState('');
   const [maintForm, setMaintForm] = useState(false);
@@ -71,9 +73,9 @@ export function MonitorCenter({ state, tools, change, notice, releasedIds, openR
       ? { key: 'resume', icon: '✓', title: working === 'resume' ? '恢復中…' : '恢復服務', desc: '重新開放入口', tone: 'ok', enabled: !working && cfg.status === '維護中',
           run: () => void realRun('resume', async () => { await onboardingApi.maintenance(realId, false); return `${tool.name} 已恢復服務，入口重新開放`; }) }
       : { key: 'maint', icon: '⚒', title: '進入維護', desc: '關閉入口，容器照跑', enabled: !working, run: () => setMaintForm(true) },
-    { key: 'restart', icon: '↻', title: working === 'restart' ? '重新啟動中…' : '重新啟動', desc: '保留資料，健康檢查通過才完成', enabled: !working && cfg.status !== '已下架',
+    { key: 'restart', icon: '↻', title: working === 'restart' ? '重新啟動中…' : '重新啟動', desc: isUrl ? 'URL 工具不在平台上執行，請聯絡該網站維運人員' : '保留資料，健康檢查通過才完成', enabled: !isUrl && !working && cfg.status !== '已下架',
       run: () => void realRun('restart', async () => { const r = await onboardingApi.restart(realId); return r.ok ? `${tool.name} 已重新啟動（${r.seconds} 秒，健康檢查通過）${cfg.status === '維護中' ? '。目前仍在維護中，確認正常後請按「恢復服務」開放入口' : ''}` : `${tool.name} 重新啟動後健康檢查未通過：${r.error ?? ''}`; }) },
-    { key: 'logs', icon: '≡', title: working === 'logs' ? '讀取中…' : '查看日誌', desc: '容器最近 200 行（金鑰已遮罩）', enabled: !working && cfg.status !== '已下架',
+    { key: 'logs', icon: '≡', title: working === 'logs' ? '讀取中…' : '查看日誌', desc: isUrl ? 'URL 工具沒有平台日誌' : '容器最近 200 行（金鑰已遮罩）', enabled: !isUrl && !working && cfg.status !== '已下架',
       run: () => void realRun('logs', async () => { setLogView({ title: `${tool.name} 日誌`, text: await onboardingApi.toolLogs(realId) }); return `已讀取 ${tool.name} 日誌`; }) },
   ];
   const actions: Action[] = [
