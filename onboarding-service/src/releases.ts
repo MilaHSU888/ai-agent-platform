@@ -7,6 +7,9 @@
  * - 重新上線：把曾經上線過的版本（被取代或被回復掉的）再部署一次，保留目前資料，流程與更新相同（先備份）。
  * - 下架：停止上線中的容器（資料卷保留、埠號保留），入口關閉；重新上架＝把該版本再部署一次（同埠號、同資料）。
  * - 正式資料卷 wh-rel-<tool>-data 與預覽、測試資料卷分開。
+ * - 試用／公開（DEC-032）：新工具發布後是「試用中（未公開）」，只有開發者與 AI Team 看得到；開發者按「試用通過」、
+ *   AI Team 按「公開」後才開放給一般使用者。已公開的工具發布新版時，新版先以試用版並行（wh-trial-<tool>，從空白資料開始，由 Owner 自行上傳測試資料），
+ *   舊版照常服務；公開新版時才走一般更新流程（先備份、健康檢查失敗自動還原）並移除試用版。
  */
 import { join } from 'node:path';
 import type { Config } from './config.ts';
@@ -19,14 +22,24 @@ import { prepareModelAccess } from './relay.ts';
 import type { Ctx, Runtime, ServiceSpec } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
-export type ReleaseStatus = 'pending' | 'starting' | 'active' | 'failed' | 'superseded' | 'rolled_back' | 'offline';
+export type ReleaseStatus = 'pending' | 'starting' | 'active' | 'failed' | 'superseded' | 'rolled_back' | 'offline' | 'trial' | 'trial_ended';
 type Rel = { id: string; tool_id: string; submission_id: string; image_digest: string; status: ReleaseStatus; port: number | null; container_name: string | null; volume: string | null; previous_release_id: string | null; detail_json: string; created_at: string; updated_at: string };
 type Sub = { id: string; tool_id: string; version: string; revision: number; status: string; source_hash: string; image_digest: string | null; manifest_json: string };
 type Step = { name: string; status: 'passed' | 'failed' | 'skipped'; at: string; detail?: string };
-type Detail = { kind: 'release' | 'rollback' | 'redeploy'; steps: Step[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; from?: string | null; error?: string; reason?: string; url?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
+export type Detail = { kind: 'release' | 'rollback' | 'redeploy' | 'trial'; fromTrial?: string; ended?: { at: string; actor: string; reason: string; promotedTo?: string }; steps: Step[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; from?: string | null; error?: string; reason?: string; url?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
 
 export const containerName = (toolId: string) => `wh-rel-${toolId}`;
 export const volumeName = (toolId: string) => `wh-rel-${toolId}-data`;
+export const trialContainerName = (toolId: string) => `wh-trial-${toolId}`;
+export const trialVolumeName = (toolId: string) => `wh-trial-${toolId}-data`;
+
+export type Visibility = 'trial' | 'public';
+export function visibilityOf(store: Store, toolId: string): Visibility {
+  return (store.get<{ visibility: string }>('SELECT visibility FROM tools WHERE id=?', toolId)?.visibility === 'public' ? 'public' : 'trial');
+}
+export function trialRelease(store: Store, toolId: string): Rel | undefined {
+  return store.get<Rel>("SELECT * FROM releases WHERE tool_id=? AND status='trial' ORDER BY created_at DESC LIMIT 1", toolId);
+}
 
 export function activeRelease(store: Store, toolId: string): Rel | undefined {
   return store.get<Rel>("SELECT * FROM releases WHERE tool_id=? AND status='active' ORDER BY created_at DESC LIMIT 1", toolId);
@@ -46,16 +59,20 @@ export function requestRelease(store: Store, cfg: Config, subId: string, actor: 
   if (busy(store, sub.tool_id)) throw new GateError(['此工具已有發布或回復工作進行中']);
   if (cfg.environment !== 'local') throw new GateError(['正式環境發布流程尚未開放（本機試點）']);
   const prev = activeRelease(store, sub.tool_id);
+  // 已公開且有上線版本：新版先並行試用，不直接取代一般使用者正在用的版本
+  const asTrial = !!prev && visibilityOf(store, sub.tool_id) === 'public';
+  if (asTrial && trialRelease(store, sub.tool_id)) throw new GateError(['此工具已有試用中的新版本，請先公開或結束試用']);
+  const kind: Detail['kind'] = asTrial ? 'trial' : 'release';
   const relId = newId('rel');
   const jobId = newId('job');
   const t = now();
   store.tx(() => {
     store.run('INSERT INTO releases(id,tool_id,submission_id,image_digest,status,previous_release_id,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
-      relId, sub.tool_id, subId, sub.image_digest, 'pending', prev?.id ?? null, JSON.stringify({ kind: 'release', steps: [], actor } satisfies Detail), t, t);
-    store.run("INSERT INTO jobs(id,submission_id,kind,status,created_at,release_id) VALUES (?,?,'release','queued',?,?)", jobId, subId, t, relId);
-    store.audit(actor, 'release.requested', relId, { submission: subId, version: sub.version, imageDigest: sub.image_digest, previous: prev?.id ?? null });
+      relId, sub.tool_id, subId, sub.image_digest, 'pending', prev?.id ?? null, JSON.stringify({ kind, steps: [], actor } satisfies Detail), t, t);
+    store.run('INSERT INTO jobs(id,submission_id,kind,status,created_at,release_id) VALUES (?,?,?,?,?,?)', jobId, subId, kind, 'queued', t, relId);
+    store.audit(actor, asTrial ? 'release.trial_requested' : 'release.requested', relId, { submission: subId, version: sub.version, imageDigest: sub.image_digest, previous: prev?.id ?? null });
   });
-  return { releaseId: relId, jobId };
+  return { releaseId: relId, jobId, trial: asTrial };
 }
 
 /** 回復到前一個曾經上線的版本。dataMode 必須明確選擇。 */
@@ -126,14 +143,14 @@ export async function takeOffline(store: Store, cfg: Config, rt: Runtime, toolId
   return { releaseId: current.id };
 }
 
-async function specFor(cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx): Promise<ServiceSpec> {
+async function specFor(cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx, trial = false): Promise<ServiceSpec> {
   const m = JSON.parse(sub.manifest_json) as Manifest;
   const mount = m.run.persistentData[0]?.path;
   const access = await prepareModelAccess(cfg, rt, secrets, m, sub.tool_id, ctx);
   return {
-    image: sub.image_digest!, name: containerName(sub.tool_id),
-    labels: { 'workhub.tool': sub.tool_id, 'workhub.submission': sub.id, 'workhub.kind': 'release', 'workhub.version': sub.version },
-    hostPort: port, containerPort: m.run.port, volume: mount ? volumeName(sub.tool_id) : undefined, mountPath: mount,
+    image: sub.image_digest!, name: trial ? trialContainerName(sub.tool_id) : containerName(sub.tool_id),
+    labels: { 'workhub.tool': sub.tool_id, 'workhub.submission': sub.id, 'workhub.kind': trial ? 'trial' : 'release', 'workhub.version': sub.version },
+    hostPort: port, containerPort: m.run.port, volume: mount ? (trial ? trialVolumeName(sub.tool_id) : volumeName(sub.tool_id)) : undefined, mountPath: mount,
     env: access.env, memoryBytes: memoryToBytes(m.run.resources.memory) ?? 1024 ** 3, cpus: m.run.resources.cpu,
     command: m.run.command, network: access.network, restart: true,
   };
@@ -148,6 +165,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
   const job = store.get<{ release_id: string; kind: string }>('SELECT release_id, kind FROM jobs WHERE id=?', jobId)!;
   const rel = store.get<Rel>('SELECT * FROM releases WHERE id=?', job.release_id)!;
   const detail = JSON.parse(rel.detail_json) as Detail;
+  if (detail.kind === 'trial') return runTrialJob(store, cfg, rt, secrets, jobId, rel, detail, signal);
   const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', rel.submission_id)!;
   const m = JSON.parse(sub.manifest_json) as Manifest;
   const mount = m.run.persistentData[0]?.path;
@@ -233,29 +251,123 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
       store.run("UPDATE releases SET status='active', port=?, container_name=?, volume=?, detail_json=?, updated_at=? WHERE id=?",
         port, containerName(sub.tool_id), mount ? volumeName(sub.tool_id) : null, JSON.stringify(detail), t, rel.id);
       store.setSubmissionStatus(sub.id, 'released');
+      // 新版本、且原本沒有上線版本（首次發布，或工具下架中發布新版）：先試用，不公開
+      if (detail.kind === 'release' && !detail.fromTrial && !current) store.run("UPDATE tools SET visibility='trial', updated_at=? WHERE id=?", t, sub.tool_id);
+      if (detail.fromTrial) {
+        const tr = store.get<Rel>('SELECT * FROM releases WHERE id=?', detail.fromTrial);
+        if (tr) {
+          const td = JSON.parse(tr.detail_json) as Detail;
+          td.ended = { at: t, actor: detail.actor ?? 'system', reason: '已公開', promotedTo: rel.id };
+          store.run("UPDATE releases SET status='trial_ended', detail_json=?, updated_at=? WHERE id=?", JSON.stringify(td), t, tr.id);
+        }
+      }
     } else {
       store.run("UPDATE releases SET status='failed', detail_json=?, updated_at=? WHERE id=?", JSON.stringify(detail), t, rel.id);
     }
     store.run('UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=?', ok ? 'succeeded' : 'failed', t, ok ? null : error, jobId);
-    store.audit(detail.actor ?? 'system', ok ? `${detail.kind}.succeeded` : `${detail.kind}.failed`, rel.id, { tool: sub.tool_id, version: sub.version, error: ok ? undefined : error, backup });
+    store.audit(detail.actor ?? 'system', ok ? `${detail.fromTrial ? 'publish' : detail.kind}.succeeded` : `${detail.fromTrial ? 'publish' : detail.kind}.failed`, rel.id, { tool: sub.tool_id, version: sub.version, error: ok ? undefined : error, backup });
+  });
+  // 新版已公開：移除試用版容器與試用資料（失敗時保留試用版，可再按一次公開）
+  if (ok && detail.fromTrial) {
+    await rt.remove(trialContainerName(sub.tool_id), ctx);
+    if (mount) await rt.removeVolume(trialVolumeName(sub.tool_id), ctx);
+  }
+}
+
+/** 已公開工具的新版：並行部署試用版（另一個容器、另一個埠、空白資料），舊版照常服務；正式資料不複製給試用版。 */
+async function runTrialJob(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, jobId: string, rel: Rel, detail: Detail, signal: AbortSignal) {
+  const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', rel.submission_id)!;
+  const m = JSON.parse(sub.manifest_json) as Manifest;
+  const mount = m.run.persistentData[0]?.path;
+  const ctx: Ctx = { logFile: join(cfg.dataDir, 'evidence', sub.id, jobId, 'release.log'), signal, mask: makeMasker(secrets.allSecretValues()) };
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(join(cfg.dataDir, 'evidence', sub.id, jobId), { recursive: true });
+  const step = (name: string, status: Step['status'], d?: string) => {
+    detail.steps.push({ name, status, at: now(), detail: d });
+    store.run('UPDATE releases SET detail_json=?, updated_at=? WHERE id=?', JSON.stringify(detail), now(), rel.id);
+  };
+  store.run("UPDATE jobs SET status='running', started_at=? WHERE id=?", now(), jobId);
+  store.run("UPDATE releases SET status='starting', updated_at=? WHERE id=?", now(), rel.id);
+  let port: number | null = null;
+  let ok = false;
+  let error = '';
+  try {
+    port = await allocatePort(store, cfg.ports.releaseStart, cfg.ports.releaseEnd, 'port');
+    await rt.remove(trialContainerName(sub.tool_id), ctx);
+    if (mount) {
+      // 試用版從空白資料開始（2026/10/27 Mila 決定）：不複製正式資料，由 Owner 自行上傳測試資料；公開時捨棄
+      await rt.removeVolume(trialVolumeName(sub.tool_id), ctx);
+      step('試用資料', 'passed', '試用版從空白資料開始，請 Owner 自行上傳測試資料；正式資料不受影響');
+    } else step('試用資料', 'skipped', '此工具沒有持久資料目錄');
+    const st = await rt.start(await specFor(cfg, rt, secrets, sub, port, ctx, true), ctx);
+    if (st.code !== 0) { step('啟動試用版', 'failed', st.stderr.slice(0, 300)); throw new Error('試用版容器啟動失敗'); }
+    step('啟動試用版', 'passed', `image ${sub.image_digest!.slice(0, 19)}… · 127.0.0.1:${port}`);
+    const h = await healthy(rt, cfg, sub, port, signal);
+    if (!h.ok) { step('健康檢查', 'failed', `${m.run.healthCheck.path} 回應 ${h.status ?? '無'}`); throw new Error('健康檢查未通過'); }
+    step('健康檢查', 'passed', `${m.run.healthCheck.path} → ${h.status}（${h.seconds} 秒）`);
+    ok = true;
+  } catch (e) {
+    error = (e as Error).message;
+    await rt.logs(trialContainerName(sub.tool_id), ctx);
+    await rt.remove(trialContainerName(sub.tool_id), ctx);
+    if (mount) await rt.removeVolume(trialVolumeName(sub.tool_id), ctx);
+    step('正式版本', 'skipped', '試用版部署失敗；一般使用者仍使用原本的版本');
+  }
+  const t = now();
+  detail.url = ok ? `http://127.0.0.1:${port}/` : undefined;
+  detail.error = ok ? undefined : error;
+  store.tx(() => {
+    if (ok) {
+      store.run("UPDATE releases SET status='trial', port=?, container_name=?, volume=?, detail_json=?, updated_at=? WHERE id=?",
+        port, trialContainerName(sub.tool_id), mount ? trialVolumeName(sub.tool_id) : null, JSON.stringify(detail), t, rel.id);
+      store.setSubmissionStatus(sub.id, 'trial');
+    } else store.run("UPDATE releases SET status='failed', detail_json=?, updated_at=? WHERE id=?", JSON.stringify(detail), t, rel.id);
+    store.run('UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=?', ok ? 'succeeded' : 'failed', t, ok ? null : error, jobId);
+    store.audit(detail.actor ?? 'system', ok ? 'trial.succeeded' : 'trial.failed', rel.id, { tool: sub.tool_id, version: sub.version, error: ok ? undefined : error });
   });
 }
 
-/** WorkHub 入口：只列出健康檢查通過、上線中的版本；並即時探測服務是否回應。 */
+export type TrialResult = { result: 'passed' | 'failed'; note: string; actor: string; at: string };
+/** 這一版（同一份原始碼與 image）最近一次的試用結果：開發者按「試用通過」或「測試未通過」；沒有結果回傳 null */
+export function trialResult(store: Store, subId: string): TrialResult | null {
+  const r = store.get<{ kind: string; reason: string; actor: string; created_at: string }>(`SELECT a.kind, a.reason, a.actor, a.created_at FROM approvals a JOIN submissions s ON s.id=a.submission_id
+    WHERE a.submission_id=? AND a.kind IN ('trial_passed','trial_failed') AND a.revoked_at IS NULL AND a.source_hash=s.source_hash AND a.image_digest IS s.image_digest
+    ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1`, subId);
+  return r ? { result: r.kind === 'trial_passed' ? 'passed' : 'failed', note: r.reason, actor: r.actor, at: r.created_at } : null;
+}
+/** 這一版最近一次的試用結果是否為「試用通過」 */
+export function trialPassed(store: Store, subId: string): boolean {
+  return trialResult(store, subId)?.result === 'passed';
+}
+
+/** WorkHub 入口：列出上線中（或下架中）的版本，附公開狀態與試用版；並即時探測服務是否回應。
+ *  依角色過濾在網站端進行（本機試點無登入）；正式環境須由後端依登入身分過濾（P1-AUTH-006）。 */
 export async function catalog(store: Store, rt: Runtime) {
-  const rows = store.all<Rel & { name: string; department: string; owner: string; version: string; manifest_json: string; maintenance_json: string | null }>(
-    `SELECT r.*, t.name, t.department, t.owner, t.maintenance_json, s.version, s.manifest_json FROM releases r
+  const rows = store.all<Rel & { name: string; department: string; owner: string; version: string; manifest_json: string; maintenance_json: string | null; visibility: string }>(
+    `SELECT r.*, t.name, t.department, t.owner, t.maintenance_json, t.visibility, s.version, s.manifest_json FROM releases r
      JOIN tools t ON t.id=r.tool_id JOIN submissions s ON s.id=r.submission_id
-     WHERE r.status='active' OR (r.status='offline' AND NOT EXISTS (SELECT 1 FROM releases a WHERE a.tool_id=r.tool_id AND a.status='active'))`);
+     WHERE t.archived_json IS NULL AND (r.status='active' OR (r.status='offline' AND NOT EXISTS (SELECT 1 FROM releases a WHERE a.tool_id=r.tool_id AND a.status='active')
+       AND r.id=(SELECT o.id FROM releases o WHERE o.tool_id=r.tool_id AND o.status='offline' ORDER BY o.updated_at DESC LIMIT 1)))`);
   return Promise.all(rows.map(async (r) => {
     const m = JSON.parse(r.manifest_json) as Manifest;
     const offline = r.status === 'offline';
     const status = r.port && !offline ? await rt.probe(`http://127.0.0.1:${r.port}${m.run.healthCheck.path}`) : null;
+    const tr = trialRelease(store, r.tool_id);
+    const trSub = tr ? store.get<{ version: string; manifest_json: string }>('SELECT version, manifest_json FROM submissions WHERE id=?', tr.submission_id) : undefined;
+    const trStatus = tr?.port && trSub ? await rt.probe(`http://127.0.0.1:${tr.port}${(JSON.parse(trSub.manifest_json) as Manifest).run.healthCheck.path}`) : null;
+    const visibility: Visibility = r.visibility === 'public' ? 'public' : 'trial';
     return {
       toolId: r.tool_id, name: r.name, department: r.department, owner: r.owner, version: r.version, releaseId: r.id,
       url: r.port && !offline ? `http://127.0.0.1:${r.port}/` : null, healthy: !offline && status === m.run.healthCheck.expectStatus, offline,
       maintenance: r.maintenance_json ? JSON.parse(r.maintenance_json) as { at: string; actor: string; reason: string } : null,
       usesModel: m.model.uses, releasedAt: r.updated_at,
+      visibility,
+      // 試用中的工具：上線版本本身就是試用版，記錄是否已按「試用通過」
+      trialPassed: visibility === 'trial' && !offline ? trialPassed(store, r.submission_id) : undefined,
+      trialResult: visibility === 'trial' && !offline ? trialResult(store, r.submission_id) : null,
+      // 已公開工具的新版試用：與正式版本並行
+      trial: tr && trSub ? { releaseId: tr.id, submissionId: tr.submission_id, version: trSub.version, url: tr.port ? `http://127.0.0.1:${tr.port}/` : null,
+        healthy: !!trStatus && trStatus === (JSON.parse(trSub.manifest_json) as Manifest).run.healthCheck.expectStatus, passed: trialPassed(store, tr.submission_id), result: trialResult(store, tr.submission_id), since: tr.updated_at } : null,
     };
   }));
 }
@@ -263,18 +375,20 @@ export async function catalog(store: Store, rt: Runtime) {
 export function releaseHistory(store: Store, toolId?: string) {
   return store.all<Rel & { version: string; name: string }>(
     `SELECT r.*, s.version, t.name FROM releases r JOIN submissions s ON s.id=r.submission_id JOIN tools t ON t.id=r.tool_id
-     ${toolId ? 'WHERE r.tool_id=?' : ''} ORDER BY r.created_at DESC LIMIT 100`, ...(toolId ? [toolId] : []))
+     WHERE t.archived_json IS NULL ${toolId ? 'AND r.tool_id=?' : ''} ORDER BY r.created_at DESC LIMIT 100`, ...(toolId ? [toolId] : []))
     .map((r) => ({ id: r.id, toolId: r.tool_id, submissionId: r.submission_id, name: r.name, version: r.version, status: r.status, url: r.port ? `http://127.0.0.1:${r.port}/` : null,
       createdAt: r.created_at, updatedAt: r.updated_at, previousReleaseId: r.previous_release_id, detail: JSON.parse(r.detail_json) as Detail }));
 }
 
 /** 入口點擊與阻擋事件：同一 clientEventId 重送不重複計數。 */
-export function recordEntryEvent(store: Store, actor: string, e: { clientEventId: string; toolId: string; kind: string; reason?: string }) {
+export function recordEntryEvent(store: Store, actor: string, e: { clientEventId: string; toolId: string; kind: string; reason?: string; trial?: boolean }) {
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(e.clientEventId)) throw new GateError(['事件識別碼格式不正確']);
   if (!['click', 'blocked'].includes(e.kind)) throw new GateError(['事件類型只能是 click 或 blocked']);
-  const rel = activeRelease(store, e.toolId);
+  // 試用期間的點擊另外標記，不計入一般使用分析：開啟試用版，或工具本身尚未公開
+  const trial = e.trial === true || visibilityOf(store, e.toolId) === 'trial';
+  const rel = (e.trial ? trialRelease(store, e.toolId) : undefined) ?? activeRelease(store, e.toolId);
   const version = rel ? store.get<{ version: string }>('SELECT version FROM submissions WHERE id=?', rel.submission_id)?.version : null;
-  const r = store.run('INSERT OR IGNORE INTO entry_events(client_event_id,tool_id,kind,reason,release_id,version,actor,at) VALUES (?,?,?,?,?,?,?,?)',
-    e.clientEventId, e.toolId, e.kind, e.reason?.slice(0, 200) ?? null, rel?.id ?? null, version ?? null, actor, now());
+  const r = store.run('INSERT OR IGNORE INTO entry_events(client_event_id,tool_id,kind,reason,release_id,version,actor,at,trial) VALUES (?,?,?,?,?,?,?,?,?)',
+    e.clientEventId, e.toolId, e.kind, e.reason?.slice(0, 200) ?? null, rel?.id ?? null, version ?? null, actor, now(), trial ? 1 : 0);
   return { recorded: Number(r.changes) > 0 };
 }

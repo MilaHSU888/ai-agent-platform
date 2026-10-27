@@ -1,6 +1,8 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, onboardingApi, type Issue, type ReleaseRecord, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ApiError, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { ArchiveControl, isTrialing, TrialCard, trialResultOf, VisibilityControl } from './trial-panel';
+import type { Role } from './role';
 
 const STEP_LABELS: [string, string][] = [
   ['validate', '提交驗證'], ['build', '建置 image'], ['scan', '漏洞檢查'], ['code_review', '程式碼檢查'],
@@ -12,12 +14,12 @@ const STEP_STATUS: Record<string, string> = {
 };
 const SUB_STATUS: Record<string, string> = {
   queued: '排隊中', running: '建置與測試中', failed: '未通過', cancelled: '已取消', interrupted: '已中斷（可重試）',
-  awaiting_confirmation: '待使用者確認測試', awaiting_approval: '待發布核准', approved: '已核准（待發布）', released: '已發布', superseded: '已被新版本取代', withdrawn: '已取消提交',
+  awaiting_confirmation: '待使用者確認測試', awaiting_approval: '待發布核准', approved: '已核准（待發布）', trial: '試用中（未公開）', released: '已發布', superseded: '已被新版本取代', withdrawn: '已取消提交',
 };
 const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
 const ACTIVE = ['queued', 'running'];
 
-type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void };
+type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void; role?: Role; developer?: string };
 type Conn = 'checking' | 'offline' | 'ready';
 
 function IssueTable({ title, issues }: { title: string; issues: Issue[] }) {
@@ -56,7 +58,7 @@ function downloadVulnCsv(tool: string, items: VulnItem[]) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-export function OnboardingPanel({ departments, notice }: Props) {
+export function OnboardingPanel({ departments, notice, role = 'aiteam', developer = '' }: Props) {
   const [conn, setConn] = useState<Conn>('checking');
   const [session, setSession] = useState<Session>({ authenticated: false });
   const [items, setItems] = useState<Submission[]>([]);
@@ -86,7 +88,9 @@ export function OnboardingPanel({ departments, notice }: Props) {
   const [withdrawReason, setWithdrawReason] = useState('');
   const [health, setHealth] = useState<{ docker: boolean; trivy: boolean } | null>(null);
 
-  const selected = useMemo(() => items.find((s) => s.id === selectedId) ?? items[0], [items, selectedId]);
+  // 我的提交：開發者只看到自己當 Owner 的工具的提交；AI Team 看到全部（本機無登入，以示範身分過濾）
+  const visible = useMemo(() => (role === 'aiteam' ? items : items.filter((s) => s.owner === developer)), [items, role, developer]);
+  const selected = useMemo(() => visible.find((s) => s.id === selectedId) ?? visible[0], [visible, selectedId]);
 
   const fail = (e: unknown) => {
     if (e instanceof ApiError) {
@@ -118,7 +122,7 @@ export function OnboardingPanel({ departments, notice }: Props) {
   }, []);
 
   // 每個工具只列最新一筆提交（items 由新到舊）
-  const myTools = items.filter((x, i) => items.findIndex((y) => y.toolId === x.toolId) === i);
+  const myTools = visible.filter((x, i) => visible.findIndex((y) => y.toolId === x.toolId) === i);
   const openSubmission = (tool: Submission | null) => {
     setSubmissionForm({ tool }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
     setOwner(tool?.owner ?? '');
@@ -185,8 +189,8 @@ export function OnboardingPanel({ departments, notice }: Props) {
     </section>}
 
     <div className="onb-grid">
-      <section className="mg-panel"><div className="mg-row"><h2>我的提交</h2><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
-        {items.length === 0 ? <p className="mg-submission-empty">尚無提交紀錄，請從「新增工具」上傳第一個 ZIP。</p> : items.map((s) =>
+      <section className="mg-panel"><div className="mg-row"><div><h2>{role === 'aiteam' ? '全部提交' : '我的提交'}</h2><small className="mg-muted">{role === 'aiteam' ? 'AI Team 看得到所有開發者的提交' : `${developer || '（未選擇開發者）'} 當 Owner 的工具`}</small></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
+        {visible.length === 0 ? <p className="mg-submission-empty">尚無提交紀錄，請從「新增工具」上傳第一個 ZIP。</p> : visible.map((s) =>
           <button key={s.id} className={`mg-submission ${selected?.id === s.id ? 'current' : ''}`} onClick={() => { setSelectedId(s.id); setLog(null); setReasons([]); setNote(''); }}>
             <span><b>{s.toolName}</b><small>{s.version} · 第 {s.revision} 版 · {new Date(s.createdAt).toLocaleString('zh-TW')}</small></span>
             <span className={`mg-status ${tone(s.status)}`}>{SUB_STATUS[s.status] ?? s.status}</span>
@@ -295,35 +299,56 @@ export function OnboardingPanel({ departments, notice }: Props) {
 }
 
 /** 發布管理：審核發佈申請 → 發布同一份已核准 image → 版本歷程與回復。 */
-const REL_STATUS: Record<string, string> = { pending: '排隊中', starting: '發布中', active: '上線中', failed: '發布失敗', superseded: '已由新版本取代', rolled_back: '已回復至前版', offline: '已下架' };
-const relTone = (s: string) => (s === 'active' ? 'good' : s === 'failed' ? 'bad' : ['pending', 'starting'].includes(s) ? 'warn' : '');
+const REL_STATUS: Record<string, string> = { pending: '排隊中', starting: '發布中', active: '上線中', failed: '發布失敗', superseded: '已由新版本取代', rolled_back: '已回復至前版', offline: '已下架', trial: '試用中（未公開）', trial_ended: '試用結束' };
+const relTone = (s: string) => (s === 'active' ? 'good' : s === 'failed' ? 'bad' : ['pending', 'starting', 'trial'].includes(s) ? 'warn' : '');
+const relKind = (h: ReleaseRecord) => h.detail.kind === 'trial' ? '新版試用部署' : h.detail.fromTrial ? '公開新版' : h.detail.kind === 'rollback' ? `回復（${h.detail.dataMode === 'restore' ? '還原備份' : '保留資料'}）` : h.detail.kind === 'redeploy' ? '重新上線（保留資料）' : '發布';
 
-type Snapshot = { state: 'offline' | 'ready'; items: Submission[]; history: ReleaseRecord[]; health: Record<string, boolean> };
+type Snapshot = { state: 'offline' | 'ready'; items: Submission[]; history: ReleaseRecord[]; health: Record<string, boolean>; catalog: CatalogTool[] };
 const fetchAll = async (): Promise<Snapshot> => {
   try {
     const s = await onboardingApi.session();
-    if (!s.authenticated) return { state: 'offline', items: [], history: [], health: {} };
+    if (!s.authenticated) return { state: 'offline', items: [], history: [], health: {}, catalog: [] };
     const [all, history, cat] = await Promise.all([onboardingApi.list(), onboardingApi.releases(), onboardingApi.catalog()]);
-    return { state: 'ready', items: all.filter((x) => ['awaiting_approval', 'approved'].includes(x.status)), history, health: Object.fromEntries(cat.map((c) => [c.releaseId, c.healthy])) };
-  } catch { return { state: 'offline', items: [], history: [], health: {} }; }
+    return { state: 'ready', items: all.filter((x) => ['awaiting_approval', 'approved'].includes(x.status)), history, health: Object.fromEntries(cat.map((c) => [c.releaseId, c.healthy])), catalog: cat };
+  } catch { return { state: 'offline', items: [], history: [], health: {}, catalog: [] }; }
 };
 
-export function ReleaseReview({ notice }: { notice: (m: string) => void }) {
+type Cat = 'pending' | 'trial' | 'public' | 'offline';
+const CATS: { id: Cat; label: string; hint: string }[] = [
+  { id: 'pending', label: '待審核', hint: '開發者已確認測試，等待核准或發布' },
+  { id: 'trial', label: '試用中', hint: '未公開，只有 Owner 與 AI Team 看得到' },
+  { id: 'public', label: '已公開', hint: '一般使用者依部門使用中' },
+  { id: 'offline', label: '已下架', hint: '服務停止，資料保留' },
+];
+type Row = { key: string; cat: Cat; toolId: string; name: string; version: string; department: string; who: string; status: string; tone: string; at: string };
+
+/**
+ * 發布管理（AI Team）：上方狀態卡片兼分頁（待審核／試用中／已公開／已下架），下方一個工具一列；點選後右側滑出工具詳情，
+ * 詳情只突出「現在該做的那一步」，版本紀錄與少用的操作（下架、封存）放在下方。只列出經上架服務處理的真實工具。
+ */
+export function ReleaseCenter({ notice, departments = [], role, renderSettings }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string) => ReactNode }) {
   const [state, setState] = useState<'checking' | 'offline' | 'ready'>('checking');
   const [items, setItems] = useState<Submission[]>([]);
   const [history, setHistory] = useState<ReleaseRecord[]>([]);
   const [health, setHealth] = useState<Record<string, boolean>>({});
+  const [cat, setCat] = useState<CatalogTool[]>([]);
+  const [tab, setTab] = useState<Cat | ''>('');
+  const [dept, setDept] = useState('all');
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState<string>('');
   const [reason, setReason] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [log, setLog] = useState<{ title: string; text: string } | null>(null);
 
-  const apply = useCallback((r: Snapshot) => { setItems(r.items); setHistory(r.history); setHealth(r.health); setState(r.state); }, []);
-  const load = async () => apply(await fetchAll());
+  const apply = useCallback((r: Snapshot) => { setItems(r.items); setHistory(r.history); setHealth(r.health); setCat(r.catalog); setState(r.state); }, []);
+  const load = useCallback(async () => apply(await fetchAll()), [apply]);
   useEffect(() => {
     let alive = true;
     void fetchAll().then((r) => { if (alive) apply(r); });
-    return () => { alive = false; };
+    const refresh = () => { void fetchAll().then((r) => { if (alive) apply(r); }); };
+    window.addEventListener('workhub:catalog-refresh', refresh);
+    return () => { alive = false; window.removeEventListener('workhub:catalog-refresh', refresh); };
   }, [apply]);
   const running = history.some((h) => ['pending', 'starting'].includes(h.status));
   useEffect(() => {
@@ -334,68 +359,133 @@ export function ReleaseReview({ notice }: { notice: (m: string) => void }) {
 
   const guard = async (key: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy(true); setErrors({ ...errors, [key]: [] });
-    try { await fn(); notice(ok); await load(); }
+    try { await fn(); notice(ok); await load(); window.dispatchEvent(new Event('workhub:catalog-refresh')); }
     catch (e) { if (e instanceof ApiError) { setErrors({ ...errors, [key]: e.reasons.length ? e.reasons : [e.message] }); notice(e.message); } else setState('offline'); }
     finally { setBusy(false); }
   };
+  const deptName = (id: string) => departments.find((d) => d.id === id)?.name ?? id;
+  const when = (t: string) => new Date(t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   if (state === 'checking') return null;
-  if (state === 'offline') return <section className="mg-panel"><h2>待審核的發佈申請</h2><p className="mg-muted">上架服務未啟動，或網站不是從 http://localhost:3002 開啟，無法讀取發佈申請。</p></section>;
+  if (state === 'offline') return <section className="mg-panel"><h2>發布管理</h2><p className="mg-muted">上架服務未啟動，或網站不是從 http://localhost:3002 開啟，無法讀取工具與申請。</p></section>;
 
-  const tools = [...new Set(history.map((h) => h.toolId))];
+  // 一個工具可能同時在兩個狀態（例如已公開＋有新版待審核或試用中）
+  const rows: Row[] = [];
+  for (const sub of items) {
+    const rel = history.find((h) => h.id === sub.release?.id);
+    const inFlight = rel && ['pending', 'starting'].includes(rel.status);
+    rows.push({ key: `p-${sub.id}`, cat: 'pending', toolId: sub.toolId, name: sub.toolName, version: sub.version, department: sub.department, who: `${sub.createdBy}／${sub.owner}`,
+      status: inFlight ? '發布中' : rel?.status === 'failed' ? '發布失敗' : sub.status === 'approved' ? '已核准，待發布' : '待核准', tone: rel?.status === 'failed' ? 'bad' : 'warn', at: sub.updatedAt });
+  }
+  for (const c of cat) {
+    const base = { toolId: c.toolId, name: c.name, department: c.department, who: c.owner, at: c.releasedAt };
+    if (c.offline) { rows.push({ ...base, key: `o-${c.toolId}`, cat: 'offline', version: c.version, status: '已下架', tone: '' }); continue; }
+    if (c.visibility === 'public') rows.push({ ...base, key: `u-${c.toolId}`, cat: 'public', version: c.version, status: c.maintenance ? '維護中' : c.healthy ? '服務正常' : '服務未回應', tone: c.maintenance ? 'warn' : c.healthy ? 'good' : 'bad' });
+    if (isTrialing(c)) {
+      const res = trialResultOf(c)?.result;
+      rows.push({ ...base, key: `t-${c.toolId}`, cat: 'trial', version: c.trial ? c.trial.version : c.version, at: c.trial?.since ?? c.releasedAt, status: res === 'passed' ? '試用通過，待公開' : res === 'failed' ? '測試未通過' : '待開發者試用', tone: res === 'passed' ? 'good' : res === 'failed' ? 'bad' : 'warn' });
+    }
+  }
+  const counts = Object.fromEntries(CATS.map((x) => [x.id, rows.filter((r) => r.cat === x.id).length])) as Record<Cat, number>;
+  const current: Cat = tab || (CATS.find((x) => counts[x.id] > 0)?.id ?? 'pending');
+  const q = query.trim().toLowerCase();
+  const shown = rows.filter((r) => r.cat === current && (dept === 'all' || r.department === dept) && (!q || r.name.toLowerCase().includes(q) || r.toolId.includes(q)));
+  const usedDepts = [...new Set(rows.map((r) => r.department))];
+
+  // ── 工具詳情 ──
+  const detail = () => {
+    const c = cat.find((x) => x.toolId === open);
+    const subs = items.filter((x) => x.toolId === open);
+    const list = history.filter((h) => h.toolId === open);
+    const name = c?.name ?? subs[0]?.toolName ?? list[0]?.name ?? open;
+    const active = list.find((h) => h.status === 'active');
+    return <div className="mg-release-backdrop"><section className="mg-panel mg-release-drawer rc-drawer" role="dialog" aria-modal="true" aria-label={`${name} 工具詳情`}>
+      <div className="mg-row"><h2>{name}</h2><button onClick={() => setOpen('')} aria-label="關閉工具詳情">×</button></div>
+      <dl className="rc-meta">
+        <div><dt>部門</dt><dd>{deptName(c?.department ?? subs[0]?.department ?? '')}</dd></div>
+        <div><dt>Owner</dt><dd>{c?.owner ?? subs[0]?.owner ?? '—'}</dd></div>
+        <div><dt>公開狀態</dt><dd>{!c ? '尚未發布' : c.offline ? '已下架' : c.visibility === 'public' ? '公開' : '試用中（未公開）'}</dd></div>
+        <div><dt>上線版本</dt><dd>{active ? <>{active.version}{active.url && <> · <a href={active.url} target="_blank" rel="noreferrer">開啟 ↗</a></>} <span className={`mg-status ${health[active.id] ? 'good' : 'bad'}`}>{health[active.id] ? '服務正常' : '服務未回應'}</span></> : '—'}</dd></div>
+      </dl>
+
+      {subs.length > 0 && <section className="rc-section"><h3 className="rc-title">待審核的申請</h3>{subs.map((sub) => approval(sub))}</section>}
+      {c && isTrialing(c) && <section className="rc-section"><h3 className="rc-title">試用中</h3><TrialCard bare tool={c} role={role} notice={notice} onDone={load} /></section>}
+      {c && c.visibility === 'public' && !c.offline && <section className="rc-section"><VisibilityControl tool={c} notice={notice} onDone={load} /></section>}
+
+      {list.length > 0 && <section className="rc-section"><h3 className="rc-title">版本紀錄</h3>
+        <div className="mg-table-scroll"><table><thead><tr><th>時間</th><th>動作</th><th>版本</th><th>狀態</th><th>說明</th><th></th></tr></thead><tbody>
+          {list.map((h) => <tr key={h.id}><td>{when(h.createdAt)}</td><td>{relKind(h)}</td><td>{h.version}</td>
+            <td><span className={`mg-status ${relTone(h.status)}`}>{REL_STATUS[h.status] ?? h.status}</span></td><td className="onb-wrap">{h.detail.error ?? (h.detail.offline ? `下架：${h.detail.offline.reason}` : h.detail.ended ? (h.detail.ended.promotedTo ? '已公開' : `結束試用：${h.detail.ended.reason}`) : h.detail.reason) ?? ''}</td>
+            <td className="onb-row-actions"><button className="onb-link" onClick={() => void onboardingApi.releaseLog(h.id).then((text) => setLog({ title: `${h.name} ${h.version} 日誌`, text }))}>日誌</button></td></tr>)}
+        </tbody></table></div>
+        <VersionSwitch list={list} disabled={busy || running} notice={notice} onDone={load} />
+      </section>}
+
+      <section className="rc-section"><h3 className="rc-title">設定</h3>
+        <ToolNameEditor key={`${open}-${name}`} toolId={open} name={name} notice={notice} />
+        {renderSettings?.(open, name)}
+      </section>
+
+      {list.length > 0 && <details className="rc-more"><summary>其他操作：下架、封存</summary>
+        <OfflineControl list={list} disabled={busy || running} notice={notice} onDone={load} />
+        <ArchiveControl toolId={open} name={name} notice={notice} onDone={async () => { setOpen(''); await load(); }} />
+      </details>}
+    </section></div>;
+  };
+
+  const approval = (sub: Submission) => {
+    const confirmNote = sub.approvals.filter((a) => a.kind === 'test_confirmation' && !a.revoked_at).at(-1);
+    const exceptions = sub.approvals.filter((a) => a.kind === 'vuln_exception' && !a.revoked_at);
+    const scan = (sub.steps.scan?.summary ?? {}) as { counts?: Record<string, number> };
+    const ok = (k: string) => sub.steps[k]?.status === 'passed';
+    const rel = history.find((h) => h.id === sub.release?.id);
+    const inFlight = rel && ['pending', 'starting'].includes(rel.status);
+    const toTrial = !!cat.find((c) => c.toolId === sub.toolId && c.visibility === 'public' && !c.offline);
+    return <article key={sub.id} className="onb-trial-card">
+      <div className="mg-row"><div><h3>{sub.version}</h3><p className="onb-submitter">提交：<b>{deptName(sub.department)}</b> · <b>{sub.createdBy}</b> · {new Date(sub.createdAt).toLocaleString('zh-TW')}</p><small className="mg-muted">工具 Owner {sub.owner} · 第 {sub.revision} 版提交 · image <code>{(sub.imageDigest ?? '').slice(0, 19)}</code></small></div>
+        <span className={`mg-status ${inFlight ? 'warn' : sub.status === 'approved' ? 'good' : 'warn'}`}>{inFlight ? '發布中' : sub.status === 'approved' ? '已核准（待發布）' : '待核准'}</span></div>
+      <ul className="onb-review-facts">
+        <li>建置 {ok('build') ? '通過' : '未通過'} · 平台共通檢查 {ok('platform_test') ? '通過' : '未通過'} · 業務測試 {ok('business_test') ? '通過' : '未通過'}</li>
+        <li>程式碼檢查：{(() => { const cr = sub.approvals.filter((a) => a.kind === 'code_review' && !a.revoked_at).at(-1); return cr ? `${cr.actor} 已檢查（${new Date(cr.created_at).toLocaleString('zh-TW')}）${cr.reason ? `：${cr.reason}` : ''}` : '尚未檢查'; })()}</li>
+        <li className={(scan.counts?.CRITICAL ?? 0) > 0 ? 'onb-error' : undefined}>漏洞（僅記錄，不阻擋）：CRITICAL {scan.counts?.CRITICAL ?? 0} · HIGH {scan.counts?.HIGH ?? 0}{exceptions.length > 0 && `；已核准例外 ${exceptions.map((e) => e.subject).join('、')}`}</li>
+        {confirmNote && <li>測試確認（{confirmNote.actor}，{new Date(confirmNote.created_at).toLocaleString('zh-TW')}）：{confirmNote.reason}</li>}
+        {rel?.status === 'failed' && <li className="onb-error">上次發布失敗：{rel.detail.error}（入口維持原狀，可修正後再發布）</li>}
+      </ul>
+      {rel && rel.detail.steps.length > 0 && <ol className="onb-release-steps">{rel.detail.steps.map((st, i) => <li key={i} className={st.status === 'failed' ? 'onb-error' : undefined}><b>{st.name}</b>：{st.status === 'passed' ? '完成' : st.status === 'failed' ? '失敗' : '略過'}{st.detail && ` · ${st.detail}`}</li>)}</ol>}
+      {(errors[sub.id]?.length ?? 0) > 0 && <ul className="onb-error">{errors[sub.id].map((r) => <li key={r}>{r}</li>)}</ul>}
+      {sub.status === 'awaiting_approval' && <>
+        {sub.releaseBlockers.length > 0 && <ul className="onb-error">{sub.releaseBlockers.map((r) => <li key={r}>{r}</li>)}</ul>}
+        <div className="mg-row"><input aria-label={`${sub.toolName} 核准說明`} value={reason[sub.id] ?? ''} onChange={(e) => setReason({ ...reason, [sub.id]: e.target.value })} placeholder="核准說明（會留在稽核紀錄）" />
+          <button disabled={busy || !(reason[sub.id] ?? '').trim() || sub.releaseBlockers.length > 0} onClick={() => void guard(sub.id, async () => { await onboardingApi.approve(sub.id, reason[sub.id] ?? ''); setReason({ ...reason, [sub.id]: '' }); }, `已核准發布：${sub.toolName} ${sub.version}`)}>核准發布</button></div>
+      </>}
+      {sub.status === 'approved' && <div className="mg-actions">
+        <button disabled={busy || !!inFlight} onClick={() => void guard(sub.id, () => onboardingApi.release(sub.id), toTrial ? `開始部署 ${sub.toolName} ${sub.version} 試用版（正式版本不受影響）` : `開始發布 ${sub.toolName} ${sub.version}（發布後為試用中，未公開）`)}>{inFlight ? '發布中…' : rel?.status === 'failed' ? '重新發布' : toTrial ? '發布為試用版' : '發布（先試用）'}</button>
+        <small className="mg-muted">{toTrial ? '工具已公開：新版會先以試用版並行，一般使用者仍使用目前版本。' : '發布後為試用中（未公開），開發者試用通過、AI Team 公開後才開放。'}</small>
+        {rel && <button className="onb-link" onClick={() => void onboardingApi.releaseLog(rel.id).then((text) => setLog({ title: `${sub.toolName} ${sub.version} 發布日誌`, text }))}>查看發布日誌</button>}
+      </div>}
+    </article>;
+  };
 
   return <>
-    <section className="mg-panel onb-review"><div className="mg-row"><div><h2>待審核的發佈申請</h2><p className="mg-muted">開發者已在預覽中確認測試結果的提交。核准只對該版本的 image 有效；發布時部署同一份 image，健康檢查通過後才切換工具入口。</p></div><button disabled={busy} onClick={() => void load()}>重新整理</button></div>
-      {items.length === 0 ? <p className="mg-submission-empty">目前沒有待審核或待發布的申請。</p> : items.map((sub) => {
-        const confirmNote = sub.approvals.filter((a) => a.kind === 'test_confirmation' && !a.revoked_at).at(-1);
-        const exceptions = sub.approvals.filter((a) => a.kind === 'vuln_exception' && !a.revoked_at);
-        const scan = (sub.steps.scan?.summary ?? {}) as { counts?: Record<string, number> };
-        const ok = (k: string) => sub.steps[k]?.status === 'passed';
-        const rel = history.find((h) => h.id === sub.release?.id);
-        const inFlight = rel && ['pending', 'starting'].includes(rel.status);
-        return <article key={sub.id} className="onb-review-item">
-          <div className="mg-row"><div><h3>{sub.toolName} · {sub.version}</h3><small className="mg-muted">第 {sub.revision} 版提交 · Owner {sub.owner} · image <code>{(sub.imageDigest ?? '').slice(0, 19)}</code></small></div>
-            <span className={`mg-status ${inFlight ? 'warn' : sub.status === 'approved' ? 'good' : 'warn'}`}>{inFlight ? '發布中' : sub.status === 'approved' ? '已核准（待發布）' : '待管理者審核'}</span></div>
-          <ul className="onb-review-facts">
-            <li>建置 {ok('build') ? '通過' : '未通過'} · 平台共通檢查 {ok('platform_test') ? '通過' : '未通過'} · 業務測試 {ok('business_test') ? '通過' : '未通過'}</li>
-            <li>程式碼檢查：{(() => { const cr = sub.approvals.filter((a) => a.kind === 'code_review' && !a.revoked_at).at(-1); return cr ? `${cr.actor} 已檢查（${new Date(cr.created_at).toLocaleString('zh-TW')}）${cr.reason ? `：${cr.reason}` : ''}` : '尚未檢查'; })()}</li>
-            <li className={(scan.counts?.CRITICAL ?? 0) > 0 ? 'onb-error' : undefined}>漏洞（僅記錄，不阻擋）：CRITICAL {scan.counts?.CRITICAL ?? 0} · HIGH {scan.counts?.HIGH ?? 0}{(scan.counts?.CRITICAL ?? 0) > 0 && '，請先在開發者中心查看漏洞清單再核准'}{exceptions.length > 0 && `；已核准例外 ${exceptions.map((e) => e.subject).join('、')}`}</li>
-            {confirmNote && <li>測試確認（{confirmNote.actor}，{new Date(confirmNote.created_at).toLocaleString('zh-TW')}）：{confirmNote.reason}</li>}
-            {rel?.status === 'failed' && <li className="onb-error">上次發布失敗：{rel.detail.error}（入口維持原狀，可修正後再發布）</li>}
-          </ul>
-          {rel && rel.detail.steps.length > 0 && <ol className="onb-release-steps">{rel.detail.steps.map((st, i) => <li key={i} className={st.status === 'failed' ? 'onb-error' : undefined}><b>{st.name}</b>：{st.status === 'passed' ? '完成' : st.status === 'failed' ? '失敗' : '略過'}{st.detail && ` · ${st.detail}`}</li>)}</ol>}
-          {(errors[sub.id]?.length ?? 0) > 0 && <ul className="onb-error">{errors[sub.id].map((r) => <li key={r}>{r}</li>)}</ul>}
-          {sub.status === 'awaiting_approval' && <>
-            {sub.releaseBlockers.length > 0 && <ul className="onb-error">{sub.releaseBlockers.map((r) => <li key={r}>{r}</li>)}</ul>}
-            <div className="mg-row"><input aria-label={`${sub.toolName} 核准說明`} value={reason[sub.id] ?? ''} onChange={(e) => setReason({ ...reason, [sub.id]: e.target.value })} placeholder="核准說明（會留在稽核紀錄）" />
-              <button disabled={busy || !(reason[sub.id] ?? '').trim() || sub.releaseBlockers.length > 0} onClick={() => void guard(sub.id, async () => { await onboardingApi.approve(sub.id, reason[sub.id] ?? ''); setReason({ ...reason, [sub.id]: '' }); }, `已核准發布：${sub.toolName} ${sub.version}`)}>核准發布</button></div>
-          </>}
-          {sub.status === 'approved' && <div className="mg-actions">
-            <button disabled={busy || !!inFlight} onClick={() => void guard(sub.id, () => onboardingApi.release(sub.id), `開始發布 ${sub.toolName} ${sub.version}`)}>{inFlight ? '發布中…' : rel?.status === 'failed' ? '重新發布' : '發布'}</button>
-            {rel && <button className="onb-link" onClick={() => void onboardingApi.releaseLog(rel.id).then((text) => setLog({ title: `${sub.toolName} ${sub.version} 發布日誌`, text }))}>查看發布日誌</button>}
-          </div>}
-        </article>;
-      })}
+    <div className="rc-cards" role="tablist" aria-label="發布狀態">
+      {CATS.map((x) => <button key={x.id} role="tab" aria-selected={current === x.id} className={`rc-card ${current === x.id ? 'active' : ''} ${x.id === 'pending' && counts.pending > 0 ? 'attention' : ''}`} onClick={() => setTab(x.id)}>
+        <small>{x.label}</small><strong>{counts[x.id]}</strong><span>{x.hint}</span></button>)}
+    </div>
+    <section className="mg-panel">
+      <div className="mg-row"><h2>{CATS.find((x) => x.id === current)!.label}</h2>
+        <div className="rc-filters">
+          <label>部門<select aria-label="部門篩選" value={dept} onChange={(e) => setDept(e.target.value)}><option value="all">全部部門</option>{usedDepts.map((d) => <option key={d} value={d}>{deptName(d)}</option>)}</select></label>
+          <input aria-label="搜尋工具" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜尋工具名稱" />
+          <button disabled={busy} onClick={() => void load()}>重新整理</button>
+        </div></div>
+      {shown.length === 0 ? <p className="mg-submission-empty">{rows.length === 0 ? '尚未有經上架服務處理的工具。' : '此狀態下沒有工具。'}</p> :
+        <div className="mg-table-scroll"><table className="rc-table"><thead><tr><th>工具</th><th>版本</th><th>部門</th><th>{current === 'pending' ? '提交者／Owner' : 'Owner'}</th><th>狀態</th><th>更新時間</th><th></th></tr></thead><tbody>
+          {shown.map((r) => <tr key={r.key} className="rc-row" tabIndex={0} onClick={() => setOpen(r.toolId)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(r.toolId); }}>
+            <td><b>{r.name}</b></td><td>{r.version}</td><td>{deptName(r.department)}</td><td>{r.who}</td>
+            <td><span className={`mg-status ${r.tone}`}>{r.status}</span></td><td>{when(r.at)}</td><td className="rc-go">查看 ›</td></tr>)}
+        </tbody></table></div>}
     </section>
-
-    {tools.length > 0 && <section className="mg-panel onb-review"><h2>上線版本與回復</h2><p className="mg-muted">可切換到任何曾經上線過的版本（部署當初測試、核准過的同一份 image）。每次切換前會先停止目前版本並備份資料。</p>
-      {tools.map((toolId) => {
-        const list = history.filter((h) => h.toolId === toolId);
-        const active = list.find((h) => h.status === 'active');
-        return <article key={toolId} className="onb-review-item">
-          <div className="mg-row"><div><h3>{list[0].name}</h3><small className="mg-muted">{active ? <>上線中：{active.version} · <a href={active.url ?? '#'} target="_blank" rel="noreferrer">{active.url}</a></> : list.some((h) => h.status === 'offline') ? `已下架：${list.find((h) => h.status === 'offline')!.version}（入口已關閉，資料保留）` : '目前沒有上線中的版本'}</small></div>
-            {active && <span className={`mg-status ${health[active.id] ? 'good' : 'bad'}`}>{health[active.id] ? '服務正常' : '服務未回應'}</span>}</div>
-          <div className="mg-table-scroll"><table><thead><tr><th>時間</th><th>動作</th><th>版本</th><th>狀態</th><th>說明</th><th></th></tr></thead><tbody>
-            {list.map((h) => <tr key={h.id}><td>{new Date(h.createdAt).toLocaleString('zh-TW')}</td><td>{h.detail.kind === 'rollback' ? `回復（${h.detail.dataMode === 'restore' ? '還原備份' : '保留資料'}）` : h.detail.kind === 'redeploy' ? '重新上線（保留資料）' : '發布'}</td><td>{h.version}</td>
-              <td><span className={`mg-status ${relTone(h.status)}`}>{REL_STATUS[h.status] ?? h.status}</span></td><td className="onb-wrap">{h.detail.error ?? (h.detail.offline ? `下架：${h.detail.offline.reason}` : h.detail.reason) ?? ''}</td>
-              <td className="onb-row-actions"><button className="onb-link" onClick={() => void onboardingApi.releaseLog(h.id).then((text) => setLog({ title: `${h.name} ${h.version} 日誌`, text }))}>日誌</button></td></tr>)}
-          </tbody></table></div>
-          <OfflineControl list={list} disabled={busy || running} notice={notice} onDone={load} />
-          <VersionSwitch list={list} disabled={busy || running} notice={notice} onDone={load} />
-        </article>;
-      })}
-    </section>}
-
+    {open && detail()}
     {log && <div className="mg-overlay"><section className="mg-dialog onb-log" role="dialog" aria-modal="true" aria-label={log.title}>
       <div className="mg-row"><h2>{log.title}</h2><button onClick={() => setLog(null)} aria-label="關閉日誌">×</button></div><pre>{log.text}</pre></section></div>}
   </>;

@@ -5,6 +5,7 @@ import { ToolEntry } from "./tool-entry";
 import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
 import { DEFAULT_LOCAL_MODEL, defaultConfig, entryBlock, initialDemo, normalizeModel, type DemoState } from "./demo-management";
 import { onboardingApi, type CatalogTool } from "./onboarding-api";
+import { canSeeTrial, canUseTool, ROLES, useDeveloperName, useEmployeeDepartment, useRole, VIEWS_BY_ROLE, type Role } from "./role";
 
 const newEventId = () => `evt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
@@ -162,6 +163,12 @@ export default function Home() {
   const [type, setType] = useState<"全部" | "AI" | "非 AI">("全部");
   const [activeTool, setActiveTool] = useState<Tool | null>(null);
   const [selectedToolId, setSelectedToolId] = useState("");
+  const [role, setRole] = useRole();
+  const [developer, setDeveloper] = useDeveloperName();
+  const [employeeDepartment, setEmployeeDepartment] = useEmployeeDepartment();
+  const myDepartment = role === "employee" ? employeeDepartment : ROLES.find((r) => r.id === role)!.department;
+  const allowed = VIEWS_BY_ROLE[role];
+  const changeRole = (r: Role) => { setRole(r); if (!VIEWS_BY_ROLE[r].includes(view)) setView("tools"); setSelectedToolId(""); };
 
   const [demo, setDemo] = useState<DemoState>(initialDemo);
   const [demoLoaded, setDemoLoaded] = useState(false);
@@ -188,9 +195,13 @@ export default function Home() {
   }, [demo, demoLoaded]);
   // 上架服務已發布、健康檢查通過的工具：覆蓋示範設定的狀態、版本、Owner 與入口網址（服務未啟動時維持示範資料）
   const [released, setReleased] = useState<CatalogTool[]>([]);
+  const [submissionOwners, setSubmissionOwners] = useState<string[]>([]);
   useEffect(() => {
     let alive = true;
-    const load = () => onboardingApi.catalog().then((r) => { if (alive) setReleased(r); }).catch(() => { if (alive) setReleased([]); });
+    const load = () => {
+      void onboardingApi.list().then((r) => { if (alive) setSubmissionOwners([...new Set(r.map((s) => s.owner))]); }).catch(() => {});
+      return onboardingApi.catalog().then((r) => { if (alive) setReleased(r); }).catch(() => { if (alive) setReleased([]); });
+    };
     void load();
     const timer = setInterval(load, 20000);
     // 維運動作完成後立即更新入口狀態
@@ -234,9 +245,20 @@ export default function Home() {
       const matchesDepartment = tool.department === activeDepartment;
       const matchesType = type === "全部" || tool.type === type;
       const matchesQuery = !normalized || `${tool.name}${tool.description}`.toLowerCase().includes(normalized);
+      // 試用中（未公開）的工具：一般員工看不到（示範；正式環境由後端依登入身分過濾）
+      // 開發者只看得到自己當 Owner 的試用工具；AI Team 看得到全部
+      const rel = releasedById[tool.id];
+      if (rel?.visibility === "trial" && !canSeeTrial(role, developer, rel.owner)) return false;
       return matchesDepartment && matchesType && matchesQuery && (!favoritesOnly || demo.favorites.includes(tool.id)) && (categoryFilter === "全部分類" || (shown.configs[tool.id] ?? defaultConfig(tool)).category === categoryFilter);
     });
-  }, [activeDepartment, query, type, catalog, categoryFilter, favoritesOnly, demo.favorites, shown.configs]);
+  }, [activeDepartment, query, type, catalog, categoryFilter, favoritesOnly, demo.favorites, shown.configs, role, developer, releasedById]);
+  // 示範用開發者清單：已上架工具與提交紀錄裡出現過的 Owner
+  const owners = useMemo(() => [...new Set([...released.map((r) => r.owner), ...submissionOwners])].sort(), [released, submissionOwners]);
+  const devName = developer || owners[0] || "";
+  const seesTrial = (id: string) => { const r = releasedById[id]; return !!r && canSeeTrial(role, devName, r.owner); };
+  const deptName = (id: string) => departments.find((d) => d.id === id)?.name ?? id;
+  const usable = (tool: Tool) => canUseTool(role, myDepartment, tool.department, devName, releasedById[tool.id]?.owner);
+  const trialLabel = (id: string) => { const r = releasedById[id]; if (!r || !seesTrial(id)) return ""; return r.visibility === "trial" ? " · 試用中（未公開）" : r.trial ? ` · 有試用版 ${r.trial.version}` : ""; };
 
   const totalRuns = tools.reduce((sum, tool) => sum + tool.runs, 0);
   const totalSaved = departments.slice(1).reduce((sum, item) => sum + item.saved, 0);
@@ -245,11 +267,13 @@ export default function Home() {
   const blockedLogged = useRef('');
   useEffect(() => {
     const r = releasedById[selectedToolId];
-    if (!r || (r.healthy && !r.maintenance)) { if (!r) blockedLogged.current = ''; return; }
+    const tool = catalog.find((t) => t.id === selectedToolId);
+    const deptBlocked = !!tool && !canUseTool(role, myDepartment, tool.department, devName, r?.owner);
+    if (!r || (r.healthy && !r.maintenance && !deptBlocked)) { if (!r) blockedLogged.current = ''; return; }
     if (blockedLogged.current === selectedToolId) return;
     blockedLogged.current = selectedToolId;
-    void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: r.toolId, kind: 'blocked', reason: r.offline ? '工具已下架' : r.maintenance ? '工具維護中' : '服務健康檢查未回應' }).catch(() => {});
-  }, [selectedToolId, releasedById]);
+    void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: r.toolId, kind: 'blocked', reason: deptBlocked ? '非所屬部門' : r.offline ? '工具已下架' : r.maintenance ? '工具維護中' : '服務健康檢查未回應' }).catch(() => {});
+  }, [selectedToolId, releasedById, catalog, role, myDepartment, devName]);
 
   useEffect(() => {
     function focusSearch(event: KeyboardEvent) {
@@ -281,14 +305,16 @@ export default function Home() {
         </div>
         <nav className="topnav" aria-label="主要功能">
           <button className={view === "tools" ? "active" : ""} onClick={() => setView("tools")}>工具中心</button>
-          <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>使用分析</button>
-          {managementViews.map(item => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>{item.label}</button>)}
+          {allowed.includes("analytics") && <button className={view === "analytics" ? "active" : ""} onClick={() => setView("analytics")}>使用分析</button>}
+          {managementViews.filter(item => allowed.includes(item.id)).map(item => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}>{item.label}</button>)}
         </nav>
         <div className="user-area">
           <label className="department-switcher"><span>部門別</span><select value={activeDepartment} onChange={(event) => { setActiveDepartment(event.target.value); setView("tools"); setQuery(""); setSelectedToolId(""); }}>{departments.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-          <div className="avatar">王</div>
-          <div className="user-copy"><strong>王大明</strong><small>資訊部・管理者</small></div>
-          <span className="chevron">⌄</span>
+          <label className="department-switcher" title="示範用：本機試點沒有登入，切換身分可看到不同人看得到的工具與按鈕；不是安全保護"><span>目前身分（示範）</span><select aria-label="目前身分" value={role} onChange={(event) => changeRole(event.target.value as Role)}>{ROLES.map((r) => <option value={r.id} key={r.id}>{r.label}</option>)}</select></label>
+          {role === "employee" && <label className="department-switcher" title="示範用：一般員工所屬的部門；只能使用所屬部門與全公司共用的工具"><span>所屬部門（示範）</span><select aria-label="所屬部門" value={employeeDepartment} onChange={(event) => { setEmployeeDepartment(event.target.value); setSelectedToolId(""); }}>{departments.filter((d) => d.id !== "shared").map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
+          {role === "developer" && <label className="department-switcher" title="示範用：選擇目前的開發者（對應工具的 Owner）；開發者只看得到自己當 Owner 的試用工具"><span>開發者（Owner）</span><select aria-label="目前開發者" value={devName} onChange={(event) => setDeveloper(event.target.value)}>{owners.length ? owners.map((o) => <option key={o} value={o}>{o}</option>) : <option value="">（尚無已發布工具）</option>}</select></label>}
+          <div className="avatar">{ROLES.find((r) => r.id === role)!.avatar}</div>
+          <div className="user-copy"><strong>{role === "developer" && devName ? devName : ROLES.find((r) => r.id === role)!.person}</strong><small>{deptName(myDepartment)}・{ROLES.find((r) => r.id === role)!.unit.replace(/^資訊部・/, "")}</small></div>
         </div>
       </header>
 
@@ -329,7 +355,7 @@ export default function Home() {
             <div className="demo-filters"><label>功能分類<select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}><option>全部分類</option>{demo.categories.map(c => <option key={c}>{c}</option>)}</select></label><button aria-pressed={favoritesOnly} onClick={() => setFavoritesOnly(!favoritesOnly)}>{favoritesOnly ? "★ 我的收藏" : "☆ 顯示收藏"}</button><button onClick={() => setView("issues")}>聯絡管理者／權限申請</button></div>
             <section className="section-title">
               <div><h2>{department.id === "shared" ? "共用工具" : `${department.name}工具`}</h2><span>{visibleTools.length} 項</span></div>
-              <p>部門瀏覽示範 · 正式 AD 權限待串接</p>
+              <p>可瀏覽所有部門的工具；只有所屬部門同仁可以使用（示範，正式由 AD 登入與後台權限控管）</p>
             </section>
 
             {visibleTools.length > 0 ? (
@@ -338,7 +364,7 @@ export default function Home() {
                   <button className={`tool-card ${selectedToolId === tool.id ? "selected" : ""}`} key={tool.id} onClick={() => setSelectedToolId((current) => current === tool.id ? "" : tool.id)} aria-expanded={selectedToolId === tool.id}>
                     <span className={`tool-icon metal-tile ${tool.color}`}><i className={`metal-symbol symbol-${index % 6}`}></i></span>
                     <strong>{tool.name}</strong>
-                    <small>{tool.type === "AI" ? "AI" : "TOOL"} · {(shown.configs[tool.id] ?? defaultConfig(tool)).status}{!(shown.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}</small>
+                    <small>{tool.type === "AI" ? "AI" : "TOOL"} · {(shown.configs[tool.id] ?? defaultConfig(tool)).status}{!(shown.configs[tool.id] ?? defaultConfig(tool)).access && " · 需申請權限"}{trialLabel(tool.id)}</small>
                   </button>
                 ))}
               </section>
@@ -346,11 +372,11 @@ export default function Home() {
               <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
             )}
 
-            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small></div><div className="demo-entry-actions"><small>{(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).model}</small><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
+            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className="metal-symbol symbol-1"></i></span><div><div><h2>{selectedTool.name}</h2><em>{selectedTool.type === "AI" ? "AI" : "TOOL"}</em></div><p>{selectedTool.description}</p><small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small>{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.visibility === "trial" && <small className="trial-note">試用中（未公開）：只有 Owner（{releasedById[selectedTool.id].owner}）與 AI Team 看得到；AI Team 公開後才開放給一般使用者。</small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.trial?.url && <small className="trial-note">新版 {releasedById[selectedTool.id].trial!.version} 試用中（一般使用者仍使用 {releasedById[selectedTool.id].version}）：<a href={releasedById[selectedTool.id].trial!.url!} target="_blank" rel="noopener noreferrer" onClick={() => void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: releasedById[selectedTool.id].toolId, kind: "click", trial: true }).catch(() => {})}>開啟試用版 ↗</a></small>}</div><div className="demo-entry-actions"><small>{(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).model}</small><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{!usable(selectedTool) ? <span>僅限{deptName(selectedTool.department)}同仁使用</span> : entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
           </div>
         ) : view === "analytics" ? (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
-        ) : <ManagementCenter view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} goTo={setView} /> }
+        ) : <ManagementCenter role={role} developer={devName} view={view} state={shown} tools={catalog} departments={departments} change={changeDemo} notice={setMessage} releasedIds={releasedIds} goTo={setView} /> }
       </main>
 
     </div>

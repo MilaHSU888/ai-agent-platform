@@ -62,6 +62,10 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   }
   const sourceHash = createHash('sha256').update(buf).digest('hex');
 
+  const trialing = store.get<{ version: string }>("SELECT s.version FROM releases r JOIN submissions s ON s.id=r.submission_id WHERE r.tool_id=? AND r.status='trial'", m.tool.id);
+  if (trialing) {
+    return { ok: false, warnings: inspected.warnings, issues: [{ file: '(平台)', reason: `此工具的 ${trialing.version} 正在試用中`, fix: '請先在試用區按「結束試用」（或由 AI Team 公開）後，再提交新版本' }] };
+  }
   const released = store.get<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND version=? AND status='released'", m.tool.id, m.tool.version);
   if (released) {
     return { ok: false, warnings: inspected.warnings, issues: [{ file: 'workhub.yaml', field: 'tool.version', reason: `版本 ${m.tool.version} 已發布過`, fix: '提交更新時請遞增版本號' }] };
@@ -90,7 +94,7 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   store.tx(() => {
     const tool = store.get<{ id: string }>('SELECT id FROM tools WHERE id=?', m.tool.id);
     if (!tool) {
-      store.run('INSERT INTO tools(id,name,department,owner,created_at,updated_at) VALUES (?,?,?,?,?,?)', m.tool.id, toolName.trim(), form.department, form.owner, t, t);
+      store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at,visibility) VALUES (?,?,?,?,?,?,'trial')", m.tool.id, toolName.trim(), form.department, form.owner, t, t);
       store.audit(form.actor, 'tool.registered', m.tool.id, { name: toolName.trim(), department: form.department, owner: form.owner });
     } else {
       store.run('UPDATE tools SET updated_at=? WHERE id=?', t, m.tool.id);

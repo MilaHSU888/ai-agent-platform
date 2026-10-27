@@ -25,6 +25,7 @@ async function setup(opts: FakeOpts = {}) {
   queue.extraKinds.release = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+  queue.extraKinds.trial = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   const app = createApp(store, cfg, queue, rt, secrets, TOKEN);
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', () => r()));
   cfg.port = (app.server.address() as AddressInfo).port;
@@ -591,6 +592,158 @@ test('取消提交：測試失敗時撤回，撤銷確認並關閉預覽；已�
     const v = await approvedVersion(t, '1.0.1', 'update');
     await t.call('POST', `/api/onboarding/submissions/${v.id}/release`); await t.runQueue();
     assert.equal((await t.call('POST', `/api/onboarding/submissions/${v.id}/withdraw`, { reason: '測試' })).status, 409);
+  } finally { await t.close(); }
+});
+
+// ── 試用／公開（DEC-032） ──────────────────────────────────────────
+test('試用與公開：新工具發布後是試用中；開發者試用通過、AI Team 公開後才公開；可取消公開', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`)).status, 202);
+    await t.runQueue();
+    let cat = (await catalogOf(t))[0];
+    assert.equal(cat.visibility, 'trial');
+    assert.equal(cat.trialPassed, false);
+    assert.equal(cat.trial, null);
+    // 未按試用通過不能公開；公開需說明
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {})).status, 200);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {})).status, 409, '同一版不重複按');
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: ' ' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 200);
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.visibility, 'public');
+    // 試用中點擊另外標記
+    await t.call('POST', '/api/onboarding/entry-events', { clientEventId: 'evt_public01', toolId: 'demo-tool', kind: 'click' });
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/unpublish', { reason: '' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/unpublish', { reason: '發現問題' })).status, 200);
+    assert.equal((await catalogOf(t))[0].visibility, 'trial');
+    await t.call('POST', '/api/onboarding/entry-events', { clientEventId: 'evt_trial0001', toolId: 'demo-tool', kind: 'click' });
+    const ev = (await t.call('GET', '/api/onboarding/entry-events?toolId=demo-tool')).data.events as Record<string, any>[];
+    assert.deepEqual(ev.map((e) => e.trial), [1, 0]);
+    // 尚未公開的工具版更：直接更新，仍是試用中，需重新試用通過
+    const v2 = await approvedVersion(t, '1.0.1', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.version, '1.0.1');
+    assert.equal(cat.visibility, 'trial');
+    assert.equal(cat.trialPassed, false);
+  } finally { await t.close(); }
+});
+
+test('已公開工具的版更：新版並行試用（空白資料、另一個容器），公開時才走更新流程並移除試用版；可結束試用', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {});
+    await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '首版公開' });
+    const live = t.rt.running.get('wh-rel-demo-tool')!;
+    // 新版 → 試用版
+    const v2 = await approvedVersion(t, '1.1.0', 'update');
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`)).status, 202);
+    await t.runQueue();
+    const trial = t.rt.running.get('wh-trial-demo-tool')!;
+    assert.ok(trial, '試用版容器在跑');
+    assert.equal(trial.image, v2.digest);
+    assert.equal(trial.volume, 'wh-trial-demo-tool-data');
+    assert.notEqual(trial.hostPort, live.hostPort);
+    assert.equal(t.rt.running.get('wh-rel-demo-tool')!.image, v1.digest, '正式版本不受影響');
+    assert.equal(t.rt.stopped.includes('wh-rel-demo-tool'), false, '部署試用版不停止正式版本');
+    assert.equal(t.rt.restores.length, 0, '試用版從空白資料開始，不複製正式資料');
+    assert.equal(t.rt.backups.length, 0, '不備份正式資料給試用版');
+    assert.ok(t.rt.removed.includes('wh-trial-demo-tool-data'), '先清空試用資料卷');
+    let cat = (await catalogOf(t))[0];
+    assert.equal(cat.visibility, 'public');
+    assert.equal(cat.version, '1.0.0');
+    assert.equal(cat.trial.version, '1.1.0');
+    assert.equal(cat.trial.passed, false);
+    assert.match(cat.trial.url, /^http:\/\/127\.0\.0\.1:187\d\d\/$/);
+    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v2.id}`)).data.submission as Record<string, any>).status, 'trial');
+    // 試用中不能再上傳新版本
+    const blocked = await upload(t.call, validZip([{ name: 'v.txt', data: '1.2.0' }], MANIFEST.replace('version: 1.0.0', 'version: 1.2.0')), 'department=purchase&owner=Mila&mode=update&expectedToolId=demo-tool');
+    assert.equal(blocked.status, 422);
+    assert.match(JSON.stringify(blocked.data), /試用中/);
+    // 公開新版
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 409, '需先試用通過');
+    await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', { note: '主要功能正常' });
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 202);
+    await t.runQueue();
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.version, '1.1.0');
+    assert.equal(cat.trial, null);
+    assert.equal(cat.visibility, 'public');
+    assert.equal(t.rt.running.get('wh-rel-demo-tool')!.image, v2.digest);
+    assert.equal(t.rt.running.get('wh-rel-demo-tool')!.hostPort, live.hostPort, '入口網址不變');
+    assert.equal(t.rt.running.has('wh-trial-demo-tool'), false);
+    assert.ok(t.rt.removed.includes('wh-trial-demo-tool-data'));
+    assert.equal(t.rt.backups.length, 1, '公開時照常先備份正式資料');
+    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.ok(hist.some((h) => h.status === 'trial_ended' && h.detail.ended.promotedTo));
+    // 再一版：結束試用 → 捨棄試用版，提交改為已取消，正式版本不變
+    const v3 = await approvedVersion(t, '1.2.0', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v3.id}/release`); await t.runQueue();
+    assert.ok(t.rt.running.has('wh-trial-demo-tool'));
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/end-trial', { reason: '' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/end-trial', { reason: '匯出有誤' })).status, 200);
+    assert.equal(t.rt.running.has('wh-trial-demo-tool'), false);
+    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v3.id}`)).data.submission as Record<string, any>).status, 'withdrawn');
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.version, '1.1.0');
+    assert.equal(cat.trial, null);
+  } finally { await t.close(); }
+});
+
+test('封存：停止所有容器、從入口與管理頁移除，資料卷與紀錄保留', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    assert.equal((await catalogOf(t)).length, 1);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/archive', { reason: '' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/archive', { reason: '測試用工具' })).status, 200);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/archive', { reason: '再一次' })).status, 409);
+    assert.equal(t.rt.running.has('wh-rel-demo-tool'), false);
+    assert.ok(!t.rt.removed.includes('wh-rel-demo-tool-data'), '資料卷保留');
+    assert.equal((await catalogOf(t)).length, 0);
+    assert.equal(((await t.call('GET', '/api/onboarding/releases')).data.releases as unknown[]).length, 0);
+    assert.equal(((await t.call('GET', '/api/onboarding/submissions')).data.submissions as unknown[]).length, 0);
+    assert.equal(((await t.call('GET', '/api/onboarding/tools')).data.tools as unknown[]).length, 0);
+    assert.equal(t.store.get<{ n: number }>("SELECT COUNT(*) AS n FROM submissions WHERE tool_id='demo-tool'")!.n, 1, '紀錄保留');
+  } finally { await t.close(); }
+});
+
+test('測試未通過：未公開工具記錄結果、不能公開、可重新測試後通過；並行試用版自動結束試用', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, '1.0.0');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-failed', { reason: ' ' })).status, 409, '需填原因');
+    const f = await t.call('POST', '/api/onboarding/tools/demo-tool/trial-failed', { reason: '匯出檔案欄位錯位' });
+    assert.equal(f.status, 200);
+    assert.equal((f.data as Record<string, any>).ended, false);
+    let cat = (await catalogOf(t))[0];
+    assert.equal(cat.visibility, 'trial');
+    assert.equal(cat.trialResult.result, 'failed');
+    assert.equal(cat.trialResult.note, '匯出檔案欄位錯位');
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '公開' })).status, 409, '未通過不能公開');
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', { note: '修正設定後正常' })).status, 200);
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.trialResult.result, 'passed');
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '公開' })).status, 200);
+    const v2 = await approvedVersion(t, '1.1.0', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    assert.ok(t.rt.running.has('wh-trial-demo-tool'));
+    const f2 = await t.call('POST', '/api/onboarding/tools/demo-tool/trial-failed', { reason: '新功能無法使用' });
+    assert.equal((f2.data as Record<string, any>).ended, true);
+    assert.equal(t.rt.running.has('wh-trial-demo-tool'), false);
+    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v2.id}`)).data.submission as Record<string, any>).status, 'withdrawn');
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.version, '1.0.0');
+    assert.equal(cat.trial, null);
+    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
+    assert.ok(hist.some((h) => h.status === 'trial_ended' && /測試未通過/.test(h.detail.ended.reason)));
   } finally { await t.close(); }
 });
 

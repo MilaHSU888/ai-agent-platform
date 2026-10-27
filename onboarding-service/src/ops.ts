@@ -3,6 +3,7 @@
  * - 維護模式：工具入口關閉、顯示維護中；容器照跑，管理者仍可用原網址測試。與「下架」不同（下架會停容器）。
  * - 重新啟動：重啟上線中的容器（資料保留），健康檢查通過才算完成，否則回報失敗。
  * - 查看日誌：讀取上線中容器最近的日誌，遮罩金鑰與通行碼。
+ * - 封存：停止工具的所有容器（正式、試用、預覽），並從網站各頁移除；資料卷與紀錄保留，不是永久刪除。
  * 每個動作都寫入稽核紀錄，維運中心的「近期事件」由此讀取。
  */
 import type { Config } from './config.ts';
@@ -11,11 +12,39 @@ import { GateError } from './approvals.ts';
 import { makeMasker } from './exec.ts';
 import type { Manifest } from './manifest.ts';
 import { waitHealthy } from './pipeline.ts';
-import { activeRelease, containerName } from './releases.ts';
+import { activeRelease, containerName, trialContainerName } from './releases.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
 export type Maintenance = { at: string; actor: string; reason: string };
+
+/** 封存工具：停止並移除容器（資料卷保留）、未完成的提交改為已取消、從入口與管理頁移除。 */
+export async function archiveTool(store: Store, rt: Runtime, toolId: string, actor: string, reason: string) {
+  if (!reason.trim()) throw new GateError(['請說明封存原因']);
+  const tool = store.get<{ archived_json: string | null }>('SELECT archived_json FROM tools WHERE id=?', toolId);
+  if (!tool) throw new GateError(['找不到此工具']);
+  if (tool.archived_json) throw new GateError(['此工具已封存']);
+  if (store.get("SELECT id FROM releases WHERE tool_id=? AND status IN ('pending','starting')", toolId)
+    || store.get("SELECT j.id FROM jobs j JOIN submissions s ON s.id=j.submission_id WHERE s.tool_id=? AND j.status IN ('queued','running')", toolId)) {
+    throw new GateError(['此工具有工作正在進行，請等完成後再封存']);
+  }
+  for (const name of [containerName(toolId), trialContainerName(toolId), `wh-preview-${toolId}`]) await rt.remove(name);
+  const t = now();
+  const info = { at: t, actor, reason: reason.trim() };
+  store.tx(() => {
+    for (const r of store.all<{ id: string; status: string; detail_json: string }>("SELECT id, status, detail_json FROM releases WHERE tool_id=? AND status IN ('active','trial')", toolId)) {
+      const d = JSON.parse(r.detail_json) as Record<string, unknown>;
+      if (r.status === 'active') d.offline = { ...info, reason: `封存：${info.reason}` }; else d.ended = { ...info, reason: `封存：${info.reason}` };
+      store.run('UPDATE releases SET status=?, detail_json=?, updated_at=? WHERE id=?', r.status === 'active' ? 'offline' : 'trial_ended', JSON.stringify(d), t, r.id);
+    }
+    for (const s of store.all<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND status NOT IN ('released','superseded','withdrawn')", toolId)) {
+      store.run('UPDATE approvals SET revoked_at=? WHERE submission_id=? AND revoked_at IS NULL', t, s.id);
+      store.setSubmissionStatus(s.id, 'withdrawn');
+    }
+    store.run('UPDATE tools SET archived_json=?, updated_at=? WHERE id=?', JSON.stringify(info), t, toolId);
+    store.audit(actor, 'tool.archived', toolId, { reason: info.reason });
+  });
+}
 
 export function maintenanceOf(store: Store, toolId: string): Maintenance | null {
   const row = store.get<{ maintenance_json: string | null }>('SELECT maintenance_json FROM tools WHERE id=?', toolId);
@@ -76,10 +105,11 @@ export function opsEvents(store: Store, limit = 50) {
     ...Object.keys(LABELS), limit);
   const names = new Map(store.all<{ id: string; name: string }>('SELECT id, name FROM tools').map((t) => [t.id, t.name]));
   const relTool = (id: string | null) => id ? store.get<{ tool_id: string }>('SELECT tool_id FROM releases WHERE id=?', id)?.tool_id : undefined;
+  const archived = new Set(store.all<{ id: string }>('SELECT id FROM tools WHERE archived_json IS NOT NULL').map((t) => t.id));
   return rows.map((r) => {
     const d = JSON.parse(r.detail_json) as Record<string, unknown>;
     const toolId = (typeof d.tool === 'string' ? d.tool : undefined) ?? (names.has(r.target ?? '') ? r.target! : relTool(r.target));
     return { at: r.at, actor: r.actor, action: r.action, label: LABELS[r.action], toolId, toolName: toolId ? names.get(toolId) ?? toolId : null,
       bad: /failed|maintenance_on|offline/.test(r.action), reason: (d.reason as string) ?? (d.error as string) ?? undefined, version: d.version as string | undefined };
-  });
+  }).filter((e) => !e.toolId || !archived.has(e.toolId));
 }

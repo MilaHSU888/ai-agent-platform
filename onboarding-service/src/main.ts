@@ -34,6 +34,7 @@ const queue = new JobQueue(store, cfg, rt, secrets);
 queue.extraKinds.release = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+queue.extraKinds.trial = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 const { server } = createApp(store, cfg, queue, rt, secrets);
 
 const avail = await rt.available();

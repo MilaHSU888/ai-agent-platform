@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 export type SubmissionStatus =
   | 'queued' | 'running' | 'failed' | 'cancelled' | 'interrupted'
-  | 'awaiting_confirmation' | 'awaiting_approval' | 'approved' | 'released' | 'superseded' | 'withdrawn';
+  | 'awaiting_confirmation' | 'awaiting_approval' | 'approved' | 'trial' | 'released' | 'superseded' | 'withdrawn';
 
 export type StepStatus =
   | 'pending' | 'running' | 'passed' | 'warning' | 'failed' | 'blocked' | 'skipped'
@@ -15,7 +15,7 @@ export type StepName = (typeof STEPS)[number];
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tools (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, department TEXT NOT NULL, owner TEXT NOT NULL,
-  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, visibility TEXT NOT NULL DEFAULT 'trial'
 );
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY, tool_id TEXT NOT NULL REFERENCES tools(id), version TEXT NOT NULL,
@@ -79,6 +79,15 @@ export class Store {
     if (!tcols.includes('maintenance_json')) this.db.exec('ALTER TABLE tools ADD COLUMN maintenance_json TEXT');
     // 程式碼檢查改為人工確認（DEC-019）：舊步驟名稱 ai_review 更名為 code_review
     this.db.exec("UPDATE step_results SET step='code_review' WHERE step='ai_review'");
+    // 試用／公開（DEC-032）：既有工具中曾經上線過的維持公開，其餘（尚未發布）為試用中
+    if (!tcols.includes('visibility')) {
+      this.db.exec("ALTER TABLE tools ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'");
+      this.db.exec("UPDATE tools SET visibility='trial' WHERE NOT EXISTS (SELECT 1 FROM releases r WHERE r.tool_id=tools.id AND r.status IN ('active','superseded','rolled_back','offline'))");
+    }
+    // 封存：從網站移除（測試用工具等），資料與紀錄保留
+    if (!this.all<{ name: string }>('PRAGMA table_info(tools)').some((c) => c.name === 'archived_json')) this.db.exec('ALTER TABLE tools ADD COLUMN archived_json TEXT');
+    const ecols = this.all<{ name: string }>('PRAGMA table_info(entry_events)').map((c) => c.name);
+    if (!ecols.includes('trial')) this.db.exec('ALTER TABLE entry_events ADD COLUMN trial INTEGER NOT NULL DEFAULT 0');
   }
 
   get<T = Row>(sql: string, ...params: unknown[]): T | undefined {

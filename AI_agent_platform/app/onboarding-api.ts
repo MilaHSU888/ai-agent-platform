@@ -14,12 +14,15 @@ export type VulnItem = {
   id: string; severity: string; category: string; title: string; description: string; url: string | null;
   published: string | null; fixable: boolean; packages: { name: string; installed: string; fixed: string | null }[];
 };
-export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; maintenance?: { at: string; actor: string; reason: string } | null; usesModel: boolean; releasedAt: string };
+export type TrialResult = { result: 'passed' | 'failed'; note: string; actor: string; at: string };
+export type TrialInfo = { releaseId: string; submissionId: string; version: string; url: string | null; healthy: boolean; passed: boolean; result: TrialResult | null; since: string };
+export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; maintenance?: { at: string; actor: string; reason: string } | null; usesModel: boolean; releasedAt: string;
+  /** trial＝試用中（未公開，只有開發者與 AI Team 看得到）；public＝公開 */ visibility: 'trial' | 'public'; trialPassed?: boolean; trialResult?: TrialResult | null; trial: TrialInfo | null };
 export type OpsEvent = { at: string; actor: string; action: string; label: string; toolId?: string; toolName: string | null; bad: boolean; reason?: string; version?: string };
 export type ReleaseStep = { name: string; status: 'passed' | 'failed' | 'skipped'; at: string; detail?: string };
 export type ReleaseRecord = {
   id: string; toolId: string; submissionId: string; name: string; version: string; status: string; url: string | null; createdAt: string; updatedAt: string; previousReleaseId: string | null;
-  detail: { kind: 'release' | 'rollback' | 'redeploy'; steps: ReleaseStep[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; error?: string; reason?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
+  detail: { kind: 'release' | 'rollback' | 'redeploy' | 'trial'; fromTrial?: string; ended?: { at: string; actor: string; reason: string; promotedTo?: string }; steps: ReleaseStep[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; error?: string; reason?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
 };
 export type Session = { authenticated: boolean; actor?: string; environment?: string };
 
@@ -82,7 +85,13 @@ export const onboardingApi = {
   releases: (toolId?: string) => call<{ releases: ReleaseRecord[] }>('GET', `/releases${toolId ? `?toolId=${encodeURIComponent(toolId)}` : ''}`).then((r) => r.releases),
   releaseLog: async (id: string) => (await fetch(`${BASE}/releases/${id}/log`, { credentials: 'same-origin' })).text(),
   catalog: () => call<{ tools: CatalogTool[] }>('GET', '/catalog').then((r) => r.tools),
-  entryEvent: (e: { clientEventId: string; toolId: string; kind: 'click' | 'blocked'; reason?: string }) => call<{ recorded: boolean }>('POST', '/entry-events', e),
+  entryEvent: (e: { clientEventId: string; toolId: string; kind: 'click' | 'blocked'; reason?: string; trial?: boolean }) => call<{ recorded: boolean }>('POST', '/entry-events', e),
+  passTrial: (toolId: string, note: string) => call<{ version: string }>('POST', `/tools/${toolId}/trial-passed`, { note }),
+  failTrial: (toolId: string, reason: string) => call<{ version: string; ended: boolean }>('POST', `/tools/${toolId}/trial-failed`, { reason }),
+  publish: (toolId: string, note: string) => call<{ mode: 'visibility' | 'promote'; version: string }>('POST', `/tools/${toolId}/publish`, { note }),
+  archive: (toolId: string, reason: string) => call<{ toolId: string; archived: boolean }>('POST', `/tools/${toolId}/archive`, { reason }),
+  unpublish: (toolId: string, reason: string) => call<{ toolId: string }>('POST', `/tools/${toolId}/unpublish`, { reason }),
+  endTrial: (toolId: string, reason: string) => call<{ toolId: string }>('POST', `/tools/${toolId}/end-trial`, { reason }),
   withdraw: (id: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/withdraw`, { reason }),
   codeReview: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/code-review`, { note }),
   confirm: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/confirmations`, { note }),

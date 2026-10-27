@@ -8,7 +8,8 @@ import { intake, validToolName } from './intake.ts';
 import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
-import { opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
+import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
+import { endTrial, failTrial, passTrial, publish, unpublish } from './trial.ts';
 import { buildKit, type KitTarget } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmCodeReview, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
@@ -149,7 +150,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       send(res, 200, TEMPLATE, { 'Content-Type': 'text/yaml; charset=utf-8', 'Content-Disposition': 'attachment; filename="workhub.yaml"' });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/submissions$/, auth: true, fn: ({ res }) => {
-      const rows = store.all<{ id: string }>('SELECT id FROM submissions ORDER BY created_at DESC LIMIT 100');
+      const rows = store.all<{ id: string }>('SELECT s.id FROM submissions s JOIN tools t ON t.id=s.tool_id WHERE t.archived_json IS NULL ORDER BY s.created_at DESC LIMIT 100');
       send(res, 200, { submissions: rows.map((r) => submissionView(r.id)) });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/submissions$/, auth: true, fn: async ({ req, res, url, session }) => {
@@ -260,6 +261,35 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       if (!off) throw new GateError(['此工具目前不是下架狀態']);
       send(res, 202, requestRedeploy(store, cfg, m[1], off.id, session!.actor, String(body.reason ?? '')));
     } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/trial-passed$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 200, passTrial(store, m[1], session!.actor, String(body.note ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/trial-failed$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      send(res, 200, await failTrial(store, rt, m[1], session!.actor, String(body.reason ?? '')));
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/publish$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      const r = publish(store, cfg, m[1], session!.actor, String(body.note ?? ''));
+      if (r.mode === 'promote') queue.tick();
+      send(res, r.mode === 'promote' ? 202 : 200, r);
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/unpublish$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      unpublish(store, m[1], session!.actor, String(body.reason ?? ''));
+      send(res, 200, { toolId: m[1], visibility: 'trial' });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/end-trial$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      await endTrial(store, rt, m[1], session!.actor, String(body.reason ?? ''));
+      send(res, 200, { toolId: m[1] });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/archive$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      await archiveTool(store, rt, m[1], session!.actor, String(body.reason ?? ''));
+      send(res, 200, { toolId: m[1], archived: true });
+    } },
     { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/maintenance$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
       send(res, 200, setMaintenance(store, m[1], body.on === true, session!.actor, String(body.reason ?? '')));
@@ -287,14 +317,14 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     } },
     { method: 'POST', re: /^\/api\/onboarding\/entry-events$/, auth: true, fn: async ({ req, res, session }) => {
       const body = await json(req);
-      send(res, 200, recordEntryEvent(store, session!.actor, { clientEventId: String(body.clientEventId ?? ''), toolId: String(body.toolId ?? ''), kind: String(body.kind ?? ''), reason: body.reason ? String(body.reason) : undefined }));
+      send(res, 200, recordEntryEvent(store, session!.actor, { clientEventId: String(body.clientEventId ?? ''), toolId: String(body.toolId ?? ''), kind: String(body.kind ?? ''), reason: body.reason ? String(body.reason) : undefined, trial: body.trial === true }));
     } },
     { method: 'GET', re: /^\/api\/onboarding\/entry-events$/, auth: true, fn: ({ res, url }) => {
       const toolId = url.searchParams.get('toolId');
-      send(res, 200, { events: store.all(`SELECT tool_id, kind, reason, version, actor, at FROM entry_events ${toolId ? 'WHERE tool_id=?' : ''} ORDER BY id DESC LIMIT 200`, ...(toolId ? [toolId] : [])) });
+      send(res, 200, { events: store.all(`SELECT tool_id, kind, reason, version, actor, at, trial FROM entry_events ${toolId ? 'WHERE tool_id=?' : ''} ORDER BY id DESC LIMIT 200`, ...(toolId ? [toolId] : [])) });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/tools$/, auth: true, fn: ({ res }) => {
-      send(res, 200, { tools: store.all('SELECT * FROM tools ORDER BY created_at') });
+      send(res, 200, { tools: store.all('SELECT * FROM tools WHERE archived_json IS NULL ORDER BY created_at') });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/audit$/, auth: true, fn: ({ res, url }) => {
       const limit = Math.min(500, Number(url.searchParams.get('limit') ?? 100));
