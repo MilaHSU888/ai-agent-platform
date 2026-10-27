@@ -9,6 +9,12 @@ import { detectPrefix, extract, readCentralDirectory, readEntry, scanSecrets, ty
 
 export type IntakeForm = { department: string; owner: string; actor: string; originalFilename: string; mode?: string; expectedToolId?: string; name?: string; description?: string; scenario?: string };
 
+/** 平台自動版本號（DEC-039）：每次提交給下一個號碼 v1、v2…，失敗或取消的提交也占號；已上架工具的舊版本號（例如 2.12.0）保留，下一次從 v1 開始 */
+export function nextAutoVersion(store: Store, toolId: string): string {
+  const n = store.get<{ n: number | null }>("SELECT MAX(CAST(SUBSTR(version,2) AS INTEGER)) AS n FROM submissions WHERE tool_id=? AND version GLOB 'v[0-9]*'", toolId)?.n ?? 0;
+  return `v${n + 1}`;
+}
+
 export function validToolName(name: string): string | null {
   const n = name.trim();
   if (!n) return '請填寫工具名稱';
@@ -66,13 +72,10 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
   if (trialing) {
     return { ok: false, warnings: inspected.warnings, issues: [{ file: '(平台)', reason: `此工具的 ${trialing.version} 正在試用中`, fix: '請先在試用區按「結束試用」（或由 AI Team 公開）後，再提交新版本' }] };
   }
-  const released = store.get<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND version=? AND status='released'", m.tool.id, m.tool.version);
-  if (released) {
-    return { ok: false, warnings: inspected.warnings, issues: [{ file: 'workhub.yaml', field: 'tool.version', reason: `版本 ${m.tool.version} 已發布過`, fix: '提交更新時請遞增版本號' }] };
-  }
-  const dup = store.get<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND source_hash=? AND status NOT IN ('superseded','failed','cancelled','interrupted','withdrawn')", m.tool.id, sourceHash);
+  const dup = store.get<{ id: string; version: string; status: string }>("SELECT id, version, status FROM submissions WHERE tool_id=? AND source_hash=? AND status NOT IN ('superseded','failed','cancelled','interrupted','withdrawn')", m.tool.id, sourceHash);
   if (dup) {
-    return { ok: false, warnings: inspected.warnings, issues: [{ file: '(ZIP)', reason: `相同內容已在處理中或已完成（${dup.id}）`, fix: '若要重跑請使用「重試」；若有修改請重新打包' }] };
+    const where = dup.status === 'released' ? '已發布' : dup.status === 'trial' ? '試用中' : '審核中';
+    return { ok: false, warnings: inspected.warnings, issues: [{ file: '(ZIP)', reason: `這個 ZIP 和 ${dup.version}（${where}）的內容完全一樣`, fix: '請上傳修改後重新打包的 ZIP；只想重跑檢查，請在提交詳情按「重試」' }] };
   }
 
   const submissionId = newId('sub');
@@ -102,6 +105,7 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
       store.run('UPDATE tools SET updated_at=? WHERE id=?', t, m.tool.id);
     }
     revision = (store.get<{ r: number }>('SELECT COALESCE(MAX(revision),0)+1 AS r FROM submissions WHERE tool_id=?', m.tool.id)?.r) ?? 1;
+    m.tool.version = nextAutoVersion(store, m.tool.id);
     // 新修訂使舊提交（未發布者）的測試確認與核准失效
     const older = store.all<{ id: string }>("SELECT id FROM submissions WHERE tool_id=? AND status NOT IN ('released','superseded','withdrawn')", m.tool.id);
     for (const o of older) {

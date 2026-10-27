@@ -185,8 +185,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         return <div className="onb-tool-row" key={t.toolId}>
           <span><b>{t.toolName}</b>{t.kind === 'url' && <span className="onb-kind-tag">URL</span>}<small>{t.kind === 'url' ? <>網址 {t.urlConfig?.url}</> : <>tool.id <code>{t.toolId}</code></>} · 最新提交 {t.version} · {SUB_STATUS[t.status] ?? t.status}{building ? (t.kind === 'url' ? ' · 檢查中' : ' · 建置中，完成後才能提交新版本') : ''}</small></span>
           {t.kind === 'url' ? <span className="onb-head-actions"><button className="onb-primary-sm" disabled={busy || building} onClick={() => openSubmission(t)}>✎ 修改網址設定</button></span>
-          : <span className="onb-head-actions"><a className="onb-kit" href={`/api/onboarding/kit?toolId=${encodeURIComponent(t.toolId)}`} download={`workhub-kit-${t.toolId}.zip`} title="給 AI 的指令已帶入 tool.id、目前版本、建議的新版本號與模型端點">下載更新資料包 ↓</a>
-          <button className="onb-primary-sm" disabled={busy || building} onClick={() => openSubmission(t)}>↻ 提交新版本</button></span>}
+          : <span className="onb-head-actions"><button className="onb-primary-sm" disabled={busy || building} onClick={() => openSubmission(t)}>↻ 提交新版本</button></span>}
         </div>;
       })}</div>}
     </section>
@@ -224,10 +223,11 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         </div>
       </form>
       </> : <>
-      <p className="mg-muted">ZIP 最上層需有 <code>workhub.yaml</code> 與 <code>Dockerfile</code>。上傳後由上架服務自動驗證、建置、檢查、測試並啟動預覽；關閉瀏覽器不影響進度。</p>
-      {!submissionForm.tool && <div className="onb-note onb-kit-note"><span>還沒有 ZIP？先下載上架資料包（SOP、範本、預檢工具與給 AI 的打包指令），交給 AI agent 打包。</span><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a></div>}
+      {submissionForm.tool
+        ? <div className="onb-note onb-kit-note"><span>程式修改完後，照第一次上架的方式打包上傳；版本號不用改，平台會自動編號。</span><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a></div>
+        : <div className="onb-note onb-kit-note"><span>還沒有 ZIP？下載上架資料包，連同程式碼交給 AI agent 打包。</span><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a></div>}
       {health && (!health.docker || !health.trivy) && <p className="onb-error">{!health.docker ? '找不到 Docker，無法建置。' : ''}{!health.trivy ? '找不到漏洞掃描器（trivy），掃描步驟會顯示「未完成」且不能送交。' : ''}</p>}
-      {submissionForm.tool && <p className="onb-note">更新工具：<code>{submissionForm.tool.toolId}</code>。ZIP 中的 tool.id 必須相同，並填寫新版本號。<b>送出後，目前這一版的測試確認、漏洞例外與核准都會失效</b>，需重新建置、測試與核准；只想繼續目前這一版，請按「取消」並在下方提交詳情操作。</p>}
+      {submissionForm.tool && !['released', 'superseded', 'withdrawn', 'trial', 'failed', 'cancelled'].includes(submissionForm.tool.status) && <p className="onb-note">目前的 {submissionForm.tool.version} 還在審核中，送出新版本後它會作廢。</p>}
       <form key={submissionForm.tool?.id ?? 'new'} className="mg-fields onb-upload" onSubmit={(e) => {
         e.preventDefault(); if (!file) return;
         void act(async () => { const r = await onboardingApi.upload(file, department, owner, submissionForm.tool?.toolId, submissionForm.tool ? undefined : toolName, submissionForm.tool ? undefined : profile); setWarnings(r.warnings); setSelectedId(r.submission.id); setFile(null); setSubmissionForm(null); setLog(null); setNote(''); }, '已收件，開始建置與測試');

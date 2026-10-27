@@ -11,7 +11,7 @@ import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRele
 import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { endTrial, failTrial, passTrial, publish, unpublish } from './trial.ts';
 import { setToolIcon, submitUrlTool } from './url-tools.ts';
-import { buildKit, type KitTarget } from './kit.ts';
+import { buildKit } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmCodeReview, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
@@ -21,7 +21,6 @@ schemaVersion: workhub/v1
 tool:
   id: my-tool                 # 小寫英數字與連字號
   # name: 我的工具            # 選填；工具名稱以 WorkHub 上傳表單為準
-  version: 1.0.0              # 每次提交更新請遞增
   description: 一句話說明用途
 build:
   dockerfile: Dockerfile
@@ -149,19 +148,10 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       }
       send(res, 200, { toolId: m[1], name });
     } },
-    { method: 'GET', re: /^\/api\/onboarding\/kit$/, auth: true, fn: ({ res, url }) => {
-      const toolId = url.searchParams.get('toolId');
-      let target: KitTarget = null;
-      if (toolId) {
-        const tool = store.get<{ id: string; name: string }>('SELECT id, name FROM tools WHERE id=?', toolId);
-        if (!tool) throw new GateError(['找不到此工具']);
-        const latest = store.get<{ version: string; manifest_json: string }>('SELECT version, manifest_json FROM submissions WHERE tool_id=? ORDER BY revision DESC LIMIT 1', toolId)!;
-        const live = store.get<{ version: string }>("SELECT s.version FROM releases r JOIN submissions s ON s.id=r.submission_id WHERE r.tool_id=? AND r.status IN ('active','offline') ORDER BY r.updated_at DESC LIMIT 1", toolId);
-        const model = (JSON.parse(latest.manifest_json) as { model?: { uses?: boolean; approvedEndpoint?: string } }).model;
-        target = { toolId, name: tool.name, released: live?.version ?? null, latest: latest.version, approvedEndpoint: model?.uses ? model.approvedEndpoint ?? null : null };
-      }
-      const { zip, missing } = buildKit(TEMPLATE, cfg.approvedModelEndpoints, target);
-      const fname = toolId ? `workhub-kit-${toolId}.zip` : 'workhub-kit.zip';
+    // 只有一種上架資料包（DEC-039：版本號由平台自動編號，不再需要預填 tool.id／版本號的更新資料包）
+    { method: 'GET', re: /^\/api\/onboarding\/kit$/, auth: true, fn: ({ res }) => {
+      const { zip, missing } = buildKit(TEMPLATE, cfg.approvedModelEndpoints);
+      const fname = 'workhub-kit.zip';
       send(res, 200, zip, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${fname}"`, ...(missing.length ? { 'X-Kit-Missing': encodeURIComponent(missing.join(',')) } : {}) });
     } },
     { method: 'GET', re: /^\/api\/onboarding\/template$/, auth: true, fn: ({ res }) => {

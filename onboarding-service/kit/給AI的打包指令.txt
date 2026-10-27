@@ -10,11 +10,11 @@
 2. 遇到第 12 節「必須停下來問人」的事項，先問我，不要自己決定。
 3. 依 SOP 補齊或修改 workhub.yaml、Dockerfile、.dockerignore、鎖定套件清單與業務測試；必要時調整程式，讓資料只寫在 DATA_DIR、監聽 0.0.0.0、有健康檢查網址、使用 AI 時只讀 OPENAI_BASE_URL／OPENAI_API_KEY／OPENAI_MODEL。
 4. 在本機實際跑過：業務測試（不連網）、docker 建置（linux/arm64）、啟動後健康檢查。
-5. 打包成 ZIP（檔名：<tool.id>-<版本>.zip），用 node workhub-kit/workhub-check.mjs <ZIP> 預檢，直到顯示「通過收件檢查」。
+5. 打包成 ZIP（檔名：<tool.id>.zip），用 node workhub-kit/workhub-check.mjs <ZIP> 預檢，直到顯示「通過收件檢查」。
 6. 最後給我「打包報告」（格式見 SOP 第 12 節），列出改了什麼、測試與驗證結果、還需要我確認的事。
 
 {{TARGET}}
 
 {{ENDPOINTS}}
 
-不要做的事：不要把任何金鑰、密碼或 .env 放進 ZIP 或程式；不要放真實客戶或個人資料；不要為了通過而刪掉或跳過測試；版本更新時不要改 tool.id。
+不要做的事：不要把任何金鑰、密碼或 .env 放進 ZIP 或程式；不要放真實客戶或個人資料；不要為了通過而刪掉或跳過測試；版本更新時不要改 tool.id；版本號由 WorkHub 自動編號，不用填。

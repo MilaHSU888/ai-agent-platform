@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto';
 import type { Config } from './config.ts';
 import { newId, now, STEPS, type Store } from './db.ts';
-import { validToolName } from './intake.ts';
+import { nextAutoVersion, validToolName } from './intake.ts';
 import type { Issue } from './zip-intake.ts';
 import type { Runtime } from './runtime.ts';
 
@@ -63,7 +63,7 @@ export function submitUrlTool(store: Store, cfg: Config, f: UrlForm): { ok: true
       store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at,visibility,kind,description,scenario) VALUES (?,?,?,?,?,?,'trial','url',?,?)", toolId, f.name!.trim(), f.department!.trim(), f.owner!.trim(), t, t, f.description.trim(), (f.scenario ?? '').trim() || null);
     }
     const revision = store.get<{ r: number }>('SELECT COALESCE(MAX(revision),0)+1 AS r FROM submissions WHERE tool_id=?', toolId)!.r;
-    const config: UrlConfig = { kind: 'url', tool: { id: toolId, version: `v${revision}` }, url: nu.url!, description: f.mode === 'new' ? f.description.trim() : (store.get<{ description: string | null }>('SELECT description FROM tools WHERE id=?', toolId)?.description ?? ''), usesAi: f.usesAi, aiConfirmed: f.aiConfirmed, guide: (f.guide ?? '').trim() };
+    const config: UrlConfig = { kind: 'url', tool: { id: toolId, version: nextAutoVersion(store, toolId) }, url: nu.url!, description: f.mode === 'new' ? f.description.trim() : (store.get<{ description: string | null }>('SELECT description FROM tools WHERE id=?', toolId)?.description ?? ''), usesAi: f.usesAi, aiConfirmed: f.aiConfirmed, guide: (f.guide ?? '').trim() };
     // 用途說明屬於工具層級（AI Team 可直接改），不算在設定變更內
     const hash = createHash('sha256').update(JSON.stringify({ ...config, description: undefined, tool: { id: toolId } })).digest('hex');
     if (store.get("SELECT id FROM submissions WHERE tool_id=? AND source_hash=? AND status NOT IN ('superseded','withdrawn')", toolId, hash)) {

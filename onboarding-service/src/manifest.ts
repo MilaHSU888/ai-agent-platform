@@ -57,15 +57,14 @@ export function validateManifest(text: string, files: Set<string>, cfg: Config):
   if (doc.schemaVersion !== 'workhub/v1') bad('schemaVersion', `必須為 workhub/v1（目前：${String(doc.schemaVersion)}）`, '把 schemaVersion 設為 workhub/v1');
 
   const tool = isObj(doc.tool) ? doc.tool : {};
-  if (!isObj(doc.tool)) bad('tool', '缺少 tool 區塊', '補上 tool.id、name、version、description');
+  if (!isObj(doc.tool)) bad('tool', '缺少 tool 區塊', '補上 tool.id 與 description');
   if (typeof tool.id !== 'string' || !/^[a-z][a-z0-9-]{2,40}$/.test(tool.id)) {
     bad('tool.id', '工具 ID 必須是 3～41 個小寫英數字或連字號，且以英文字母開頭', '例如 quote-aggregator');
   }
   // 工具名稱以平台表單為準（2026-10-13 決策）；tool.name 選填，只在第一次上架且表單沒填時當預設值
   if (tool.name !== undefined && (typeof tool.name !== 'string' || tool.name.trim().length > 40)) bad('tool.name', '工具名稱需為 40 字以內的文字', '可刪除此欄，改在平台上傳表單填寫');
-  if (typeof tool.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(tool.version)) {
-    bad('tool.version', '版本需為語意化版本（例如 1.2.0 或 1.2.0-pilot.1）', '修正版本字串；每次提交更新需遞增');
-  }
+  // 版本號由平台自動編號（v1、v2…，2026/10/27 決策 DEC-039）；舊 ZIP 仍寫 tool.version 時只提醒、不擋
+  if (tool.version !== undefined) warn('tool.version', '版本號由平台自動編號（v1、v2…），這個欄位會被忽略', '可刪除 tool.version');
   if (typeof tool.description !== 'string' || !tool.description.trim()) warn('tool.description', '缺少說明', '補上工具用途說明');
 
   const build = isObj(doc.build) ? doc.build : {};
@@ -159,7 +158,7 @@ export function validateManifest(text: string, files: Set<string>, cfg: Config):
     warnings,
     manifest: {
       schemaVersion: 'workhub/v1',
-      tool: { id: tool.id as string, name: typeof tool.name === 'string' ? tool.name.trim() : '', version: tool.version as string, description: String(tool.description ?? '') },
+      tool: { id: tool.id as string, name: typeof tool.name === 'string' ? tool.name.trim() : '', version: '', description: String(tool.description ?? '') },
       build: { dockerfile: dfPath, context: context || '.', platforms: platforms as string[] },
       run: {
         port: run.port as number,

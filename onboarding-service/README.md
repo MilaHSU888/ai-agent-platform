@@ -39,7 +39,8 @@ MODEL_BASE_URL=https://… node --experimental-strip-types tools/set-model-endpo
 - **封存**：`POST /tools/:id/archive`（發布管理「封存工具」）停止工具的正式、試用、預覽容器，並從入口、開發者中心、發布管理、維運中心移除；資料卷與所有紀錄保留，不是永久刪除。
 - **URL 上架（DEC-037）**：`POST /submissions/url`（JSON）登錄既有網站；`tools.kind`／`submissions.kind`＝`url`，設定存在 `manifest_json`，`image_digest` 為 `url:<hash>`。檢查工作只跑表單與連線檢查（`platform_test`，連不上為 `warning`、不阻擋），其餘步驟 `not_applicable`，完成後直接 `awaiting_approval`。發布、試用、公開、下架、版本切換只切換入口網址（不啟動容器）；`restart`／`logs` 對 URL 工具回 409。
 - **工具圖示與說明（DEC-038）**：`POST /tools/:id/icon`（symbol 0～5、6 種內建顏色）與 `POST /tools/:id/profile`（用途說明必填、適用情境選填，各 80 字）；catalog 回傳 `kind`、`icon`、`description`、`scenario`。網站只讓 AI Team 使用（本機後端不檢查角色）。
-- **資料包**：`GET /api/onboarding/kit` 下載上架資料包；`?toolId=` 下載預填該工具 `tool.id`、下一版號與模型端點代號的更新資料包。
+- **資料包**：`GET /api/onboarding/kit` 下載上架資料包（新工具與版更同一份；2026/10/27 起不再有預填版號的更新資料包）。
+- **版本號（DEC-039）**：平台每次收件自動給 `v<n>`（同一工具已用過的 v 號最大值 +1；失敗、取消的提交也占號），ZIP 與 URL 工具相同；已上架工具的舊語意化版號保留，下一次從 v1 開始。`workhub.yaml` 的 `tool.version` 改為不用填，有寫只提醒並忽略。
 
 ## 尚未實作
 

@@ -45,7 +45,6 @@ export const MANIFEST = `schemaVersion: workhub/v1
 tool:
   id: demo-tool
   name: 示範工具
-  version: 1.0.0
   description: 測試用
 build:
   dockerfile: Dockerfile

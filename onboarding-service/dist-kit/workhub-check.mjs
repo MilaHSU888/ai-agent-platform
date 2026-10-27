@@ -7357,14 +7357,12 @@ function validateManifest(text, files, cfg2) {
   }
   if (doc.schemaVersion !== "workhub/v1") bad("schemaVersion", `\u5FC5\u9808\u70BA workhub/v1\uFF08\u76EE\u524D\uFF1A${String(doc.schemaVersion)}\uFF09`, "\u628A schemaVersion \u8A2D\u70BA workhub/v1");
   const tool = isObj(doc.tool) ? doc.tool : {};
-  if (!isObj(doc.tool)) bad("tool", "\u7F3A\u5C11 tool \u5340\u584A", "\u88DC\u4E0A tool.id\u3001name\u3001version\u3001description");
+  if (!isObj(doc.tool)) bad("tool", "\u7F3A\u5C11 tool \u5340\u584A", "\u88DC\u4E0A tool.id \u8207 description");
   if (typeof tool.id !== "string" || !/^[a-z][a-z0-9-]{2,40}$/.test(tool.id)) {
     bad("tool.id", "\u5DE5\u5177 ID \u5FC5\u9808\u662F 3\uFF5E41 \u500B\u5C0F\u5BEB\u82F1\u6578\u5B57\u6216\u9023\u5B57\u865F\uFF0C\u4E14\u4EE5\u82F1\u6587\u5B57\u6BCD\u958B\u982D", "\u4F8B\u5982 quote-aggregator");
   }
   if (tool.name !== void 0 && (typeof tool.name !== "string" || tool.name.trim().length > 40)) bad("tool.name", "\u5DE5\u5177\u540D\u7A31\u9700\u70BA 40 \u5B57\u4EE5\u5167\u7684\u6587\u5B57", "\u53EF\u522A\u9664\u6B64\u6B04\uFF0C\u6539\u5728\u5E73\u53F0\u4E0A\u50B3\u8868\u55AE\u586B\u5BEB");
-  if (typeof tool.version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(tool.version)) {
-    bad("tool.version", "\u7248\u672C\u9700\u70BA\u8A9E\u610F\u5316\u7248\u672C\uFF08\u4F8B\u5982 1.2.0 \u6216 1.2.0-pilot.1\uFF09", "\u4FEE\u6B63\u7248\u672C\u5B57\u4E32\uFF1B\u6BCF\u6B21\u63D0\u4EA4\u66F4\u65B0\u9700\u905E\u589E");
-  }
+  if (tool.version !== void 0) warn("tool.version", "\u7248\u672C\u865F\u7531\u5E73\u53F0\u81EA\u52D5\u7DE8\u865F\uFF08v1\u3001v2\u2026\uFF09\uFF0C\u9019\u500B\u6B04\u4F4D\u6703\u88AB\u5FFD\u7565", "\u53EF\u522A\u9664 tool.version");
   if (typeof tool.description !== "string" || !tool.description.trim()) warn("tool.description", "\u7F3A\u5C11\u8AAA\u660E", "\u88DC\u4E0A\u5DE5\u5177\u7528\u9014\u8AAA\u660E");
   const build = isObj(doc.build) ? doc.build : {};
   if (!isObj(doc.build)) bad("build", "\u7F3A\u5C11 build \u5340\u584A", "\u88DC\u4E0A build.dockerfile \u8207 build.context");
@@ -7455,7 +7453,7 @@ function validateManifest(text, files, cfg2) {
     warnings,
     manifest: {
       schemaVersion: "workhub/v1",
-      tool: { id: tool.id, name: typeof tool.name === "string" ? tool.name.trim() : "", version: tool.version, description: String(tool.description ?? "") },
+      tool: { id: tool.id, name: typeof tool.name === "string" ? tool.name.trim() : "", version: "", description: String(tool.description ?? "") },
       build: { dockerfile: dfPath, context: context || ".", platforms },
       run: {
         port: run.port,
@@ -7728,7 +7726,7 @@ var r = inspectZip(buf, cfg);
 var line = (i) => `  - ${i.file}${i.field ? ` \xB7 ${i.field}` : ""}\uFF1A${i.reason}
     \u2192 ${i.fix}`;
 console.log(`WorkHub \u63D0\u4EA4\u5305\u9810\u6AA2\uFF08workhub/v1\uFF09\uFF1A${file}`);
-if (r.manifest) console.log(`\u5DE5\u5177 ${r.manifest.tool.id} ${r.manifest.tool.version}\uFF08${r.manifest.tool.name}\uFF09\u30FB\u57E0 ${r.manifest.run.port}\u30FB\u5065\u5EB7\u6AA2\u67E5 ${r.manifest.run.healthCheck.path}\u30FB\u696D\u52D9\u6E2C\u8A66 ${r.manifest.test ? r.manifest.test.command.join(" ") : "\u672A\u63D0\u4F9B"}\u30FB\u6A21\u578B ${r.manifest.model.uses ? r.manifest.model.approvedEndpoint : "\u4E0D\u4F7F\u7528"}`);
+if (r.manifest) console.log(`\u5DE5\u5177 ${r.manifest.tool.id}${r.manifest.tool.name ? `\uFF08${r.manifest.tool.name}\uFF09` : ""}\u30FB\u57E0 ${r.manifest.run.port}\u30FB\u5065\u5EB7\u6AA2\u67E5 ${r.manifest.run.healthCheck.path}\u30FB\u696D\u52D9\u6E2C\u8A66 ${r.manifest.test ? r.manifest.test.command.join(" ") : "\u672A\u63D0\u4F9B"}\u30FB\u6A21\u578B ${r.manifest.model.uses ? r.manifest.model.approvedEndpoint : "\u4E0D\u4F7F\u7528"}`);
 if (r.issues.length) {
   console.log(`
 \u2717 \u6703\u88AB\u62D2\u6536\uFF08${r.issues.length} \u9805\uFF09\uFF1A`);

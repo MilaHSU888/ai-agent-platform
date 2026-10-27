@@ -20,7 +20,7 @@ const cfg = loadConfig({ dataDir: tmpdir(), hostPlatform: 'linux/arm64' });
 const r = inspectZip(buf, cfg);
 const line = (i: { file: string; field?: string; reason: string; fix: string }) => `  - ${i.file}${i.field ? ` · ${i.field}` : ''}：${i.reason}\n    → ${i.fix}`;
 console.log(`WorkHub 提交包預檢（workhub/v1）：${file}`);
-if (r.manifest) console.log(`工具 ${r.manifest.tool.id} ${r.manifest.tool.version}（${r.manifest.tool.name}）・埠 ${r.manifest.run.port}・健康檢查 ${r.manifest.run.healthCheck.path}・業務測試 ${r.manifest.test ? r.manifest.test.command.join(' ') : '未提供'}・模型 ${r.manifest.model.uses ? r.manifest.model.approvedEndpoint : '不使用'}`);
+if (r.manifest) console.log(`工具 ${r.manifest.tool.id}${r.manifest.tool.name ? `（${r.manifest.tool.name}）` : ''}・埠 ${r.manifest.run.port}・健康檢查 ${r.manifest.run.healthCheck.path}・業務測試 ${r.manifest.test ? r.manifest.test.command.join(' ') : '未提供'}・模型 ${r.manifest.model.uses ? r.manifest.model.approvedEndpoint : '不使用'}`);
 if (r.issues.length) {
   console.log(`\n✗ 會被拒收（${r.issues.length} 項）：`);
   console.log(r.issues.map(line).join('\n'));
