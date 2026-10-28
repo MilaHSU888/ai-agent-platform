@@ -219,7 +219,7 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
     const pvName = `wh-preview-${m.tool.id}`;
     const pvVol = `wh-preview-${m.tool.id}-r${sub.revision}-data`;
     const port = await allocatePort(store, cfg.ports.previewStart, cfg.ports.previewEnd, 'preview_port');
-    const access = await prepareModelAccess(cfg, rt, secrets, m, m.tool.id, pvCtx);
+    const access = await prepareModelAccess(cfg, rt, secrets, store, m, m.tool.id, pvCtx);
     const env = access.env;
     const pst = await rt.start({ image: tag, name: pvName, labels: { ...labels, 'workhub.kind': 'preview' }, hostPort: port, containerPort: m.run.port, volume: mount ? pvVol : undefined, mountPath: mount, env, memoryBytes, cpus: m.run.resources.cpu, command: m.run.command, network: access.network }, pvCtx);
     const ph = pst.code === 0

@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, onboardingApi, type OpsEvent } from './onboarding-api';
+import { ToolUsageLine } from './model-admin';
 import { defaultConfig, modelKind, modelsOf, normalizeModel, type DemoConfig, type DemoState, type DemoStatus, type DemoTool } from './demo-management';
 
 type Change = (fn: (s: DemoState) => DemoState) => void;
@@ -103,6 +104,7 @@ export function MonitorCenter({ state, tools, change, notice, releasedIds, urlTo
         <div><b>{tool.name}</b><small>{cfg.version}・Owner {cfg.owner}</small></div>
         <span className={`mg-status ${cfg.status === '運行中' ? 'good' : cfg.status === '已下架' ? 'bad' : 'warn'}`}>{cfg.status}</span>
       </div>
+      {real && !isUrl && tool.type === 'AI' && <ToolUsageLine key={realId} toolId={realId} />}
       {real ? <>
         <div className="oc-actions">{realActions.map((a) => <button key={a.key} className={`oc-action ${a.tone ?? ''}`} disabled={!a.enabled} onClick={a.run}>
           <span>{a.icon}</span><div><b>{a.title}</b><small>{a.desc}</small></div></button>)}</div>

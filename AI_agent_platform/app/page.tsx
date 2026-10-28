@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolEntry } from "./tool-entry";
+import { ModelUsagePanel } from "./model-admin";
 import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
 import { DEFAULT_LOCAL_MODEL, defaultConfig, entryBlock, initialDemo, normalizeModel, type DemoState } from "./demo-management";
 import { onboardingApi, type CatalogTool } from "./onboarding-api";
@@ -886,7 +887,7 @@ function KnowledgeAdminPanel() {
 }
 
 function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: number }) {
-  const [adminSection, setAdminSection] = useState<"usage" | "knowledge">("usage");
+  const [adminSection, setAdminSection] = useState<"usage" | "models" | "knowledge">("usage");
   const [period, setPeriod] = useState("本月");
   const [detailDepartment, setDetailDepartment] = useState("sales");
   const ranked = [...departments.slice(1)].sort((a, b) => b.active / b.count - a.active / a.count);
@@ -897,12 +898,13 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
   return (
     <div className="analytics-view">
       <section className="analytics-header">
-        <div><p className="eyebrow">管理者視角</p><h1>{adminSection === "usage" ? "平台成效儀表板" : "知識庫管理後台"}</h1><p>{adminSection === "usage" ? "以下為舊版示意統計；正式容量與效益公式待客戶核准" : "集中維護全公司與各部門的問答內容、文件與啟用狀態"}</p></div>
+        <div><p className="eyebrow">管理者視角</p><h1>{adminSection === "usage" ? "平台成效儀表板" : adminSection === "models" ? "模型用量" : "知識庫管理後台"}</h1><p>{adminSection === "usage" ? "以下為舊版示意統計；正式容量與效益公式待客戶核准" : adminSection === "models" ? "各工具呼叫 AI 模型的次數、token 與回應時間（真實資料，來自平台模型轉接服務）" : "集中維護全公司與各部門的問答內容、文件與啟用狀態"}</p></div>
         {adminSection === "usage" && <label className="period-select"><span>期間</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option>本月</option><option>近 3 個月</option><option>本年度</option></select></label>}
       </section>
 
       <nav className="admin-section-tabs" aria-label="管理者後台功能">
         <button className={adminSection === "usage" ? "active" : ""} onClick={() => setAdminSection("usage")}><span>效</span><div><strong>使用成效</strong><small>採用率與節省工時</small></div></button>
+        <button className={adminSection === "models" ? "active" : ""} onClick={() => setAdminSection("models")}><span>模</span><div><strong>模型用量</strong><small>真實資料・各工具呼叫與 token</small></div></button>
         <button className={adminSection === "knowledge" ? "active" : ""} onClick={() => setAdminSection("knowledge")}><span>知</span><div><strong>知識庫管理</strong><small>全公司與部門內容</small></div></button>
       </nav>
 
@@ -984,7 +986,7 @@ function Analytics({ totalRuns, totalSaved }: { totalRuns: number; totalSaved: n
       </section>
 
       <section className="measurement-note"><span>i</span><div><strong>效益估算方式</strong><p>正式紀錄只計通過權限與入口狀態檢查的有效入口點擊，不推定工作完成。節省時間依客戶核准基準與公式計算；本頁歷史數字僅為版面示例，正式效益尚無資料。</p></div></section>
-      </> : <KnowledgeAdminPanel />}
+      </> : adminSection === "models" ? <ModelUsagePanel /> : <KnowledgeAdminPanel />}
     </div>
   );
 }

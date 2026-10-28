@@ -40,6 +40,8 @@ export interface Runtime {
   backupVolume(volume: string, file: string, ctx: Ctx): Promise<boolean>;
   /** URL 工具：檢查網址能否連上（逐步跟隨轉址，最多 5 次） */
   checkUrl(url: string): Promise<import('./url-tools.ts').UrlCheck>;
+  /** 向模型端點查詢模型清單（GET <base>/models）；金鑰只在服務端使用 */
+  listModels(base: string, key: string): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }>;
   restoreVolume(volume: string, file: string, ctx: Ctx): Promise<boolean>;
   removeVolume(name: string, ctx?: Ctx): Promise<void>;
   logs(name: string, ctx: Ctx): Promise<void>;
@@ -54,7 +56,7 @@ export interface Runtime {
   ensureRelay(spec: RelaySpec, ctx?: Ctx): Promise<{ ok: boolean; detail: string }>;
 }
 
-export type RelaySpec = { name: string; image: string; script: string; logsDir: string; env: Record<string, string>; hash: string; networks: string[]; alias: string };
+export type RelaySpec = { name: string; image: string; script: string; logsDir: string; routesDir: string; env: Record<string, string>; hash: string; networks: string[]; alias: string };
 
 export function freePort(): Promise<number> {
   return new Promise((res, rej) => {
@@ -225,9 +227,10 @@ export class DockerRuntime implements Runtime {
       await run(d, ['rm', '-f', spec.name], opts);
       const { mkdirSync } = await import('node:fs');
       mkdirSync(spec.logsDir, { recursive: true });
+      mkdirSync(spec.routesDir, { recursive: true });
       const args = ['run', '-d', '--name', spec.name, '--restart', 'unless-stopped', ...hardening(), '--read-only', '--user', '10001:10001',
         '--memory', '256m', '--cpus', '0.5', '--network', 'bridge', '--label', 'workhub.kind=llm-relay', '--label', `workhub.relay-hash=${spec.hash}`,
-        '-v', `${spec.script}:/app/llm_relay.py:ro`, '-v', `${spec.logsDir}:/logs`];
+        '-v', `${spec.script}:/app/llm_relay.py:ro`, '-v', `${spec.logsDir}:/logs`, '-v', `${spec.routesDir}:/routes:ro`];
       for (const k of Object.keys(spec.env)) args.push('-e', k); // 金鑰經子程序環境傳入，不出現在命令列
       args.push(spec.image, 'python', '-I', '/app/llm_relay.py');
       const r = await run(d, args, { ...opts, env: { ...process.env, ...spec.env } });
@@ -241,6 +244,17 @@ export class DockerRuntime implements Runtime {
       if (c.code !== 0) return { ok: false, detail: `轉接服務無法接上 ${n}：${c.stderr.slice(0, 200)}` };
     }
     return { ok: true, detail: `轉接服務運作中（${spec.networks.length} 個工具網路）` };
+  }
+
+  async listModels(base: string, key: string) {
+    try {
+      const res = await fetch(`${base.replace(/\/$/, '')}/models`, { headers: { Authorization: `Bearer ${key}`, 'User-Agent': 'WorkHub-Onboarding/0.1' }, signal: AbortSignal.timeout(10000) });
+      if (res.status !== 200) return { ok: false as const, error: `端點回應 HTTP ${res.status}` };
+      const j = await res.json() as { data?: { id: string }[] };
+      return { ok: true as const, ids: (j.data ?? []).map((m) => m.id).filter(Boolean) };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).name === 'TimeoutError' ? '連線逾時' : '連不到模型端點' };
+    }
   }
 
   async checkUrl(url: string) {

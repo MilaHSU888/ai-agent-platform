@@ -28,8 +28,9 @@ export function promptText(approved: string[]): string {
     '版本更新（既有工具）：',
     '- 沿用專案裡原本的 workhub.yaml，不要更改 tool.id，也不用改版本號',
     '- 上傳時請在 WorkHub 開發者中心該工具那一列按「提交新版本」'].join('\n');
-  const e = [`模型端點：工具如果需要呼叫 AI 模型，model.approvedEndpoint 只能填平台核准的代號：${approved.join('、') || '（目前沒有）'}。`,
-    '版本更新時沿用 workhub.yaml 原本的 approvedEndpoint；工具不使用 AI 時，model.uses 設為 false。',
+  void approved;
+  const e = ['模型：工具需要呼叫 AI 模型時，把 model.uses 設為 true；用哪個模型由 WorkHub 的 AI Team 指定（沒指定就用平台預設模型），不用填 approvedEndpoint。',
+    '工具不使用 AI 時，model.uses 設為 false。程式裡呼叫模型時，model 參數直接用環境變數 OPENAI_MODEL。',
     '實際網址、金鑰與模型名稱由平台注入 OPENAI_BASE_URL／OPENAI_API_KEY／OPENAI_MODEL，不要寫在程式或 ZIP 裡。'].join('\n');
   return base.replace('{{TARGET}}', t).replace('{{ENDPOINTS}}', e);
 }

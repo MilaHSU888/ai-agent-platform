@@ -92,7 +92,8 @@ export function TrialCard({ tool: t, role, notice, onDone, bare = false }: { too
   const errs = (k: string) => (errors[k]?.length ?? 0) > 0 && <ul className="onb-error">{errors[k].map((r) => <li key={r}>{r}</li>)}</ul>;
   return <article id={`trial-${t.toolId}`} className={bare ? 'onb-trial-card' : 'onb-review-item'}>
     <div className="mg-row"><div>{!bare && <h3>{t.name} · {version}</h3>}{bare && <h3>試用版 {version}</h3>}
-      <small className="mg-muted">{parallel ? `新版並行試用：一般使用者仍使用 ${t.version}；試用版從空白資料開始，請自行上傳測試資料（公開時捨棄）` : '首次上架：工具尚未公開，一般使用者看不到'} · Owner {t.owner}</small></div>
+      <small className="mg-muted">{parallel ? `新版並行試用：一般使用者仍使用 ${t.version}；試用版從空白資料開始，請自行上傳測試資料（公開時捨棄）` : '首次上架：工具尚未公開，一般使用者看不到'} · Owner {t.owner}</small>
+      {t.model && <p className="mm-model-line">模型：<b>{t.model.ref?.model ?? '尚未設定（請聯絡 AI Team）'}</b>{t.model.ref && (t.model.source === 'default' ? '（平台預設）' : '（AI Team 指定）')}</p>}</div>
       <span className={`mg-status ${passed ? 'good' : failed ? 'bad' : 'warn'}`}>{passed ? '開發者已試用通過，待 AI Team 公開' : failed ? '測試未通過' : '待開發者試用'}</span></div>
     {result && <p className={failed ? 'onb-error' : 'mg-muted'}>測試結果（{result.actor}，{new Date(result.at).toLocaleString('zh-TW')}）：{result.result === 'passed' ? '試用通過' : '測試未通過'}{result.note ? `：${result.note}` : ''}{failed && '。請修正後提交新版本，或重新測試後按「試用通過」。'}</p>}
     <div className="mg-actions">

@@ -9,6 +9,7 @@ import { JobQueue } from './queue.ts';
 import { createApp } from './server.ts';
 import { runReleaseJob } from './releases.ts';
 import { relayEnv, syncRelay } from './relay.ts';
+import { seedDefault } from './models.ts';
 
 const cfg = loadConfig();
 
@@ -39,9 +40,11 @@ const { server } = createApp(store, cfg, queue, rt, secrets);
 
 const avail = await rt.available();
 // 模型轉接服務：設定改變（例如換金鑰）時重新套用；尚未有工具使用模型時不啟動
+// 第一次使用時設定平台預設模型（之後由 AI Team 在平台設定 → 模型端點調整）
+if (relayEnv(cfg, secrets)) await seedDefault(cfg, store, rt, secrets).catch(() => { /* 連不到端點時下次再試 */ });
 const relay = avail.docker && relayEnv(cfg, secrets) && Object.keys(secrets.relayTokens()).length
-  ? await syncRelay(cfg, rt, secrets).catch((e: Error) => ({ ok: false, detail: e.message }))
-  : { ok: false, detail: relayEnv(cfg, secrets) ? '尚無工具使用模型，第一次預覽或發布時啟動' : '核准模型端點尚未設定（雙擊「設定模型端點.command」）' };
+  ? await syncRelay(cfg, rt, secrets, store).catch((e: Error) => ({ ok: false, detail: e.message }))
+  : { ok: false, detail: relayEnv(cfg, secrets) ? '尚無工具使用模型，第一次預覽或發布時啟動' : '模型端點尚未設定（雙擊「設定模型端點.command」）' };
 server.on('error', (e: NodeJS.ErrnoException) => {
   console.error(e.code === 'EADDRINUSE' ? `埠 ${cfg.port} 剛被其他程式占用，上架服務無法啟動。請關閉另一個上架服務視窗後再試。` : `上架服務無法啟動：${e.message}`);
   process.exit(1);

@@ -1019,3 +1019,32 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .onb-check input { width:auto !important; margin-top:3px; }
 .onb-kit-note { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; }
 .onb-upload .onb-span2 { grid-column: span 2; }
+
+/* 模型管理（DEC-040） */
+.mm-endpoint { border:1px solid #e3e8f0; border-radius:12px; padding:14px 16px; margin:14px 0; }
+.mm-endpoint h3 { margin:0; }
+.mm-loc { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:6px; font-size:12px; font-weight:800; vertical-align:middle; }
+.mm-loc.local { background:#eaf4ed; color:#3f6b4c; }
+.mm-loc.cloud { background:#fff1df; color:#9a5a12; }
+.mm-reason { margin-top:10px; }
+.mm-tool { display:grid; gap:8px; padding:12px 0; border-top:1px solid #edf1f5; margin-top:8px; }
+.mm-tool h3 { margin:0; }
+.mm-tool-row { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto; gap:8px; align-items:center; }
+.mm-usage-line { margin:8px 0 0; padding:8px 12px; background:#f3f7fb; border-radius:8px; font-size:13px; color:#3d4f66; }
+.mm-usage-line.warn { background:#fff7e6; color:#5c4100; }
+.mm-usage { margin-top:20px; }
+.mm-real { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:6px; background:#eaf4ed; color:#3f6b4c; font-size:12px; vertical-align:middle; }
+.mm-kpis { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin:14px 0; }
+.mm-kpis > div { background:#f6f8fb; border-radius:12px; padding:12px 14px; display:grid; gap:2px; }
+.mm-kpis small { color:#718096; font-size:12px; }
+.mm-kpis strong { font-size:22px; color:#1e2c49; }
+.mm-kpis span { color:#8a96a8; font-size:11px; }
+.mm-bars { display:flex; align-items:flex-end; gap:4px; height:120px; margin:8px 0 14px; padding:0 4px; border-bottom:1px solid #e3e8f0; overflow-x:auto; }
+.mm-bars > div { flex:1 0 18px; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:3px; }
+.mm-bars i { width:70%; background:#2d4f7c; border-radius:4px 4px 0 0; display:block; }
+.mm-bars small { font-size:10px; color:#8a96a8; }
+.mm-table { width:100%; border-collapse:collapse; font-size:13px; }
+.mm-table th, .mm-table td { padding:9px 10px; border-bottom:1px solid #edf1f5; text-align:left; white-space:nowrap; }
+.mm-notices p { margin:4px 0 0; font-size:13px; }
+@media(max-width:760px){ .mm-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} .mm-tool-row{grid-template-columns:1fr;} }
+.mm-model-line { margin:6px 0 0; font-size:13px; color:#3d4f66; }

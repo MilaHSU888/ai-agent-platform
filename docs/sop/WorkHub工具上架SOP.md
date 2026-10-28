@@ -91,7 +91,7 @@ Mac 壓縮時產生的 `__MACOSX/` 與 `.DS_Store` 會自動忽略，不必手�
 | `test.network` | 選填 | 只能是 `none`（測試不得連外） | `none` |
 | `env.required` / `env.optional` | 選填 | 只列變數名稱（大寫英數字與底線）、用途、是否機密；**不可寫值** | 見範本 |
 | `model.uses` | 用 AI 就必填 | 工具是否呼叫 AI 模型 | `true` |
-| `model.approvedEndpoint` | 用 AI 就必填 | 平台核准的端點代號，實際網址由平台對應 | `wisely-5090` |
+| `model.approvedEndpoint` | 不用填 | 用哪個模型由 WorkHub 指定（平台預設模型或 AI Team 指定）；舊 ZIP 有寫只提醒、會被忽略 | — |
 | `model.fallback` | 選填 | 只能是 `none`，不得退回其他端點 | `none` |
 
 完整範本（以 Node.js 網站為例，不用 AI）：
@@ -204,13 +204,13 @@ CMD ["node", "server.js"]
 
 ## 7. 使用 AI 模型的工具
 
-工具只從三個環境變數讀取模型設定，由平台在預覽與上線時注入；程式裡不寫模型主機、金鑰或模型名稱。使用哪個模型（地端或雲端）由平台管理者決定，換模型不需要改工具或重新上架。model.approvedEndpoint 只能填平台核准的端點代號，本機試點只有 wisely-5090；最新清單寫在資料包的「給AI的打包指令.txt」。
+工具只從三個環境變數讀取模型設定，由平台在預覽與上線時注入；程式裡不寫模型主機、金鑰或模型名稱。使用哪個模型由 WorkHub 決定：沒有特別指定的工具用**平台預設模型**（由 AI Team 管理；工具目前用哪個模型，可在開發者中心的提交詳情與試用卡片看到），AI Team 也可以在發布管理幫個別工具指定其他模型。換模型立即生效，不需要改工具、重啟或重新上架；`workhub.yaml` 不用寫端點代號。工具如果需要特定模型（例如要較強的看圖能力），請在提交時的確認說明寫出來，由 AI Team 審核時指定。
 
 | 環境變數 | 內容 |
 | --- | --- |
 | `OPENAI_BASE_URL` | 平台提供的 OpenAI 相容網址 |
 | `OPENAI_API_KEY` | 這個工具專用的通行碼（不是模型的真實金鑰） |
-| `OPENAI_MODEL` | 管理者指派的模型名稱 |
+| `OPENAI_MODEL` | 啟動時平台指派的模型名稱（之後 AI Team 換模型時，平台會自動改送新模型，工具不用處理） |
 
 1. 在 `workhub.yaml` 宣告使用模型，並把三個變數列在 `env.optional`（只列名稱，不寫值）：
 
@@ -229,7 +229,6 @@ env:
 model:
   uses: true
   provider: openai-compatible
-  approvedEndpoint: wisely-5090
   fallback: none
 ```
 
@@ -326,7 +325,7 @@ model:
 
 ```text
 quote-aggregator-2.12.0-pilot.5.zip
-├── workhub.yaml          上架設定（tool.id: quote-aggregator，port 8501，/data，AI 端點 wisely-5090）
+├── workhub.yaml          上架設定（tool.id: quote-aggregator，port 8501，/data，使用 AI 模型）
 ├── Dockerfile            python:3.14-slim-trixie，安裝 LibreOffice、Tesseract，使用者 app
 ├── .dockerignore         排除 .env、資料庫、虛擬環境、快取
 ├── requirements.lock     82 個套件，全部寫死版本（在 Linux 上產生）

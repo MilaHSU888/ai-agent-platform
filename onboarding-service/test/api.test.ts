@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import { request } from 'node:http';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { Store } from '../src/db.ts';
 import { JobQueue } from '../src/queue.ts';
@@ -445,17 +445,21 @@ test('模型轉接：工具只拿到轉接網址與工具專用通行碼、跑�
     assert.equal(t.rt.relays.length, 0);
     const real = 'real-upstream-key-abcdefghijklmnop';
     t.secrets.set('wisely-5090', { OPENAI_BASE_URL: 'https://llm.example/v1', OPENAI_API_KEY: real, OPENAI_MODEL: 'vision-model' }, ['OPENAI_API_KEY']);
+    t.rt.modelIds['https://llm.example/v1'] = ['vision-model', 'Huihui-Qwen3.8-27B-NVFP4-Vision'];
+    // 平台預設模型：第一次查詢模型清單時自動設為 Huihui … Vision
+    assert.deepEqual(((await t.call('GET', '/api/onboarding/models')).data as any).default, { endpoint: 'wisely-5090', model: 'Huihui-Qwen3.8-27B-NVFP4-Vision' });
     const v2 = (await upload(t.call, validZip([], AI_MANIFEST.replace('description: 測試用', 'description: 測試用 1.0.1')), 'department=purchase&owner=Mila&filename=demo.zip&mode=update&expectedToolId=demo-tool')).data.submission as Record<string, any>;
     assert.ok(v2, 'update upload accepted');
     await t.runQueue();
     pv = t.rt.started.filter((s) => s.labels['workhub.kind'] === 'preview').at(-1)!;
     assert.equal(pv.env.OPENAI_BASE_URL, 'http://llm-relay:8080/v1');
     assert.match(pv.env.OPENAI_API_KEY, /^whr_/);
-    assert.equal(pv.env.OPENAI_MODEL, 'vision-model');
+    assert.equal(pv.env.OPENAI_MODEL, 'Huihui-Qwen3.8-27B-NVFP4-Vision', '沒指定的工具用平台預設模型');
     assert.ok(!Object.values(pv.env).includes(real));
     assert.equal(pv.network, 'wh-net-demo-tool');
     const relay = t.rt.relays.at(-1)!;
-    assert.equal(relay.env.RELAY_UPSTREAM_KEY, real);
+    assert.equal(JSON.parse(relay.env.RELAY_ENDPOINTS)['wisely-5090'].key, real);
+    assert.ok(relay.routesDir.endsWith('relay-routes'));
     assert.deepEqual(JSON.parse(relay.env.RELAY_TOKENS), { [pv.env.OPENAI_API_KEY]: 'demo-tool' });
     assert.deepEqual(relay.networks, ['wh-net-demo-tool']);
     const bt = t.rt.ran.at(-1)!;
@@ -515,7 +519,7 @@ test('上架資料包：一個 ZIP 內含 SOP、範本、預檢工具與給 AI �
     assert.match(sop, /## 12\. 交給 AI agent 打包/);
     assert.match(readEntry(buf, entries.find((e) => e.name.endsWith('workhub.yaml'))!).toString('utf8'), /schemaVersion: workhub\/v1/);
     const prompt = readEntry(buf, entries.find((e) => e.name.endsWith('.txt'))!).toString('utf8');
-    assert.match(prompt, /第一次上架/); assert.match(prompt, /wisely-5090/); assert.ok(!prompt.includes('{{'));
+    assert.match(prompt, /第一次上架/); assert.match(prompt, /不用填 approvedEndpoint/); assert.ok(!prompt.includes('{{'));
     // 只有一種資料包（DEC-039）：版本號由平台自動編號，範本與指令不再要求版本號
     assert.match(prompt, /版本號不用填/); assert.match(prompt, /沿用專案裡原本的 workhub\.yaml/);
     assert.ok(!/^\s*version:/m.test(readEntry(buf, entries.find((e) => e.name.endsWith('workhub.yaml'))!).toString('utf8')), '範本沒有 version');
@@ -853,5 +857,65 @@ test('版本號由平台自動編號：v1、v2…；失敗的提交也占號；�
     await t.call('POST', `/api/onboarding/submissions/${(r2.data.submission as any).id}/withdraw`, { reason: '不要了' });
     const r3 = await upload(t.call, validZip([{ name: 'a.txt', data: '3' }]), 'department=purchase&owner=Mila&mode=update&expectedToolId=demo-tool');
     assert.equal((r3.data.submission as any).version, 'v3', '取消的 v2 仍占號');
+  } finally { await t.close(); }
+});
+
+test('模型管理：可用模型、預設模型只能地端、工具指定模型即時寫入路由並通知 Owner、僅限地端、用量統計', async () => {
+  const t = await setup();
+  try {
+    t.secrets.set('wisely-5090', { OPENAI_BASE_URL: 'https://llm.example/v1', OPENAI_API_KEY: 'local-key-abcdefghijklmnop', OPENAI_MODEL: 'small' }, ['OPENAI_API_KEY']);
+    t.secrets.set('cloud-x', { OPENAI_BASE_URL: 'https://cloud.example/v1', OPENAI_API_KEY: 'cloud-key-abcdefghijklmnop' }, ['OPENAI_API_KEY'], 'cloud');
+    t.rt.modelIds['https://llm.example/v1'] = ['small', 'huihui-qwen-vision'];
+    t.rt.modelIds['https://cloud.example/v1'] = ['gpt-cloud'];
+    const v1 = await (async () => { const zip = validZip([], AI_MANIFEST); const up = await upload(t.call, zip); const id = (up.data.submission as any).id; await t.runQueue(); await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, {}); await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: 'ok' }); await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: 'ok' }); return id; })();
+    assert.ok(((await t.call('GET', `/api/onboarding/submissions/${v1}`)).data as any).submission.warnings.some((w: any) => w.field === 'model.approvedEndpoint'), '舊欄位只提醒');
+    await t.call('POST', `/api/onboarding/submissions/${v1}/release`); await t.runQueue();
+    const models = (await t.call('GET', '/api/onboarding/models')).data as any;
+    assert.deepEqual(models.default, { endpoint: 'wisely-5090', model: 'huihui-qwen-vision' });
+    assert.equal(models.endpoints.find((e: any) => e.id === 'wisely-5090').location, 'local');
+    assert.equal(models.endpoints.find((e: any) => e.id === 'cloud-x').location, 'cloud');
+    let cat = (await catalogOf(t))[0];
+    assert.deepEqual(cat.model, { ref: { endpoint: 'wisely-5090', model: 'huihui-qwen-vision' }, source: 'default', localOnly: false });
+    // 未勾選可用的模型不能指定；雲端不能當預設
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/model', { endpoint: 'cloud-x', model: 'gpt-cloud', reason: '測試' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/models/enabled', { endpoint: 'cloud-x', model: 'gpt-cloud', enabled: true })).status, 200);
+    assert.equal((await t.call('POST', '/api/onboarding/models/default', { endpoint: 'cloud-x', model: 'gpt-cloud' })).status, 409);
+    // 指定雲端模型：要原因；寫入路由；通知 Owner
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/model', { endpoint: 'cloud-x', model: 'gpt-cloud', reason: '' })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/model', { endpoint: 'cloud-x', model: 'gpt-cloud', reason: '需要較強的模型' })).status, 200);
+    const routes = JSON.parse(readFileSync(join(t.cfg.dataDir, 'relay-routes', 'routes.json'), 'utf8'));
+    assert.deepEqual(routes.tools['demo-tool'], { endpoint: 'cloud-x', model: 'gpt-cloud' });
+    assert.deepEqual(routes.default, { endpoint: 'wisely-5090', model: 'huihui-qwen-vision' });
+    const notices = ((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices;
+    assert.match(notices[0].message, /gpt-cloud.*需要較強的模型/);
+    assert.equal((await t.call('POST', `/api/onboarding/notices/${notices[0].id}/read`)).status, 200);
+    assert.equal(((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices.length, 0);
+    // 使用中的模型不能停用；僅限地端時不能用雲端
+    assert.equal((await t.call('POST', '/api/onboarding/models/enabled', { endpoint: 'cloud-x', model: 'gpt-cloud', enabled: false })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/local-only', { on: true })).status, 409);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/model', { useDefault: true, reason: '改回預設' })).status, 200);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/local-only', { on: true })).status, 200);
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/model', { endpoint: 'cloud-x', model: 'gpt-cloud', reason: 'x' })).status, 409);
+    cat = (await catalogOf(t))[0];
+    assert.equal(cat.model.source, 'default'); assert.equal(cat.model.localOnly, true);
+    assert.deepEqual(((await t.call('GET', `/api/onboarding/submissions/${v1}`)).data as any).submission.model.ref, { endpoint: 'wisely-5090', model: 'huihui-qwen-vision' }, '開發者在提交詳情看得到模型');
+    // 換平台預設：跟著預設的工具 Owner 收到提醒
+    assert.equal((await t.call('POST', '/api/onboarding/models/enabled', { endpoint: 'wisely-5090', model: 'small', enabled: true })).status, 200);
+    assert.equal((await t.call('POST', '/api/onboarding/models/default', { endpoint: 'wisely-5090', model: 'small', reason: '測試' })).status, 200);
+    assert.match(((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices[0].message, /預設模型.*small/);
+    // 用量統計：彙整轉接服務日誌
+    mkdirSync(join(t.cfg.dataDir, 'relay-logs'), { recursive: true });
+    const nowIso = new Date().toISOString();
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    writeFileSync(join(t.cfg.dataDir, 'relay-logs', `relay-${day}.jsonl`), [
+      { ts: nowIso, tool: 'demo-tool', path: '/v1/chat/completions', endpoint: 'wisely-5090', model: 'small', status: 200, ms: 1000, prompt_tokens: 10, completion_tokens: 5 },
+      { ts: nowIso, tool: 'demo-tool', path: '/v1/chat/completions', endpoint: 'cloud-x', model: 'gpt-cloud', status: 504, error: 'relay_upstream_timeout', ms: 3000 },
+      { ts: nowIso, tool: 'demo-tool', path: '/v1/models', status: 200 },
+      { ts: nowIso, tool: null, path: '/v1/chat/completions', status: 401 },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const u = (await t.call('GET', '/api/onboarding/model-usage?hours=24')).data as any;
+    assert.equal(u.totals.calls, 2); assert.equal(u.totals.errors, 1); assert.equal(u.totals.tokens, 15); assert.equal(u.totals.avgMs, 2000);
+    assert.equal(u.local.calls, 1); assert.equal(u.cloud.calls, 1);
+    assert.equal(u.byTool[0].name, '示範工具'); assert.equal(u.byDay.length, 1);
   } finally { await t.close(); }
 });

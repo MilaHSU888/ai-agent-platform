@@ -93,6 +93,12 @@ export class Store {
     // 用途說明與適用情境（工具層級；開發者第一次上架時填，之後由 AI Team 在發布管理修改）
     if (!t2.includes('description')) this.db.exec('ALTER TABLE tools ADD COLUMN description TEXT');
     if (!t2.includes('scenario')) this.db.exec('ALTER TABLE tools ADD COLUMN scenario TEXT');
+    // 模型管理（DEC-040，2026/10/28）：工具指定模型（null＝用平台預設）、僅限地端；可用模型、平台設定、給 Owner 的提醒
+    if (!t2.includes('model_json')) this.db.exec('ALTER TABLE tools ADD COLUMN model_json TEXT');
+    if (!t2.includes('local_only')) this.db.exec('ALTER TABLE tools ADD COLUMN local_only INTEGER NOT NULL DEFAULT 0');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS model_catalog (endpoint TEXT NOT NULL, model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, actor TEXT, PRIMARY KEY(endpoint, model));
+      CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, tool_id TEXT, owner TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT);`);
     if (!this.all<{ name: string }>('PRAGMA table_info(submissions)').some((c) => c.name === 'kind')) this.db.exec("ALTER TABLE submissions ADD COLUMN kind TEXT NOT NULL DEFAULT 'zip'");
     const ecols = this.all<{ name: string }>('PRAGMA table_info(entry_events)').map((c) => c.name);
     if (!ecols.includes('trial')) this.db.exec('ALTER TABLE entry_events ADD COLUMN trial INTEGER NOT NULL DEFAULT 0');

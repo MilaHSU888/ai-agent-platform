@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type Session, type Submission, type VulnItem } from './onboarding-api';
 import { IconPicker } from './tool-icon';
+import { ToolModelSetting } from './model-admin';
 import { ArchiveControl, isTrialing, TrialCard, trialResultOf, VisibilityControl } from './trial-panel';
 import type { Role } from './role';
 
@@ -260,7 +261,8 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
       {selected && <section className="mg-panel onb-detail">
         <div className="mg-row"><div><h2>提交詳情</h2><h3>{selected.toolName} · {selected.version}</h3>
           {selected.kind === 'url' ? <p className="mg-muted">第 {selected.revision} 版設定 · 網址 <a href={selected.urlConfig?.url} target="_blank" rel="noreferrer">{selected.urlConfig?.url}</a></p> :
-          <p className="mg-muted">第 {selected.revision} 版提交 · {selected.originalFilename} · 來源雜湊 <code>{selected.sourceHash.slice(0, 12)}</code>{selected.imageDigest && <> · image <code>{selected.imageDigest.slice(0, 19)}</code></>}</p>}</div>
+          <p className="mg-muted">第 {selected.revision} 版提交 · {selected.originalFilename} · 來源雜湊 <code>{selected.sourceHash.slice(0, 12)}</code>{selected.imageDigest && <> · image <code>{selected.imageDigest.slice(0, 19)}</code></>}</p>}
+          {selected.model && <p className="mm-model-line">模型：<b>{selected.model.ref?.model ?? '尚未設定（請聯絡 AI Team）'}</b>{selected.model.ref && (selected.model.source === 'default' ? '（平台預設）' : '（AI Team 指定）')}</p>}</div>
           <div className="onb-head-actions"><span className={`mg-status ${tone(selected.status)}`}>{SUB_STATUS[selected.status] ?? selected.status}</span></div></div>
         <ol className="onb-steps">{(selected.kind === 'url' ? URL_STEPS : STEP_LABELS).map(([key, label]) => {
           const st = steps[key];
@@ -497,6 +499,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
         <ToolNameEditor key={`${open}-${name}`} toolId={open} name={name} notice={notice} />
         {(() => { const desc = c?.description ?? subs[0]?.profile?.description ?? ''; const scen = c?.scenario ?? subs[0]?.profile?.scenario ?? ''; return <ToolProfileEditor key={`${open}-${desc}-${scen}`} toolId={open} description={desc} scenario={scen} notice={notice} onDone={load} />; })()}
         {role === 'aiteam' && <IconPicker key={`icon-${open}-${JSON.stringify(c?.icon ?? subs[0]?.icon ?? null)}`} toolId={open} icon={c?.icon ?? subs[0]?.icon} notice={notice} onDone={load} />}
+        {c?.model && <ToolModelSetting key={`model-${open}-${JSON.stringify(c.model)}`} toolId={open} info={c.model} notice={notice} onDone={load} />}
         {renderSettings?.(open, name, kind)}
       </section>
 

@@ -19,6 +19,7 @@ import { makeMasker } from './exec.ts';
 import { memoryToBytes, type Manifest } from './manifest.ts';
 import { allocatePort, waitHealthy } from './pipeline.ts';
 import { prepareModelAccess } from './relay.ts';
+import { toolModel } from './models.ts';
 import type { UrlConfig } from './url-tools.ts';
 import type { Ctx, Runtime, ServiceSpec } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
@@ -144,10 +145,10 @@ export async function takeOffline(store: Store, cfg: Config, rt: Runtime, toolId
   return { releaseId: current.id };
 }
 
-async function specFor(cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx, trial = false): Promise<ServiceSpec> {
+async function specFor(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx, trial = false): Promise<ServiceSpec> {
   const m = JSON.parse(sub.manifest_json) as Manifest;
   const mount = m.run.persistentData[0]?.path;
-  const access = await prepareModelAccess(cfg, rt, secrets, m, sub.tool_id, ctx);
+  const access = await prepareModelAccess(cfg, rt, secrets, store, m, sub.tool_id, ctx);
   return {
     image: sub.image_digest!, name: trial ? trialContainerName(sub.tool_id) : containerName(sub.tool_id),
     labels: { 'workhub.tool': sub.tool_id, 'workhub.submission': sub.id, 'workhub.kind': trial ? 'trial' : 'release', 'workhub.version': sub.version },
@@ -198,7 +199,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
       const restored = await rt.restoreVolume(volumeName(sub.tool_id), backup, ctx);
       step('還原資料', restored ? 'passed' : 'failed', restored ? `已還原 ${why}前的備份` : '備份還原失敗，請人工處理');
     }
-    const r = await rt.start(await specFor(cfg, rt, secrets, currentSub, port, ctx), ctx);
+    const r = await rt.start(await specFor(store, cfg, rt, secrets, currentSub, port, ctx), ctx);
     const h = r.code === 0 ? await healthy(rt, cfg, currentSub, port, new AbortController().signal) : { ok: false };
     step('恢復前一版', h.ok ? 'passed' : 'failed', `${currentSub.version}${h.ok ? ' 已恢復服務' : ' 恢復失敗，入口暫停'}`);
     if (!h.ok) store.run("UPDATE releases SET status='failed', updated_at=? WHERE id=?", now(), current.id);
@@ -227,7 +228,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
 
     // 2. 部署同一份已測試 image
     await rt.remove(containerName(sub.tool_id), ctx);
-    const st = await rt.start(await specFor(cfg, rt, secrets, sub, port, ctx), ctx);
+    const st = await rt.start(await specFor(store, cfg, rt, secrets, sub, port, ctx), ctx);
     if (st.code !== 0) { step('啟動容器', 'failed', st.stderr.slice(0, 300)); throw new Error('容器啟動失敗'); }
     step('啟動容器', 'passed', `image ${sub.image_digest!.slice(0, 19)}… · 127.0.0.1:${port}`);
 
@@ -301,7 +302,7 @@ async function runTrialJob(store: Store, cfg: Config, rt: Runtime, secrets: Secr
       await rt.removeVolume(trialVolumeName(sub.tool_id), ctx);
       step('試用資料', 'passed', '試用版從空白資料開始，請 Owner 自行上傳測試資料；正式資料不受影響');
     } else step('試用資料', 'skipped', '此工具沒有持久資料目錄');
-    const st = await rt.start(await specFor(cfg, rt, secrets, sub, port, ctx, true), ctx);
+    const st = await rt.start(await specFor(store, cfg, rt, secrets, sub, port, ctx, true), ctx);
     if (st.code !== 0) { step('啟動試用版', 'failed', st.stderr.slice(0, 300)); throw new Error('試用版容器啟動失敗'); }
     step('啟動試用版', 'passed', `image ${sub.image_digest!.slice(0, 19)}… · 127.0.0.1:${port}`);
     const h = await healthy(rt, cfg, sub, port, signal);
@@ -379,6 +380,8 @@ export async function catalog(store: Store, rt: Runtime) {
       // URL 工具的用途說明（ZIP 工具沒有，網站沿用預設說明）
       description: r.description || (r.kind === 'url' ? (JSON.parse(r.manifest_json) as UrlConfig).description : (JSON.parse(r.manifest_json) as { tool?: { description?: string } }).tool?.description) || null,
       scenario: r.scenario || null,
+      // 使用模型的 ZIP 工具：目前用哪個模型（AI Team 指定或平台預設）與是否僅限地端
+      model: r.kind !== 'url' && live.usesModel ? toolModel(store, r.tool_id) : null,
       guide: r.kind === 'url' ? (JSON.parse(r.manifest_json) as UrlConfig).guide || null : null,
       url: live.url, healthy: !offline && live.healthy, offline,
       maintenance: r.maintenance_json ? JSON.parse(r.maintenance_json) as { at: string; actor: string; reason: string } : null,

@@ -134,6 +134,8 @@ export class FakeRuntime implements Runtime {
   async logsText(name: string, tail: number, mask: (s: string) => string) { return mask(`fake log for ${name} (${tail}) Bearer whr_secret_token_value`); }
   async ensureNetwork(name: string, internal: boolean) { this.networks.set(name, internal); return true; }
   async ensureRelay(spec: RelaySpec) { this.relays.push(spec); return { ok: true, detail: 'fake relay' }; }
+  modelIds: Record<string, string[]> = {};
+  async listModels(base: string) { const ids = this.modelIds[base]; return ids ? { ok: true as const, ids } : { ok: false as const, error: '連不到模型端點' }; }
   urlChecks: string[] = [];
   async checkUrl(url: string) {
     this.urlChecks.push(url);

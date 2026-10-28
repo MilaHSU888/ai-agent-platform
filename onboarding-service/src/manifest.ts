@@ -146,9 +146,8 @@ export function validateManifest(text: string, files: Set<string>, cfg: Config):
 
   const model = isObj(doc.model) ? doc.model : { uses: false };
   if (model.uses === true) {
-    if (typeof model.approvedEndpoint !== 'string' || !cfg.approvedModelEndpoints.includes(model.approvedEndpoint)) {
-      bad('model.approvedEndpoint', `模型端點必須是平台核准清單之一（${cfg.approvedModelEndpoints.join('、')}）`, '填寫核准端點代號；實際網址由平台對應');
-    }
+    // 用哪個模型由平台決定（AI Team 指定，否則平台預設；DEC-040）；舊 ZIP 寫了 approvedEndpoint 只提醒、不擋
+    if (model.approvedEndpoint !== undefined) warn('model.approvedEndpoint', '模型由 WorkHub 平台指定（預設模型或 AI Team 指定），這個欄位會被忽略', '可刪除 model.approvedEndpoint');
     if (model.fallback !== undefined && model.fallback !== 'none') bad('model.fallback', '不得設定退回其他模型端點', '把 fallback 設為 none');
   }
 

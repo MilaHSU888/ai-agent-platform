@@ -3,8 +3,9 @@ WorkHub 本機模型轉接服務（階段 D，最小版本）。
 
 工具容器只連得到這個服務（隔離網路別名 llm-relay），由它把請求轉往核准的模型端點：
 - 工具手上只有「工具專用轉接通行碼」，真正的模型金鑰只在本服務的環境變數裡
-- 只允許 GET /v1/models 與 POST /v1/chat/completions；上游主機固定，工具無法改送別處
-- 模型名稱限制在核准清單內
+- 只允許 GET /v1/models 與 POST /v1/chat/completions；上游主機由平台決定，工具無法改送別處
+- 用哪個端點、哪個模型由平台決定（routes.json：AI Team 指定，否則平台預設）；工具送來的 model 一律改成平台指定的模型。
+  routes.json 依修改時間即時重新載入，AI Team 換模型立即生效，不需重啟工具或本服務（DEC-040）
 - 逾時、斷線、上游錯誤都回傳明確錯誤（不會變成成功）
 - 每次呼叫記一行中繼資料（工具、模型、狀態、耗時、位元組、token 數），不記錄提示詞或回應內容
 
@@ -21,16 +22,30 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-UPSTREAM = urlsplit(os.environ["RELAY_UPSTREAM"].rstrip("/"))           # https://host/v1
-UPSTREAM_KEY = os.environ["RELAY_UPSTREAM_KEY"]
+ENDPOINTS = {k: {"url": urlsplit(v["base"].rstrip("/")), "key": v["key"]} for k, v in json.loads(os.environ["RELAY_ENDPOINTS"]).items()}
 TOKENS = json.loads(os.environ.get("RELAY_TOKENS", "{}"))              # {token: toolId}
-MODELS = [m for m in os.environ.get("RELAY_MODELS", "").split(",") if m]
+ROUTES_FILE = os.environ.get("RELAY_ROUTES_FILE", "/routes/routes.json")
+_routes = {"mtime": None, "data": {"default": None, "tools": {}}}
 TIMEOUT = float(os.environ.get("RELAY_TIMEOUT_SECONDS", "125"))
 MAX_BODY = int(os.environ.get("RELAY_MAX_BODY_BYTES", str(25 * 1024 * 1024)))
 LOG_DIR = os.environ.get("RELAY_LOG_DIR", "/logs")
-UA = "WorkHub-LLM-Relay/0.1"
+UA = "WorkHub-LLM-Relay/0.2"
 ROUTES = {("GET", "/v1/models"), ("POST", "/v1/chat/completions")}
-BASE_PATH = UPSTREAM.path  # 例如 /v1
+
+
+def route_for(tool):
+    """回傳 (端點代號, 模型)；routes.json 有變動就重新讀取（讀取失敗時沿用上一次的設定）"""
+    try:
+        st = os.stat(ROUTES_FILE)
+        key = (st.st_mtime_ns, st.st_ino, st.st_size)  # 平台每次以新檔 rename 取代：inode 必變，兩次變更落在同一時間刻度也不會漏
+        if key != _routes["mtime"]:
+            with open(ROUTES_FILE, encoding="utf-8") as f:
+                _routes["data"] = json.load(f)
+            _routes["mtime"] = key
+    except (OSError, ValueError) as e:
+        print(f"routes reload failed: {e}", file=sys.stderr)
+    r = (_routes["data"].get("tools") or {}).get(tool) or _routes["data"].get("default")
+    return (r["endpoint"], r["model"]) if r else (None, None)
 
 
 def log(entry):
@@ -76,6 +91,17 @@ class Relay(BaseHTTPRequestHandler):
         meta["tool"] = tool
         if (method, path) not in ROUTES:
             return self._error(404, "relay_route_not_allowed", f"轉接服務不提供 {method} {path}", meta)
+        ep_id, model = route_for(tool)
+        ep = ENDPOINTS.get(ep_id)
+        if not ep or not model:
+            return self._error(503, "relay_model_not_configured", "平台尚未為此工具設定模型（請聯絡 AI Team）", meta)
+        meta["endpoint"] = ep_id
+        meta["model"] = model
+        if method == "GET":  # 工具只看得到平台指定給它的模型
+            body = json.dumps({"object": "list", "data": [{"id": model, "object": "model", "owned_by": "workhub"}]}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            meta.update(status=200, ms=int((time.monotonic() - t0) * 1000))
+            return log(meta)
         length = int(self.headers.get("Content-Length") or 0)
         if length > MAX_BODY:
             return self._error(413, "relay_body_too_large", f"請求超過 {MAX_BODY // 1024 // 1024} MB", meta)
@@ -86,19 +112,20 @@ class Relay(BaseHTTPRequestHandler):
                 payload = json.loads(body or b"{}")
             except ValueError:
                 return self._error(400, "relay_bad_json", "請求內容不是 JSON", meta)
-            meta["model"] = payload.get("model")
+            meta["requested_model"] = payload.get("model")
             stream = bool(payload.get("stream"))
             meta["stream"] = stream
-            if MODELS and payload.get("model") not in MODELS:
-                return self._error(403, "relay_model_not_allowed", f"模型 {payload.get('model')} 不在核准清單", meta)
+            payload["model"] = model  # 一律用平台指定的模型
+            body = json.dumps(payload, ensure_ascii=False).encode()
         meta["req_bytes"] = len(body)
-        upstream_path = BASE_PATH + path[len("/v1"):]
-        conn_cls = http.client.HTTPSConnection if UPSTREAM.scheme == "https" else http.client.HTTPConnection
-        kwargs = {"context": ssl.create_default_context()} if UPSTREAM.scheme == "https" else {}
-        conn = conn_cls(UPSTREAM.hostname, UPSTREAM.port, timeout=TIMEOUT, **kwargs)
+        up = ep["url"]
+        upstream_path = up.path + path[len("/v1"):]
+        conn_cls = http.client.HTTPSConnection if up.scheme == "https" else http.client.HTTPConnection
+        kwargs = {"context": ssl.create_default_context()} if up.scheme == "https" else {}
+        conn = conn_cls(up.hostname, up.port, timeout=TIMEOUT, **kwargs)
         try:
             conn.request(method, upstream_path, body=body or None, headers={
-                "Authorization": f"Bearer {UPSTREAM_KEY}", "User-Agent": UA,
+                "Authorization": f"Bearer {ep['key']}", "User-Agent": UA,
                 "Content-Type": "application/json", "Accept": self.headers.get("Accept", "application/json")})
             res = conn.getresponse()
         except TimeoutError:
@@ -157,5 +184,5 @@ class Relay(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("RELAY_PORT", "8080"))
-    print(f"WorkHub relay → {UPSTREAM.scheme}://{UPSTREAM.hostname}{BASE_PATH}  tools={len(TOKENS)} models={MODELS or 'any'}", flush=True)
+    print(f"WorkHub relay → endpoints={list(ENDPOINTS)} tools={len(TOKENS)} routes={ROUTES_FILE}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Relay).serve_forever()

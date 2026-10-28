@@ -11,6 +11,8 @@ import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRele
 import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { endTrial, failTrial, passTrial, publish, unpublish } from './trial.ts';
 import { setToolIcon, submitUrlTool } from './url-tools.ts';
+import { defaultModel, listEndpoints, seedDefault, setDefault, setEnabled, setLocalOnly, setToolModel, toolModel } from './models.ts';
+import { modelUsage } from './usage.ts';
 import { buildKit } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmCodeReview, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
@@ -47,7 +49,7 @@ env:
   required: []
   optional: []
 model:
-  uses: false                 # 使用 LLM 時改為 true，並填 approvedEndpoint
+  uses: false                 # 使用 AI 模型時改為 true；用哪個模型由 WorkHub 指定，不用填端點
 `;
 
 type Ctx = { req: IncomingMessage; res: ServerResponse; url: URL; session: { actor: string } | null };
@@ -100,6 +102,8 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       id, toolId: s.tool_id, toolName: s.tool_name, department: s.department, owner: s.owner, version: s.version, revision: s.revision,
       kind: s.kind === 'url' ? 'url' : 'zip', urlConfig: s.kind === 'url' ? JSON.parse(String(s.manifest_json)) : null,
       icon: s.icon_json ? JSON.parse(String(s.icon_json)) : null,
+      // 使用模型的 ZIP 工具：目前用哪個模型（給開發者看；平台預設或 AI Team 指定）
+      model: s.kind !== 'url' && (JSON.parse(String(s.manifest_json)) as { model?: { uses?: boolean } }).model?.uses ? toolModel(store, String(s.tool_id)) : null,
       profile: { description: (s.tool_description as string | null) ?? null, scenario: (s.tool_scenario as string | null) ?? null },
       status: s.status, sourceHash: s.source_hash, imageRef: s.image_ref, imageDigest: s.image_digest, originalFilename: s.original_filename,
       previewUrl: s.preview_port && ['awaiting_confirmation', 'awaiting_approval', 'approved'].includes(String(s.status)) ? `http://127.0.0.1:${s.preview_port}/` : null,
@@ -309,6 +313,50 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const reasons = setToolIcon(store, m[1], session!.actor, Number(body.symbol), String(body.color ?? ''));
       if (reasons.length) throw new GateError(reasons);
       send(res, 200, { toolId: m[1], icon: { symbol: Number(body.symbol), color: String(body.color) } });
+    } },
+    // ── 模型管理（DEC-040）：只有 AI Team 使用（本機以示範身分在網站端限制） ──
+    { method: 'GET', re: /^\/api\/onboarding\/models$/, auth: true, fn: async ({ res }) => {
+      await seedDefault(cfg, store, rt, secrets).catch(() => { /* 連不到端點時下次再試 */ });
+      send(res, 200, { endpoints: await listEndpoints(store, rt, secrets), default: defaultModel(store) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/models\/enabled$/, auth: true, fn: async ({ req, res, session }) => {
+      const b = await json(req);
+      const reasons = setEnabled(cfg, store, secrets, session!.actor, { endpoint: String(b.endpoint ?? ''), model: String(b.model ?? '') }, b.enabled === true);
+      if (reasons.length) throw new GateError(reasons);
+      send(res, 200, { ok: true });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/models\/default$/, auth: true, fn: async ({ req, res, session }) => {
+      const b = await json(req);
+      const reasons = setDefault(cfg, store, secrets, session!.actor, { endpoint: String(b.endpoint ?? ''), model: String(b.model ?? '') }, String(b.reason ?? ''));
+      if (reasons.length) throw new GateError(reasons);
+      send(res, 200, { default: defaultModel(store) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/model$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const b = await json(req);
+      const ref = b.useDefault === true ? null : { endpoint: String(b.endpoint ?? ''), model: String(b.model ?? '') };
+      const reasons = setToolModel(cfg, store, secrets, session!.actor, m[1], ref, String(b.reason ?? ''));
+      if (reasons.length) throw new GateError(reasons);
+      send(res, 200, { toolId: m[1], ...toolModel(store, m[1]) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/local-only$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const b = await json(req);
+      const reasons = setLocalOnly(store, secrets, session!.actor, m[1], b.on === true);
+      if (reasons.length) throw new GateError(reasons);
+      send(res, 200, { toolId: m[1], localOnly: b.on === true });
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/model-usage$/, auth: true, fn: ({ res, url }) => {
+      const hours = Math.min(24 * 92, Math.max(1, Number(url.searchParams.get('hours') ?? 24 * 30) || 24 * 30));
+      send(res, 200, modelUsage(cfg, store, secrets, { hours, toolId: url.searchParams.get('toolId') ?? undefined }));
+    } },
+    // 給工具 Owner 的提醒（開發者中心最上方）
+    { method: 'GET', re: /^\/api\/onboarding\/notices$/, auth: true, fn: ({ res, url }) => {
+      const owner = url.searchParams.get('owner') ?? '';
+      send(res, 200, { notices: store.all(`SELECT n.id, n.tool_id AS toolId, t.name AS toolName, n.kind, n.message, n.created_at AS createdAt FROM notices n LEFT JOIN tools t ON t.id=n.tool_id
+        WHERE n.read_at IS NULL AND n.owner=? ORDER BY n.created_at DESC LIMIT 50`, owner) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/notices\/([\w-]+)\/read$/, auth: true, fn: ({ res }, m) => {
+      store.run('UPDATE notices SET read_at=? WHERE id=? AND read_at IS NULL', now(), m[1]);
+      send(res, 200, { ok: true });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/archive$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);

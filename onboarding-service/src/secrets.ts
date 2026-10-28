@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export type EndpointSecret = { env: Record<string, string>; secretKeys: string[]; updatedAt: string };
+export type EndpointSecret = { env: Record<string, string>; secretKeys: string[]; updatedAt: string; /** 地端／雲端（非機密）；未標示時 wisely-5090 為地端、其他視為雲端 */ location?: 'local' | 'cloud' };
 type SecretFile = { endpoints: Record<string, EndpointSecret>; relayTokens?: Record<string, string> };
 
 export class Secrets {
@@ -26,9 +26,9 @@ export class Secrets {
     return Object.keys(this.read().endpoints);
   }
 
-  set(id: string, env: Record<string, string>, secretKeys: string[]) {
+  set(id: string, env: Record<string, string>, secretKeys: string[], location?: 'local' | 'cloud') {
     const f = this.read();
-    f.endpoints[id] = { env, secretKeys, updatedAt: new Date().toISOString() };
+    f.endpoints[id] = { env, secretKeys, updatedAt: new Date().toISOString(), ...(location ? { location } : {}) };
     this.write(f);
   }
 

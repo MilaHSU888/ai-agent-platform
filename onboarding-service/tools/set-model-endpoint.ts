@@ -9,7 +9,9 @@ import { openSync, createReadStream } from 'node:fs';
 import { loadConfig } from '../src/config.ts';
 import { Secrets } from '../src/secrets.ts';
 
-const ENDPOINT_ID = 'wisely-5090';
+// 端點代號與地端／雲端（DEC-040）：預設 wisely-5090／地端；之後加客戶 Proxy 或雲端時以環境變數指定
+const ENDPOINT_ID = (process.env.MODEL_ENDPOINT_ID ?? 'wisely-5090').trim();
+const LOCATION = process.env.MODEL_LOCATION === 'cloud' ? 'cloud' : 'local';
 // 端點網址不寫在程式裡：由 .command 詢問（Enter＝沿用已儲存的網址），經環境變數 MODEL_BASE_URL 傳入
 const BASE = (process.env.MODEL_BASE_URL ?? '').trim().replace(/\/$/, '');
 const UA = 'WorkHub-Onboarding/0.1';
@@ -78,6 +80,6 @@ console.log(`${img.status === 200 ? '✓' : '✗'} 圖片測試：HTTP ${img.sta
 if (text.status !== 200 || img.status !== 200) { console.log('\n✗ 測試未通過，未寫入設定。'); process.exit(1); }
 
 const cfg = loadConfig();
-new Secrets(cfg.dataDir).set(ENDPOINT_ID, { OPENAI_BASE_URL: BASE, OPENAI_API_KEY: key, OPENAI_MODEL: model }, ['OPENAI_API_KEY']);
-console.log(`\n✓ 已寫入 ${ENDPOINT_ID} 設定（${cfg.dataDir}/secrets.json，權限 0600）。`);
-console.log('  請重新啟動上架服務讓設定生效。');
+new Secrets(cfg.dataDir).set(ENDPOINT_ID, { OPENAI_BASE_URL: BASE, OPENAI_API_KEY: key, OPENAI_MODEL: model }, ['OPENAI_API_KEY'], LOCATION);
+console.log(`\n✓ 已寫入 ${ENDPOINT_ID}（${LOCATION === 'local' ? '地端' : '雲端'}）設定（${cfg.dataDir}/secrets.json，權限 0600）。`);
+console.log('  請重新啟動上架服務讓設定生效；可用模型與預設模型請在 WorkHub「平台設定 → 模型端點」調整。');

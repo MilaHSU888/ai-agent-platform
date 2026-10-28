@@ -7442,9 +7442,7 @@ function validateManifest(text, files, cfg2) {
   }
   const model = isObj(doc.model) ? doc.model : { uses: false };
   if (model.uses === true) {
-    if (typeof model.approvedEndpoint !== "string" || !cfg2.approvedModelEndpoints.includes(model.approvedEndpoint)) {
-      bad("model.approvedEndpoint", `\u6A21\u578B\u7AEF\u9EDE\u5FC5\u9808\u662F\u5E73\u53F0\u6838\u51C6\u6E05\u55AE\u4E4B\u4E00\uFF08${cfg2.approvedModelEndpoints.join("\u3001")}\uFF09`, "\u586B\u5BEB\u6838\u51C6\u7AEF\u9EDE\u4EE3\u865F\uFF1B\u5BE6\u969B\u7DB2\u5740\u7531\u5E73\u53F0\u5C0D\u61C9");
-    }
+    if (model.approvedEndpoint !== void 0) warn("model.approvedEndpoint", "\u6A21\u578B\u7531 WorkHub \u5E73\u53F0\u6307\u5B9A\uFF08\u9810\u8A2D\u6A21\u578B\u6216 AI Team \u6307\u5B9A\uFF09\uFF0C\u9019\u500B\u6B04\u4F4D\u6703\u88AB\u5FFD\u7565", "\u53EF\u522A\u9664 model.approvedEndpoint");
     if (model.fallback !== void 0 && model.fallback !== "none") bad("model.fallback", "\u4E0D\u5F97\u8A2D\u5B9A\u9000\u56DE\u5176\u4ED6\u6A21\u578B\u7AEF\u9EDE", "\u628A fallback \u8A2D\u70BA none");
   }
   if (issues.length) return { issues, warnings };
@@ -7726,7 +7724,7 @@ var r = inspectZip(buf, cfg);
 var line = (i) => `  - ${i.file}${i.field ? ` \xB7 ${i.field}` : ""}\uFF1A${i.reason}
     \u2192 ${i.fix}`;
 console.log(`WorkHub \u63D0\u4EA4\u5305\u9810\u6AA2\uFF08workhub/v1\uFF09\uFF1A${file}`);
-if (r.manifest) console.log(`\u5DE5\u5177 ${r.manifest.tool.id}${r.manifest.tool.name ? `\uFF08${r.manifest.tool.name}\uFF09` : ""}\u30FB\u57E0 ${r.manifest.run.port}\u30FB\u5065\u5EB7\u6AA2\u67E5 ${r.manifest.run.healthCheck.path}\u30FB\u696D\u52D9\u6E2C\u8A66 ${r.manifest.test ? r.manifest.test.command.join(" ") : "\u672A\u63D0\u4F9B"}\u30FB\u6A21\u578B ${r.manifest.model.uses ? r.manifest.model.approvedEndpoint : "\u4E0D\u4F7F\u7528"}`);
+if (r.manifest) console.log(`\u5DE5\u5177 ${r.manifest.tool.id}${r.manifest.tool.name ? `\uFF08${r.manifest.tool.name}\uFF09` : ""}\u30FB\u57E0 ${r.manifest.run.port}\u30FB\u5065\u5EB7\u6AA2\u67E5 ${r.manifest.run.healthCheck.path}\u30FB\u696D\u52D9\u6E2C\u8A66 ${r.manifest.test ? r.manifest.test.command.join(" ") : "\u672A\u63D0\u4F9B"}\u30FB\u6A21\u578B ${r.manifest.model.uses ? "\u4F7F\u7528\uFF08\u7531 WorkHub \u6307\u5B9A\uFF09" : "\u4E0D\u4F7F\u7528"}`);
 if (r.issues.length) {
   console.log(`
 \u2717 \u6703\u88AB\u62D2\u6536\uFF08${r.issues.length} \u9805\uFF09\uFF1A`);

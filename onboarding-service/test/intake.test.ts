@@ -89,11 +89,13 @@ test('workhub.yaml 驗證：缺件逐欄列出原因與補正方法', () => {
   assert.ok(issues.every((i) => i.fix));
 });
 
-test('workhub.yaml 驗證：未核准模型端點、退回端點、寫入環境變數值都拒絕', () => {
+test('workhub.yaml 驗證：退回端點、寫入環境變數值都拒絕；approvedEndpoint 改由平台指定，只提醒', () => {
   const m = MANIFEST.replace('model:\n  uses: false', 'model:\n  uses: true\n  approvedEndpoint: random-cloud\n  fallback: ollama')
     .replace('optional: []', 'optional:\n    - name: OPENAI_API_KEY\n      value: abc');
-  const fields = inspectZip(validZip([], m), cfg).issues.map((i) => i.field);
-  assert.ok(fields.includes('model.approvedEndpoint'));
+  const r = inspectZip(validZip([], m), cfg);
+  const fields = r.issues.map((i) => i.field);
+  assert.ok(!fields.includes('model.approvedEndpoint'));
+  assert.ok(r.warnings.some((w) => w.field === 'model.approvedEndpoint'));
   assert.ok(fields.includes('model.fallback'));
   assert.ok(fields.includes('env.optional[0]'));
 });

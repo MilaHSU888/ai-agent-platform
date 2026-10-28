@@ -11,6 +11,7 @@ export type Submission = {
   release: { id: string; status: string; updated_at: string } | null;
   /** zip＝上傳原始碼的小工具；url＝登錄既有網站（PRD §10） */ kind?: 'zip' | 'url'; urlConfig?: UrlConfig | null; icon?: ToolIcon | null;
   /** 工具層級的用途說明與適用情境（AI Team 可修改） */ profile?: ToolProfile;
+  /** 使用模型的工具目前用哪個模型 */ model?: ToolModelInfo | null;
 };
 export type ToolProfile = { description: string | null; scenario: string | null };
 export type UrlConfig = { url: string; description: string; usesAi: boolean; aiConfirmed: boolean; guide: string; tool: { id: string; version: string } };
@@ -25,7 +26,16 @@ export type TrialResult = { result: 'passed' | 'failed'; note: string; actor: st
 export type TrialInfo = { releaseId: string; submissionId: string; version: string; url: string | null; healthy: boolean; passed: boolean; result: TrialResult | null; since: string };
 export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; maintenance?: { at: string; actor: string; reason: string } | null; usesModel: boolean; releasedAt: string;
   /** trial＝試用中（未公開，只有開發者與 AI Team 看得到）；public＝公開 */ visibility: 'trial' | 'public'; trialPassed?: boolean; trialResult?: TrialResult | null; trial: TrialInfo | null;
-  kind?: 'zip' | 'url'; icon?: ToolIcon | null; description?: string | null; scenario?: string | null; guide?: string | null };
+  kind?: 'zip' | 'url'; icon?: ToolIcon | null; description?: string | null; scenario?: string | null; guide?: string | null;
+  /** 使用模型的 ZIP 工具：目前用哪個模型（AI Team 指定或平台預設）與是否僅限地端 */ model?: ToolModelInfo | null };
+/** 模型管理（DEC-040） */
+export type ModelRef = { endpoint: string; model: string };
+export type ToolModelInfo = { ref: ModelRef | null; source: 'tool' | 'default' | 'none'; localOnly: boolean };
+export type EndpointInfo = { id: string; location: 'local' | 'cloud'; reachable: boolean; error?: string; models: { id: string; enabled: boolean; isDefault: boolean; available: boolean; usedBy: string[] }[] };
+export type UsageView = { calls: number; errors: number; promptTokens: number; completionTokens: number; tokens: number; avgMs: number | null };
+export type ModelUsage = { from: string; to: string; hours: number; totals: UsageView; local: UsageView; cloud: UsageView;
+  byTool: (UsageView & { toolId: string; name: string; lastAt: string; models: string[] })[]; byDay: (UsageView & { date: string })[] };
+export type Notice = { id: string; toolId: string; toolName: string | null; kind: string; message: string; createdAt: string };
 export type OpsEvent = { at: string; actor: string; action: string; label: string; toolId?: string; toolName: string | null; bad: boolean; reason?: string; version?: string };
 export type ReleaseStep = { name: string; status: 'passed' | 'failed' | 'skipped'; at: string; detail?: string };
 export type ReleaseRecord = {
@@ -75,6 +85,14 @@ export const onboardingApi = {
       file, 'application/zip'),
   submitUrl: (f: UrlForm) => call<{ submission: Submission; warnings: Issue[] }>('POST', '/submissions/url', f),
   setProfile: (toolId: string, p: { description: string; scenario: string }) => call<{ toolId: string }>('POST', `/tools/${toolId}/profile`, p),
+  models: () => call<{ endpoints: EndpointInfo[]; default: ModelRef | null }>('GET', '/models'),
+  setModelEnabled: (r: ModelRef, enabled: boolean) => call<{ ok: boolean }>('POST', '/models/enabled', { ...r, enabled }),
+  setDefaultModel: (r: ModelRef, reason: string) => call<{ default: ModelRef }>('POST', '/models/default', { ...r, reason }),
+  setToolModel: (toolId: string, r: ModelRef | null, reason: string) => call<ToolModelInfo>('POST', `/tools/${toolId}/model`, r ? { ...r, reason } : { useDefault: true, reason }),
+  setLocalOnly: (toolId: string, on: boolean) => call<{ localOnly: boolean }>('POST', `/tools/${toolId}/local-only`, { on }),
+  modelUsage: (hours: number, toolId?: string) => call<ModelUsage>('GET', `/model-usage?hours=${hours}${toolId ? `&toolId=${encodeURIComponent(toolId)}` : ''}`),
+  notices: (owner: string) => call<{ notices: Notice[] }>('GET', `/notices?owner=${encodeURIComponent(owner)}`).then((r) => r.notices),
+  readNotice: (id: string) => call<{ ok: boolean }>('POST', `/notices/${id}/read`),
   setIcon: (toolId: string, icon: ToolIcon) => call<{ toolId: string; icon: ToolIcon }>('POST', `/tools/${toolId}/icon`, icon),
   retry: (id: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/retry`),
   cancel: (jobId: string) => call('POST', `/jobs/${jobId}/cancel`),
