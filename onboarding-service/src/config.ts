@@ -33,6 +33,8 @@ export type Config = {
   hostPlatform: string;
   docker: string;
   trivy: string;
+  /** 漏洞掃描不連網：只用本機現有的漏洞資料庫（正式環境不能上網；資料庫由 AI Team 手動更新，見 SOP） */
+  trivyOffline: boolean;
   /** 備份／還原資料卷用的平台輔助映像（固定版本） */
   helperImage: string;
   limits: {
@@ -70,6 +72,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     hostPlatform: process.arch === 'arm64' ? 'linux/arm64' : 'linux/amd64',
     docker: findBinary('docker'),
     trivy: findBinary('trivy'),
+    // 2026/11/02 起本機試點也比照正式環境（不能上網）：預設不連網掃描；要恢復連網自動更新設 ONBOARDING_TRIVY_OFFLINE=0
+    trivyOffline: process.env.ONBOARDING_TRIVY_OFFLINE !== '0',
     helperImage: process.env.ONBOARDING_HELPER_IMAGE ?? 'busybox:1.36.1',
     limits: {
       uploadBytes: 100 * 1024 * 1024,

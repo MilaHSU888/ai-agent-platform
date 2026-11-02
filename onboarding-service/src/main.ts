@@ -7,7 +7,7 @@ import { DockerRuntime } from './runtime.ts';
 import { Secrets } from './secrets.ts';
 import { JobQueue } from './queue.ts';
 import { createApp } from './server.ts';
-import { runReleaseJob } from './releases.ts';
+import { cleanupPreviews, runReleaseJob } from './releases.ts';
 import { relayEnv, syncRelay } from './relay.ts';
 import { seedDefault } from './models.ts';
 
@@ -36,6 +36,7 @@ queue.extraKinds.release = (id, signal) => runReleaseJob(store, cfg, rt, secrets
 queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 queue.extraKinds.trial = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+queue.extraKinds.publish = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 const { server } = createApp(store, cfg, queue, rt, secrets);
 
 const avail = await rt.available();
@@ -66,6 +67,12 @@ server.listen(cfg.port, cfg.host, () => {
   console.log(' 關閉此視窗會停止上架服務；已排隊的工作下次啟動時會繼續。');
   console.log(line);
   queue.start();
+  // 清掉已發布工具累積的舊預覽資料（2026/11/02 起發布後自動清；這裡補清之前留下來的）
+  if (avail.docker) void (async () => {
+    let n = 0;
+    for (const t of store.all<{ id: string }>("SELECT id FROM tools WHERE kind='zip' AND EXISTS (SELECT 1 FROM releases r WHERE r.tool_id=tools.id AND r.status IN ('active','trial','offline'))")) n += await cleanupPreviews(store, rt, t.id).catch(() => 0);
+    if (n) store.audit('system', 'preview.cleanup', null, { volumes: n });
+  })();
 });
 
 const shutdown = () => {

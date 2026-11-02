@@ -26,6 +26,7 @@ async function setup(opts: FakeOpts = {}) {
   queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   queue.extraKinds.trial = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
+  queue.extraKinds.publish = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
   const app = createApp(store, cfg, queue, rt, secrets, TOKEN);
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', () => r()));
   cfg.port = (app.server.address() as AddressInfo).port;
@@ -94,6 +95,15 @@ test('完整流程：上傳 → 建置 → 掃描 → 測試 → 預覽 → 測�
     assert.equal(s1.status, 'awaiting_confirmation');
     assert.equal(s1.steps.build.status, 'passed');
     assert.equal(s1.steps.scan.status, 'passed');
+    // 掃描結果記下掃描器版本與漏洞資料庫時間（2026/11/02）
+    assert.equal(s1.steps.scan.summary.scanner.tool, 'trivy');
+    assert.equal(s1.steps.scan.summary.scanner.version, '0.67.2');
+    assert.equal(s1.steps.scan.summary.scanner.dbUpdatedAt, '2026-10-30T06:00:00.000Z');
+    const sc = (await t.call('GET', '/api/onboarding/scanner')).data as Record<string, any>;
+    assert.equal(sc.available, true);
+    assert.equal(sc.scanner.version, '0.67.2');
+    assert.equal(typeof sc.dbAgeDays, 'number');
+    assert.ok(sc.lastScanAt);
     assert.equal(s1.steps.code_review.status, 'awaiting');
     assert.match(s1.steps.code_review.summary.reason, /開發者人工程式碼檢查/);
     assert.equal(s1.steps.platform_test.status, 'passed');
@@ -460,7 +470,8 @@ test('模型轉接：工具只拿到轉接網址與工具專用通行碼、跑�
     const relay = t.rt.relays.at(-1)!;
     assert.equal(JSON.parse(relay.env.RELAY_ENDPOINTS)['wisely-5090'].key, real);
     assert.ok(relay.routesDir.endsWith('relay-routes'));
-    assert.deepEqual(JSON.parse(relay.env.RELAY_TOKENS), { [pv.env.OPENAI_API_KEY]: 'demo-tool' });
+    // 預覽拿到測試用通行碼：用量記為測試，不算進正式用量（2026/11/02）
+    assert.deepEqual(JSON.parse(relay.env.RELAY_TOKENS), { [pv.env.OPENAI_API_KEY]: 'demo-tool@test' });
     assert.deepEqual(relay.networks, ['wh-net-demo-tool']);
     const bt = t.rt.ran.at(-1)!;
     assert.equal(bt.network, 'none');
@@ -592,7 +603,9 @@ test('取消提交：測試失敗時撤回，撤銷確認並關閉預覽；已�
 });
 
 // ── 試用／公開（DEC-032） ──────────────────────────────────────────
-test('試用與公開：新工具發布後是試用中；開發者試用通過、AI Team 公開後才公開；可取消公開', async () => {
+const light = (t: Awaited<ReturnType<typeof setup>>, target: string, note?: string) => t.call('POST', '/api/onboarding/tools/demo-tool/light', { target, ...(note ? { note } : {}) });
+
+test('燈號：新工具發布後是試用中；AI Team 切到公開中（第一次公開清空試用資料）、可切回試用中；開發者不用按試用通過', async () => {
   const t = await setup();
   try {
     const v1 = await approvedVersion(t, 'v1');
@@ -600,41 +613,100 @@ test('試用與公開：新工具發布後是試用中；開發者試用通過�
     await t.runQueue();
     let cat = (await catalogOf(t))[0];
     assert.equal(cat.visibility, 'trial');
-    assert.equal(cat.trialPassed, false);
+    assert.equal(cat.everPublished, false);
     assert.equal(cat.trial, null);
-    // 未按試用通過不能公開；公開需說明
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 409);
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {})).status, 200);
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {})).status, 409, '同一版不重複按');
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: ' ' })).status, 409);
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 200);
+    assert.equal('trialPassed' in cat, false, '已拿掉「試用通過」');
+    // 發布後自動清掉預覽容器與預覽資料卷
+    assert.ok(t.rt.removed.includes('wh-preview-demo-tool-r1-data'), '清掉預覽資料卷');
+    assert.ok(t.rt.removed.includes('wh-preview-demo-tool'), '關掉預覽容器');
+    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v1.id}`)).data.submission as Record<string, any>).previewUrl, null);
+    const port = t.rt.running.get('wh-rel-demo-tool')!.hostPort;
+    // 舊的試用通過／測試未通過已移除
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {})).status, 404);
+    assert.equal((await light(t, 'bogus')).status, 409);
+    assert.equal((await light(t, 'trial')).status, 409, '已經是試用中');
+    // 第一次公開：排入工作 → 清空試用資料、以空白資料重新啟動，通過健康檢查才公開
+    const p = await light(t, 'public');
+    assert.equal(p.status, 202);
+    assert.equal((p.data as Record<string, any>).mode, 'first_publish');
+    await t.runQueue();
+    assert.ok(t.rt.removed.includes('wh-rel-demo-tool-data'), '清空試用資料');
+    assert.equal(t.rt.backups.length, 0, '直接清空，不備份');
+    const live = t.rt.running.get('wh-rel-demo-tool')!;
+    assert.equal(live.hostPort, port, '入口網址不變');
+    assert.equal(live.image, v1.digest);
     cat = (await catalogOf(t))[0];
     assert.equal(cat.visibility, 'public');
+    assert.equal(cat.everPublished, true);
     // 試用中點擊另外標記
     await t.call('POST', '/api/onboarding/entry-events', { clientEventId: 'evt_public01', toolId: 'demo-tool', kind: 'click' });
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/unpublish', { reason: '' })).status, 409);
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/unpublish', { reason: '發現問題' })).status, 200);
+    // 切回試用中：只改可見度，資料與版本不動
+    const removedBefore = t.rt.removed.length;
+    assert.equal((await light(t, 'trial')).status, 200);
     assert.equal((await catalogOf(t))[0].visibility, 'trial');
+    assert.equal(t.rt.removed.length, removedBefore);
+
     await t.call('POST', '/api/onboarding/entry-events', { clientEventId: 'evt_trial0001', toolId: 'demo-tool', kind: 'click' });
     const ev = (await t.call('GET', '/api/onboarding/entry-events?toolId=demo-tool')).data.events as Record<string, any>[];
     assert.deepEqual(ev.map((e) => e.trial), [1, 0]);
-    // 尚未公開的工具版更：直接更新，仍是試用中，需重新試用通過
-    const v2 = await approvedVersion(t, 'v2', 'update');
-    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
-    cat = (await catalogOf(t))[0];
-    assert.equal(cat.version, 'v2');
-    assert.equal(cat.visibility, 'trial');
-    assert.equal(cat.trialPassed, false);
+    // 再切回公開中：公開過，不再清空資料，立即生效
+    const again = await light(t, 'public');
+    assert.equal(again.status, 200);
+    assert.equal((again.data as Record<string, any>).mode, 'visibility');
+    assert.equal(t.rt.removed.length, removedBefore, '第二次公開不清空資料');
+    assert.equal((await catalogOf(t))[0].visibility, 'public');
+    const audit = (await t.call('GET', '/api/onboarding/audit?limit=50')).data.events as Record<string, any>[];
+    assert.ok(audit.some((e) => e.action === 'tool.published' && JSON.parse(e.detail_json).trialDataCleared === true));
+    assert.ok(audit.some((e) => e.action === 'tool.unpublished'));
+    // 已公開的工具也可以直接切到「下架」：停止服務、入口關閉，資料保留（2026/11/02）
+    const off = await light(t, 'ended');
+    assert.equal(off.status, 200);
+    assert.equal((off.data as Record<string, any>).mode, 'offline');
+    const offCat = (await catalogOf(t))[0];
+    assert.equal(offCat.offline, true);
+    assert.equal(t.rt.running.has('wh-rel-demo-tool'), false);
+    assert.equal(t.rt.removed.length, removedBefore, '下架不刪資料');
+    const rows2 = (await t.call('GET', '/api/onboarding/tools/demo-tool/review-history')).data.rows as Record<string, string>[];
+    assert.ok(rows2.some((r) => r.action === '下架'));
   } finally { await t.close(); }
 });
 
-test('已公開工具的版更：新版並行試用（空白資料、另一個容器），公開時才走更新流程並移除試用版；可結束試用', async () => {
+test('燈號：未公開的新工具「下架」等同下架；第一次公開健康檢查失敗則維持試用中、可重試', async () => {
   const t = await setup();
   try {
     const v1 = await approvedVersion(t, 'v1');
     await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
-    await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', {});
-    await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '首版公開' });
+    // 公開時健康檢查失敗：維持試用中
+    t.rt.opts.healthy = false;
+    assert.equal((await light(t, 'public')).status, 202);
+    await t.runQueue();
+    assert.equal((await catalogOf(t))[0].visibility, 'trial');
+    t.rt.opts.healthy = true;
+    assert.equal((await light(t, 'public')).status, 202, '可以再切一次重試');
+    await t.runQueue();
+    assert.equal((await catalogOf(t))[0].visibility, 'public');
+    // 另一個新工具：下架 = 下架
+    const t2 = await setup();
+    try {
+      const w1 = await approvedVersion(t2, 'v1');
+      await t2.call('POST', `/api/onboarding/submissions/${w1.id}/release`); await t2.runQueue();
+      const e = await light(t2, 'ended');
+      assert.equal(e.status, 200);
+      assert.equal((e.data as Record<string, any>).mode, 'offline');
+      const cat = (await catalogOf(t2))[0];
+      assert.equal(cat.offline, true);
+      assert.equal(cat.visibility, 'trial');
+      assert.equal(t2.rt.running.has('wh-rel-demo-tool'), false);
+    } finally { await t2.close(); }
+  } finally { await t.close(); }
+});
+
+test('已公開工具的版更：新版並行試用（空白資料、另一個容器），燈號切到公開中才走更新流程並移除試用版；可下架', async () => {
+  const t = await setup();
+  try {
+    const v1 = await approvedVersion(t, 'v1');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    await light(t, 'public'); await t.runQueue();
     const live = t.rt.running.get('wh-rel-demo-tool')!;
     // 新版 → 試用版
     const v2 = await approvedVersion(t, '1.1.0', 'update');
@@ -654,7 +726,6 @@ test('已公開工具的版更：新版並行試用（空白資料、另一個�
     assert.equal(cat.visibility, 'public');
     assert.equal(cat.version, 'v1');
     assert.equal(cat.trial.version, 'v2');
-    assert.equal(cat.trial.passed, false);
     assert.match(cat.trial.url, /^http:\/\/127\.0\.0\.1:187\d\d\/$/);
     assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v2.id}`)).data.submission as Record<string, any>).status, 'trial');
     // 試用中不能再上傳新版本
@@ -662,9 +733,8 @@ test('已公開工具的版更：新版並行試用（空白資料、另一個�
     assert.equal(blocked.status, 422);
     assert.match(JSON.stringify(blocked.data), /試用中/);
     // 公開新版
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 409, '需先試用通過');
-    await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', { note: '主要功能正常' });
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '試用 OK' })).status, 202);
+    assert.equal((await light(t, 'trial')).status, 409, '新版試用中時不能把工具切回試用中');
+    assert.equal((await light(t, 'public')).status, 202, '不用開發者試用通過，AI Team 直接公開');
     await t.runQueue();
     cat = (await catalogOf(t))[0];
     assert.equal(cat.version, 'v2');
@@ -677,12 +747,13 @@ test('已公開工具的版更：新版並行試用（空白資料、另一個�
     assert.equal(t.rt.backups.length, 1, '公開時照常先備份正式資料');
     const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
     assert.ok(hist.some((h) => h.status === 'trial_ended' && h.detail.ended.promotedTo));
-    // 再一版：結束試用 → 捨棄試用版，提交改為已取消，正式版本不變
+    // 再一版：下架 → 捨棄試用版，提交改為已取消，正式版本不變
     const v3 = await approvedVersion(t, '1.2.0', 'update');
     await t.call('POST', `/api/onboarding/submissions/${v3.id}/release`); await t.runQueue();
     assert.ok(t.rt.running.has('wh-trial-demo-tool'));
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/end-trial', { reason: '' })).status, 409);
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/end-trial', { reason: '匯出有誤' })).status, 200);
+    const ended = await light(t, 'ended');
+    assert.equal(ended.status, 200);
+    assert.equal((ended.data as Record<string, any>).mode, 'ended');
     assert.equal(t.rt.running.has('wh-trial-demo-tool'), false);
     assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v3.id}`)).data.submission as Record<string, any>).status, 'withdrawn');
     cat = (await catalogOf(t))[0];
@@ -710,39 +781,6 @@ test('封存：停止所有容器、從入口與管理頁移除，資料卷與�
   } finally { await t.close(); }
 });
 
-test('測試未通過：未公開工具記錄結果、不能公開、可重新測試後通過；並行試用版自動結束試用', async () => {
-  const t = await setup();
-  try {
-    const v1 = await approvedVersion(t, 'v1');
-    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-failed', { reason: ' ' })).status, 409, '需填原因');
-    const f = await t.call('POST', '/api/onboarding/tools/demo-tool/trial-failed', { reason: '匯出檔案欄位錯位' });
-    assert.equal(f.status, 200);
-    assert.equal((f.data as Record<string, any>).ended, false);
-    let cat = (await catalogOf(t))[0];
-    assert.equal(cat.visibility, 'trial');
-    assert.equal(cat.trialResult.result, 'failed');
-    assert.equal(cat.trialResult.note, '匯出檔案欄位錯位');
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '公開' })).status, 409, '未通過不能公開');
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/trial-passed', { note: '修正設定後正常' })).status, 200);
-    cat = (await catalogOf(t))[0];
-    assert.equal(cat.trialResult.result, 'passed');
-    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/publish', { note: '公開' })).status, 200);
-    const v2 = await approvedVersion(t, '1.1.0', 'update');
-    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
-    assert.ok(t.rt.running.has('wh-trial-demo-tool'));
-    const f2 = await t.call('POST', '/api/onboarding/tools/demo-tool/trial-failed', { reason: '新功能無法使用' });
-    assert.equal((f2.data as Record<string, any>).ended, true);
-    assert.equal(t.rt.running.has('wh-trial-demo-tool'), false);
-    assert.equal(((await t.call('GET', `/api/onboarding/submissions/${v2.id}`)).data.submission as Record<string, any>).status, 'withdrawn');
-    cat = (await catalogOf(t))[0];
-    assert.equal(cat.version, 'v1');
-    assert.equal(cat.trial, null);
-    const hist = (await t.call('GET', '/api/onboarding/releases?toolId=demo-tool')).data.releases as Record<string, any>[];
-    assert.ok(hist.some((h) => h.status === 'trial_ended' && /測試未通過/.test(h.detail.ended.reason)));
-  } finally { await t.close(); }
-});
-
 // ── URL 上架（PRD §10） ─────────────────────────────────────────────
 const urlForm = (over: Record<string, unknown> = {}) => ({ mode: 'new', name: 'OpenWebUI', department: 'shared', owner: 'Mila', url: 'https://chat.example.com/', description: '公司 AI 問答', usesAi: true, aiConfirmed: true, guide: '', ...over });
 
@@ -753,7 +791,8 @@ test('URL 上架：表單檢查、網址檢查不適用的步驟標示不適用�
     const bad = await t.call('POST', '/api/onboarding/submissions/url', urlForm({ url: 'ftp://x', description: '', usesAi: true, aiConfirmed: false }));
     assert.equal(bad.status, 422);
     const fields = (bad.data.issues as { field: string }[]).map((i) => i.field);
-    assert.ok(fields.includes('url') && fields.includes('description') && fields.includes('aiConfirmed'));
+    assert.ok(fields.includes('url') && fields.includes('aiConfirmed'));
+    assert.ok(!fields.includes('description'), '用途說明為選填');
     assert.equal((await t.call('POST', '/api/onboarding/submissions/url', urlForm({ url: 'https://user:pw@chat.example.com/' }))).status, 422, '網址不可帶帳密');
     // 送審 → 網址檢查
     const up = await t.call('POST', '/api/onboarding/submissions/url', urlForm());
@@ -778,8 +817,7 @@ test('URL 上架：表單檢查、網址檢查不適用的步驟標示不適用�
     assert.equal(cat.healthy, true);
     assert.equal(cat.visibility, 'trial');
     assert.equal(t.rt.started.length, 0, 'URL 工具不啟動容器');
-    await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/trial-passed`, {});
-    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/publish`, { note: '公開' })).status, 200);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/light`, { target: 'public' })).status, 200, 'URL 工具沒有資料可清，立即公開');
     // 重新啟動、日誌不適用
     assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/restart`, { reason: 'x' })).status, 409);
     // 修改網址 → 已公開工具：新網址以試用入口並行，公開後才切換
@@ -794,8 +832,7 @@ test('URL 上架：表單檢查、網址檢查不適用的步驟標示不適用�
     cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
     assert.equal(cat.url, 'https://chat.example.com/', '一般使用者仍用舊網址');
     assert.equal(cat.trial.url, 'https://chat2.example.com/');
-    await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/trial-passed`, {});
-    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/publish`, { note: '公開新網址' })).status, 202);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/light`, { target: 'public' })).status, 202);
     await t.runQueue();
     cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
     assert.equal(cat.url, 'https://chat2.example.com/');
@@ -808,7 +845,10 @@ test('URL 上架：表單檢查、網址檢查不適用的步驟標示不適用�
     // 用途說明與適用情境：第一次上架由表單帶入，AI Team 可修改；修改網址時不影響
     assert.equal((await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!.description, '公司 AI 問答');
     assert.equal((await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!.scenario, null);
-    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/profile`, { description: '', scenario: 'x' })).status, 409);
+    // 用途說明為選填（2026/11/02）：清空後工具中心不顯示，也不再沿用提交時的說明
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/profile`, { description: '', scenario: 'x' })).status, 200);
+    assert.equal((await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!.description, null);
+    assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/profile`, { description: 'x'.repeat(81), scenario: '' })).status, 409);
     assert.equal((await t.call('POST', `/api/onboarding/tools/${sub0.toolId}/profile`, { description: '公司內部 AI 問答', scenario: '查詢內規、整理文件初稿' })).status, 200);
     cat = (await catalogOf(t)).find((c) => c.toolId === sub0.toolId)!;
     assert.equal(cat.description, '公司內部 AI 問答');
@@ -912,10 +952,60 @@ test('模型管理：可用模型、預設模型只能地端、工具指定模�
       { ts: nowIso, tool: 'demo-tool', path: '/v1/chat/completions', endpoint: 'cloud-x', model: 'gpt-cloud', status: 504, error: 'relay_upstream_timeout', ms: 3000 },
       { ts: nowIso, tool: 'demo-tool', path: '/v1/models', status: 200 },
       { ts: nowIso, tool: null, path: '/v1/chat/completions', status: 401 },
+      // 預覽／試用版的呼叫：另外統計，不算進正式用量（2026/11/02）
+      { ts: nowIso, stage: 'test', tool: 'demo-tool', path: '/v1/chat/completions', endpoint: 'wisely-5090', model: 'small', status: 200, ms: 500, prompt_tokens: 100, completion_tokens: 50 },
     ].map((e) => JSON.stringify(e)).join('\n') + '\n');
     const u = (await t.call('GET', '/api/onboarding/model-usage?hours=24')).data as any;
     assert.equal(u.totals.calls, 2); assert.equal(u.totals.errors, 1); assert.equal(u.totals.tokens, 15); assert.equal(u.totals.avgMs, 2000);
     assert.equal(u.local.calls, 1); assert.equal(u.cloud.calls, 1);
     assert.equal(u.byTool[0].name, '示範工具'); assert.equal(u.byDay.length, 1);
+    assert.equal(u.test.calls, 1); assert.equal(u.test.tokens, 150);
+    assert.equal(u.testByTool[0].toolId, 'demo-tool');
+  } finally { await t.close(); }
+});
+
+test('審核履歷：記錄網站選的示範身分（未驗證）、誰上傳／檢查程式碼／核准／公開；CSV 匯出；稽核紀錄不能刪改', async () => {
+  const t = await setup();
+  try {
+    const as = (name: string) => ({ 'X-WorkHub-Actor': encodeURIComponent(name) });
+    const up = await t.call('POST', '/api/onboarding/submissions?department=purchase&owner=林開發&filename=demo.zip', validZip(), { ...as('林開發'), 'Content-Type': 'application/zip' });
+    assert.equal(up.status, 201);
+    const id = (up.data.submission as { id: string }).id;
+    await t.runQueue();
+    await t.call('POST', `/api/onboarding/submissions/${id}/code-review`, { note: '看過' }, as('林開發'));
+    await t.call('POST', `/api/onboarding/submissions/${id}/confirmations`, { note: '已核對' }, as('林開發'));
+    assert.equal((await t.call('POST', `/api/onboarding/submissions/${id}/approvals`, { reason: '核准' }, as('Tammy'))).status, 200);
+    await t.call('POST', `/api/onboarding/submissions/${id}/release`, undefined, as('Tammy')); await t.runQueue();
+    assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/light', { target: 'public' }, as('Mumu'))).status, 202);
+    await t.runQueue();
+    // 不合格的名字改用操作者（不寫入怪字元）
+    await t.call('POST', '/api/onboarding/tools/demo-tool/light', { target: 'trial' }, as('<script>'));
+    const rows = (await t.call('GET', '/api/onboarding/tools/demo-tool/review-history')).data.rows as Record<string, string>[];
+    const who = (action: RegExp) => rows.find((r) => action.test(r.action))?.actor;
+    assert.equal(who(/^上傳$/), '林開發');
+    assert.equal(who(/^程式碼檢查$/), '林開發');
+    assert.equal(who(/^核准發布$/), 'Tammy');
+    assert.equal(who(/^發布/), 'Tammy');
+    assert.equal(who(/^公開（第一次/), 'Mumu');
+    assert.equal(who(/^切回試用中$/), 'Mila', '不合格的示範身分改記操作者');
+    assert.ok(rows.find((r) => r.action === '漏洞檢查' && r.actor === 'system' && /Trivy 0\.67\.2/.test(r.note)));
+    assert.ok(rows.filter((r) => r.actor !== 'system').every((r) => r.identity === '示範，未驗證'));
+    assert.ok(rows.every((r) => r.version === 'v1'));
+    // 同一個人做多個步驟不擋，只記錄
+    assert.equal(rows.filter((r) => r.actor === '林開發').length >= 3, true);
+    // CSV：BOM、標題列、單一工具與全部工具
+    const csv = await fetch(`${t.base}/api/onboarding/review-history.csv?toolId=demo-tool`, { headers: { 'X-WorkHub-Proxy-Token': TOKEN, Host: new URL(t.base).host } });
+    const csvBuf = Buffer.from(await csv.arrayBuffer());
+    assert.deepEqual([...csvBuf.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM，Excel 開中文不亂碼');
+    const csvText = csvBuf.toString('utf8');
+    assert.match(csv.headers.get('content-type') ?? '', /text\/csv/);
+    assert.match(decodeURIComponent(csv.headers.get('content-disposition') ?? ''), /WorkHub審核履歷_demo-tool_/);
+    assert.ok(csvText.startsWith('﻿時間（台北）,工具,工具代號,版本,動作,人員,身分驗證,說明'));
+    assert.match(csvText, /核准發布,Tammy,示範，未驗證/);
+    assert.equal((await fetch(`${t.base}/api/onboarding/review-history.csv?toolId=../x`, { headers: { 'X-WorkHub-Proxy-Token': TOKEN, Host: new URL(t.base).host } })).status, 400);
+    // 稽核紀錄永久保存：不能刪除或修改；核准紀錄不能刪除
+    assert.throws(() => t.store.run('DELETE FROM audit_events'), /不能刪除/);
+    assert.throws(() => t.store.run("UPDATE audit_events SET actor='x'"), /不能修改/);
+    assert.throws(() => t.store.run('DELETE FROM approvals'), /不能刪除/);
   } finally { await t.close(); }
 });

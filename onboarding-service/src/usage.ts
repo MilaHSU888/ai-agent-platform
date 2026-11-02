@@ -2,6 +2,8 @@
  * 模型用量統計（DEC-040）：彙整轉接服務的中繼資料日誌（relay-logs/relay-YYYYMMDD.jsonl）。
  * 日誌只有工具、模型、狀態、耗時與 token 數，沒有提示詞或回應內容；只算得出「哪個工具」，算不出「哪個使用者」。
  * 串流回應沒有 token 數（上游不在串流中回報），只計次數與耗時。
+ * 正式與測試分開（2026/11/02）：預覽與試用版的呼叫標為 stage=test，只算在 test，不算進正式的總計、工具與每日統計。
+ * 2026/11/02 之前的紀錄沒有 stage，一律視為正式（當時分不出來）。
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +12,7 @@ import type { Store } from './db.ts';
 import { locationOf } from './models.ts';
 import type { Secrets } from './secrets.ts';
 
-type Entry = { ts: string; tool?: string | null; model?: string | null; endpoint?: string | null; path?: string; method?: string; status?: number; error?: string; ms?: number; prompt_tokens?: number | null; completion_tokens?: number | null };
+type Entry = { ts: string; stage?: 'prod' | 'test'; tool?: string | null; model?: string | null; endpoint?: string | null; path?: string; method?: string; status?: number; error?: string; ms?: number; prompt_tokens?: number | null; completion_tokens?: number | null };
 type Agg = { calls: number; errors: number; promptTokens: number; completionTokens: number; totalMs: number; timed: number };
 const blank = (): Agg => ({ calls: 0, errors: 0, promptTokens: 0, completionTokens: 0, totalMs: 0, timed: 0 });
 const add = (a: Agg, e: Entry) => {
@@ -32,7 +34,8 @@ export function modelUsage(cfg: Config, store: Store, secrets: Secrets, opts: { 
   const fromDay = from.toISOString().slice(0, 10).replace(/-/g, '');
   const files = existsSync(dir) ? readdirSync(dir).filter((f) => /^relay-\d{8}\.jsonl$/.test(f) && f.slice(6, 14) >= String(Number(fromDay) - 1)) : [];
   const names = Object.fromEntries(store.all<{ id: string; name: string }>('SELECT id, name FROM tools').map((t) => [t.id, t.name]));
-  const total = blank(), local = blank(), cloud = blank();
+  const total = blank(), local = blank(), cloud = blank(), test = blank();
+  const testByTool = new Map<string, Agg>();
   const byTool = new Map<string, Agg & { last: string; models: Set<string> }>();
   const byDay = new Map<string, Agg>();
   for (const f of files.sort()) {
@@ -44,6 +47,11 @@ export function modelUsage(cfg: Config, store: Store, secrets: Secrets, opts: { 
       const t = new Date(e.ts);
       if (t < from || t > to) continue;
       if (opts.toolId && e.tool !== opts.toolId) continue;
+      if (e.stage === 'test') {
+        add(test, e);
+        const tt = testByTool.get(e.tool) ?? blank(); add(tt, e); testByTool.set(e.tool, tt);
+        continue;
+      }
       add(total, e);
       add(locationOf(secrets, e.endpoint ?? 'wisely-5090') === 'local' ? local : cloud, e); // 改版前的紀錄沒有 endpoint，當時只有 wisely-5090
       const bt = byTool.get(e.tool) ?? Object.assign(blank(), { last: e.ts, models: new Set<string>() });
@@ -56,6 +64,9 @@ export function modelUsage(cfg: Config, store: Store, secrets: Secrets, opts: { 
   return {
     from: from.toISOString(), to: to.toISOString(), hours: opts.hours,
     totals: view(total), local: view(local), cloud: view(cloud),
+    /** 預覽與試用版的用量（不含在 totals） */
+    test: view(test),
+    testByTool: [...testByTool.entries()].map(([toolId, a]) => ({ toolId, name: names[toolId] ?? toolId, ...view(a) })).sort((a, b) => b.calls - a.calls),
     byTool: [...byTool.entries()].map(([toolId, a]) => ({ toolId, name: names[toolId] ?? toolId, ...view(a), lastAt: a.last, models: [...a.models] })).sort((a, b) => b.calls - a.calls),
     byDay: [...byDay.entries()].map(([date, a]) => ({ date, ...view(a) })).sort((a, b) => a.date.localeCompare(b.date)),
   };

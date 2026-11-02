@@ -45,14 +45,13 @@ export function submitUrlTool(store: Store, cfg: Config, f: UrlForm): { ok: true
     if (nameErr) bad('name', nameErr, '填寫使用者看得懂的工具名稱');
     if (!f.department?.trim()) bad('department', '缺少部門', '選擇工具所屬部門');
     if (!f.owner?.trim()) bad('owner', '缺少工具負責人', '填寫 Owner');
-    if (!f.description.trim()) bad('description', '缺少用途說明', '一句話說明這個工具做什麼');
     if (f.description.trim().length > 80 || (f.scenario ?? '').trim().length > 80) bad('description', '用途說明與適用情境各限 80 字', '精簡成一句話');
     toolId = `url-${Date.now().toString(36)}`;
   } else {
     const tool = store.get<{ kind: string; archived_json: string | null; description: string | null }>('SELECT kind, archived_json, description FROM tools WHERE id=?', toolId);
     if (!tool || tool.archived_json) bad('toolId', '找不到此工具', '從工具清單選擇要修改的 URL 工具');
     else if (tool.kind !== 'url') bad('toolId', '這個工具是 ZIP 上架的工具', '請用「提交新版本」上傳 ZIP');
-    if (store.get("SELECT id FROM releases WHERE tool_id=? AND status='trial'", toolId)) bad('toolId', '此工具有新設定正在試用中', '請先結束試用或由 AI Team 公開後再修改');
+    if (store.get("SELECT id FROM releases WHERE tool_id=? AND status='trial'", toolId)) bad('toolId', '此工具有新設定正在試用中', '請先下架或由 AI Team 公開後再修改');
   }
   if (issues.length) return { ok: false, issues };
   const t = now();
@@ -60,7 +59,7 @@ export function submitUrlTool(store: Store, cfg: Config, f: UrlForm): { ok: true
   let result: { ok: true; submissionId: string } | { ok: false; issues: Issue[] } = { ok: true, submissionId };
   store.tx(() => {
     if (f.mode === 'new') {
-      store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at,visibility,kind,description,scenario) VALUES (?,?,?,?,?,?,'trial','url',?,?)", toolId, f.name!.trim(), f.department!.trim(), f.owner!.trim(), t, t, f.description.trim(), (f.scenario ?? '').trim() || null);
+      store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at,visibility,kind,description,scenario) VALUES (?,?,?,?,?,?,'trial','url',?,?)", toolId, f.name!.trim(), f.department!.trim(), f.owner!.trim(), t, t, f.description.trim() || null, (f.scenario ?? '').trim() || null);
     }
     const revision = store.get<{ r: number }>('SELECT COALESCE(MAX(revision),0)+1 AS r FROM submissions WHERE tool_id=?', toolId)!.r;
     const config: UrlConfig = { kind: 'url', tool: { id: toolId, version: nextAutoVersion(store, toolId) }, url: nu.url!, description: f.mode === 'new' ? f.description.trim() : (store.get<{ description: string | null }>('SELECT description FROM tools WHERE id=?', toolId)?.description ?? ''), usesAi: f.usesAi, aiConfirmed: f.aiConfirmed, guide: (f.guide ?? '').trim() };

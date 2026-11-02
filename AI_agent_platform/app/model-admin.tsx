@@ -128,6 +128,7 @@ export function ModelUsagePanel() {
       <div><small>失敗</small><strong>{fmt(u.totals.errors)}</strong><span>{u.totals.calls ? `${((u.totals.errors / u.totals.calls) * 100).toFixed(1)}%` : '—'}</span></div>
       <div><small>平均回應時間</small><strong>{sec(u.totals.avgMs)}</strong></div>
       <div><small>地端／雲端</small><strong>{fmt(u.local.calls)}／{fmt(u.cloud.calls)}</strong><span>次</span></div>
+      <div><small>測試（預覽、試用版）</small><strong>{fmt(u.test?.calls ?? 0)}</strong><span>次・token {fmt(u.test?.tokens ?? 0)}；不算在左邊的正式用量</span></div>
     </div>
     {u.byDay.length > 0 && <div className="mm-bars" role="img" aria-label="每日呼叫次數">{u.byDay.map((d) => <div key={d.date} title={`${d.date}：${d.calls} 次，失敗 ${d.errors} 次`}><i style={{ height: `${Math.max(4, (d.calls / max) * 100)}%` }} /><small>{d.date.slice(5)}</small></div>)}</div>}
     <div className="mg-table-scroll"><table className="mm-table"><thead><tr><th>工具</th><th>呼叫</th><th>失敗</th><th>token</th><th>平均回應</th><th>模型</th><th>最後呼叫</th></tr></thead><tbody>

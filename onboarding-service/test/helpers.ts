@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, type Config } from '../src/config.ts';
 import type { ExecResult } from '../src/exec.ts';
-import type { Ctx, RelaySpec, Runtime, ServiceSpec } from '../src/runtime.ts';
+import type { Ctx, RelaySpec, Runtime, ScannerInfo, ServiceSpec } from '../src/runtime.ts';
 
 export type ZipFile = { name: string; data?: string | Buffer; symlink?: boolean; store?: boolean; lieSize?: number };
 
@@ -114,12 +114,14 @@ export class FakeRuntime implements Runtime {
     }
     return this.opts.build ? { ok: true, digest: `sha256:${Buffer.from(tag).toString('hex').slice(-40)}`, result: ok() } : { ok: false, result: { ...ok(), code: 1 } };
   }
+  scanner: ScannerInfo = { tool: 'trivy', version: '0.67.2', dbUpdatedAt: '2026-10-30T06:00:00.000Z', dbDownloadedAt: '2026-10-30T08:00:00.000Z', offline: false };
+  async scannerInfo() { return this.opts.trivy === 'missing' ? null : this.scanner; }
   async scan() {
     if (this.opts.trivy === 'missing') return { available: false, ok: false };
     const vulns = this.opts.trivy === 'critical'
       ? [{ VulnerabilityID: 'CVE-2026-6653', PkgName: 'libxml2', InstalledVersion: '2.9', Severity: 'CRITICAL', Title: 'x' }, { VulnerabilityID: 'CVE-1', PkgName: 'a', InstalledVersion: '1', Severity: 'HIGH' }]
       : [{ VulnerabilityID: 'CVE-1', PkgName: 'a', InstalledVersion: '1', Severity: 'HIGH' }];
-    return { available: true, ok: true, json: { Results: [{ Vulnerabilities: vulns }] } };
+    return { available: true, ok: true, json: { Results: [{ Vulnerabilities: vulns }] }, scanner: this.scanner };
   }
   async runOnce(spec: Omit<ServiceSpec, 'hostPort' | 'containerPort'>) { this.ran.push(spec); return { ...ok('1 passed'), code: this.opts.businessExit ?? 0 }; }
   async start(spec: ServiceSpec) { this.started.push(spec); this.running.set(spec.name, spec); return ok('cid'); }

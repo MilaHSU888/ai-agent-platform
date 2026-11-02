@@ -22,10 +22,10 @@ export type VulnItem = {
   id: string; severity: string; category: string; title: string; description: string; url: string | null;
   published: string | null; fixable: boolean; packages: { name: string; installed: string; fixed: string | null }[];
 };
-export type TrialResult = { result: 'passed' | 'failed'; note: string; actor: string; at: string };
-export type TrialInfo = { releaseId: string; submissionId: string; version: string; url: string | null; healthy: boolean; passed: boolean; result: TrialResult | null; since: string };
+export type TrialInfo = { releaseId: string; submissionId: string; version: string; url: string | null; healthy: boolean; since: string };
 export type CatalogTool = { toolId: string; name: string; department: string; owner: string; version: string; releaseId: string; url: string | null; healthy: boolean; offline?: boolean; maintenance?: { at: string; actor: string; reason: string } | null; usesModel: boolean; releasedAt: string;
-  /** trial＝試用中（未公開，只有開發者與 AI Team 看得到）；public＝公開 */ visibility: 'trial' | 'public'; trialPassed?: boolean; trialResult?: TrialResult | null; trial: TrialInfo | null;
+  /** trial＝試用中（未公開，只有開發者與 AI Team 看得到）；public＝公開 */ visibility: 'trial' | 'public'; trial: TrialInfo | null;
+  /** 是否公開過（第一次公開會清空試用資料）；是否有發布／公開工作進行中 */ everPublished?: boolean; busy?: boolean;
   kind?: 'zip' | 'url'; icon?: ToolIcon | null; description?: string | null; scenario?: string | null; guide?: string | null;
   /** 使用模型的 ZIP 工具：目前用哪個模型（AI Team 指定或平台預設）與是否僅限地端 */ model?: ToolModelInfo | null };
 /** 模型管理（DEC-040） */
@@ -34,6 +34,7 @@ export type ToolModelInfo = { ref: ModelRef | null; source: 'tool' | 'default' |
 export type EndpointInfo = { id: string; location: 'local' | 'cloud'; reachable: boolean; error?: string; models: { id: string; enabled: boolean; isDefault: boolean; available: boolean; usedBy: string[] }[] };
 export type UsageView = { calls: number; errors: number; promptTokens: number; completionTokens: number; tokens: number; avgMs: number | null };
 export type ModelUsage = { from: string; to: string; hours: number; totals: UsageView; local: UsageView; cloud: UsageView;
+  /** 預覽與試用版的用量（不含在 totals；2026/11/02 起才分得出來） */ test?: UsageView; testByTool?: (UsageView & { toolId: string; name: string })[];
   byTool: (UsageView & { toolId: string; name: string; lastAt: string; models: string[] })[]; byDay: (UsageView & { date: string })[] };
 export type Notice = { id: string; toolId: string; toolName: string | null; kind: string; message: string; createdAt: string };
 export type OpsEvent = { at: string; actor: string; action: string; label: string; toolId?: string; toolName: string | null; bad: boolean; reason?: string; version?: string };
@@ -43,6 +44,9 @@ export type ReleaseRecord = {
   detail: { kind: 'release' | 'rollback' | 'redeploy' | 'trial'; fromTrial?: string; ended?: { at: string; actor: string; reason: string; promotedTo?: string }; steps: ReleaseStep[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; error?: string; reason?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
 };
 export type Session = { authenticated: boolean; actor?: string; environment?: string };
+/** 漏洞掃描器（2026/11/02）：版本與本機漏洞資料庫時間；正式環境不連網，不查最新版 */
+export type ScannerInfo = { tool: 'trivy'; version: string | null; dbUpdatedAt: string | null; dbDownloadedAt: string | null; offline: boolean };
+export type ScannerStatus = { scanner: ScannerInfo | null; available: boolean; dbAgeDays: number | null; lastScanAt: string | null; offline: boolean };
 
 export class ApiError extends Error {
   status: number; issues: Issue[]; reasons: string[]; warnings: Issue[];
@@ -57,6 +61,25 @@ export class ApiError extends Error {
 
 const BASE = '/api/onboarding';
 
+/**
+ * 示範身分（2026/11/02）：網站「目前身分（示範）」選的人，每個請求帶給上架服務，寫進審核履歷與稽核紀錄。
+ * 本機試點沒有登入，名字未經驗證，紀錄上一律標示「示範，未驗證」；接上公司 AD 後由登入身分取代。
+ */
+let demoActor = '';
+export function setDemoActor(name: string) { demoActor = name; }
+
+export type ReviewRow = { at: string; toolId: string; toolName: string; version: string; action: string; actor: string; identity: string; note: string };
+
+/** 下載審核履歷 CSV（不傳 toolId＝全部工具） */
+export async function downloadReviewCsv(toolId?: string) {
+  const r = await fetch(`${BASE}/review-history.csv${toolId ? `?toolId=${encodeURIComponent(toolId)}` : ''}`, { credentials: 'same-origin' });
+  if (!r.ok) throw new ApiError(r.status, { error: `匯出失敗（${r.status}）` });
+  const name = decodeURIComponent(/filename\*=UTF-8''([^;]+)/.exec(r.headers.get('content-disposition') ?? '')?.[1] ?? 'WorkHub審核履歷.csv');
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function call<T>(method: string, path: string, body?: BodyInit | object, contentType?: string): Promise<T> {
   const isRaw = body instanceof Blob || body instanceof ArrayBuffer;
   const res = await fetch(BASE + path, {
@@ -64,6 +87,7 @@ async function call<T>(method: string, path: string, body?: BodyInit | object, c
     credentials: 'same-origin',
     headers: {
       ...(body ? { 'Content-Type': contentType ?? (isRaw ? 'application/zip' : 'application/json') } : {}),
+      ...(demoActor ? { 'X-WorkHub-Actor': encodeURIComponent(demoActor) } : {}),
     },
     body: body ? (isRaw ? (body as BodyInit) : JSON.stringify(body)) : undefined,
   });
@@ -90,6 +114,8 @@ export const onboardingApi = {
   setDefaultModel: (r: ModelRef, reason: string) => call<{ default: ModelRef }>('POST', '/models/default', { ...r, reason }),
   setToolModel: (toolId: string, r: ModelRef | null, reason: string) => call<ToolModelInfo>('POST', `/tools/${toolId}/model`, r ? { ...r, reason } : { useDefault: true, reason }),
   setLocalOnly: (toolId: string, on: boolean) => call<{ localOnly: boolean }>('POST', `/tools/${toolId}/local-only`, { on }),
+  scanner: () => call<ScannerStatus>('GET', '/scanner'),
+  reviewHistory: (toolId: string) => call<{ rows: ReviewRow[] }>('GET', `/tools/${toolId}/review-history`).then((r) => r.rows),
   modelUsage: (hours: number, toolId?: string) => call<ModelUsage>('GET', `/model-usage?hours=${hours}${toolId ? `&toolId=${encodeURIComponent(toolId)}` : ''}`),
   notices: (owner: string) => call<{ notices: Notice[] }>('GET', `/notices?owner=${encodeURIComponent(owner)}`).then((r) => r.notices),
   readNotice: (id: string) => call<{ ok: boolean }>('POST', `/notices/${id}/read`),
@@ -115,12 +141,10 @@ export const onboardingApi = {
   releaseLog: async (id: string) => (await fetch(`${BASE}/releases/${id}/log`, { credentials: 'same-origin' })).text(),
   catalog: () => call<{ tools: CatalogTool[] }>('GET', '/catalog').then((r) => r.tools),
   entryEvent: (e: { clientEventId: string; toolId: string; kind: 'click' | 'blocked'; reason?: string; trial?: boolean }) => call<{ recorded: boolean }>('POST', '/entry-events', e),
-  passTrial: (toolId: string, note: string) => call<{ version: string }>('POST', `/tools/${toolId}/trial-passed`, { note }),
-  failTrial: (toolId: string, reason: string) => call<{ version: string; ended: boolean }>('POST', `/tools/${toolId}/trial-failed`, { reason }),
-  publish: (toolId: string, note: string) => call<{ mode: 'visibility' | 'promote'; version: string }>('POST', `/tools/${toolId}/publish`, { note }),
+  /** 試用／公開燈號（AI Team）：trial＝試用中、public＝公開中、ended＝下架；有 jobId 表示背景處理中 */
+  light: (toolId: string, target: 'trial' | 'public' | 'ended', note = '') => call<{ mode: 'visibility' | 'promote' | 'first_publish' | 'ended' | 'offline'; version: string; jobId?: string }>('POST', `/tools/${toolId}/light`, { target, note }),
   archive: (toolId: string, reason: string) => call<{ toolId: string; archived: boolean }>('POST', `/tools/${toolId}/archive`, { reason }),
-  unpublish: (toolId: string, reason: string) => call<{ toolId: string }>('POST', `/tools/${toolId}/unpublish`, { reason }),
-  endTrial: (toolId: string, reason: string) => call<{ toolId: string }>('POST', `/tools/${toolId}/end-trial`, { reason }),
+
   withdraw: (id: string, reason: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/withdraw`, { reason }),
   codeReview: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/code-review`, { note }),
   confirm: (id: string, note: string) => call<{ submission: Submission }>('POST', `/submissions/${id}/confirmations`, { note }),

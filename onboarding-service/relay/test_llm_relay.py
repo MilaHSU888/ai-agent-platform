@@ -37,7 +37,7 @@ class RelayTest(unittest.TestCase):
         cls.port = free_port()
         up = f"http://127.0.0.1:{cls.up.server_port}"
         env = dict(os.environ, RELAY_ENDPOINTS=json.dumps({"local": {"base": f"{up}/v1", "key": "real-upstream-secret-123456"}, "cloud": {"base": f"{up}/cloud/v1", "key": "cloud-secret-abcdef"}}),
-                   RELAY_TOKENS=json.dumps({"tok-tool-a-0123456789": "tool-a", "tok-tool-c-0123456789": "tool-c"}), RELAY_ROUTES_FILE=cls.routes, RELAY_TIMEOUT_SECONDS="1",
+                   RELAY_TOKENS=json.dumps({"tok-tool-a-0123456789": "tool-a", "tok-tool-c-0123456789": "tool-c", "tok-tool-a-test-0123456": "tool-a@test"}), RELAY_ROUTES_FILE=cls.routes, RELAY_TIMEOUT_SECONDS="1",
                    RELAY_LOG_DIR=cls.logs, RELAY_PORT=str(cls.port))
         cls.proc = subprocess.Popen([sys.executable, os.path.join(HERE, "llm_relay.py")], env=env, stdout=subprocess.DEVNULL)
         for _ in range(50):
@@ -100,6 +100,14 @@ class RelayTest(unittest.TestCase):
         log = self.logs_text()
         self.assertIn('"tool": "tool-a"', log); self.assertIn('"prompt_tokens": 5', log)
         self.assertNotIn("機密報價內容", log); self.assertNotIn("real-upstream-secret", log); self.assertNotIn("tok-tool-a", log)
+        self.assertIn('"stage": "prod"', log)
+
+    def test_preview_and_trial_usage_is_marked_test(self):
+        st, _ = self.call("POST", "/v1/chat/completions", {"model": "x", "messages": [{"role": "user", "content": "hi"}]}, token="tok-tool-a-test-0123456")
+        self.assertEqual(st, 200)
+        entries = [json.loads(l) for l in self.logs_text().splitlines() if l.strip()]
+        self.assertTrue(any(e.get("tool") == "tool-a" and e.get("stage") == "test" for e in entries))
+        self.assertFalse(any(e.get("tool") == "tool-a@test" for e in entries))
 
     def test_models_list_shows_only_assigned_model(self):
         st, body = self.call("GET", "/v1/models")

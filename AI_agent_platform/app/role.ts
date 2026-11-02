@@ -9,7 +9,7 @@ export type Role = 'employee' | 'developer' | 'aiteam';
 export const ROLES: { id: Role; label: string; person: string; unit: string; avatar: string; department: string }[] = [
   { id: 'employee', label: '一般員工', person: '陳小華', unit: '一般員工', avatar: '陳', department: 'purchase' },
   { id: 'developer', label: '開發者', person: '林開發', unit: '資訊部・開發者', avatar: '林', department: 'it' },
-  { id: 'aiteam', label: 'AI Team', person: '王大明', unit: '資訊部・AI Team', avatar: '王', department: 'it' },
+  { id: 'aiteam', label: 'AI Team', person: 'Tammy', unit: '資訊部・AI Team', avatar: 'T', department: 'it' },
 ];
 const KEY = 'workhub-demo-role';
 const isRole = (v: unknown): v is Role => v === 'employee' || v === 'developer' || v === 'aiteam';
@@ -45,6 +45,18 @@ export function useDeveloperName(): [string, (n: string) => void] {
     try { localStorage.setItem(DEV_KEY, n); } catch { /* 只影響這個分頁 */ }
     window.dispatchEvent(new CustomEvent('workhub:developer', { detail: n }));
   }, []);
+  return [name, set];
+}
+
+/** 示範用：AI Team 成員（2026/11/02 客戶提供）。紀錄上記錄是誰按的；正式環境改由 AD 帳號與 WorkHub 後台的 AI Team 名單決定 */
+export const AI_TEAM_MEMBERS = ['Tammy', 'Mumu'] as const;
+const AIT_KEY = 'workhub-demo-aiteam-member';
+export function useAiTeamMember(): [string, (n: string) => void] {
+  const [name, setName] = useState<string>(AI_TEAM_MEMBERS[0]);
+  useEffect(() => {
+    queueMicrotask(() => { try { const v = localStorage.getItem(AIT_KEY); if (v && (AI_TEAM_MEMBERS as readonly string[]).includes(v)) setName(v); } catch { /* 用預設 */ } });
+  }, []);
+  const set = useCallback((n: string) => { setName(n); try { localStorage.setItem(AIT_KEY, n); } catch { /* 只影響這個分頁 */ } }, []);
   return [name, set];
 }
 
