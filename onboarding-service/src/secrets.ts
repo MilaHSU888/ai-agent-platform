@@ -38,14 +38,16 @@ export class Secrets {
   }
 
   /** 每個工具一組轉接通行碼：工具只拿到這個，拿不到真正的模型金鑰 */
-  relayToken(toolId: string): string {
+  /** 工具專用轉接通行碼。stage='test'（預覽、試用版）另發一組，轉接服務據此把用量標成測試、不算進正式用量 */
+  relayToken(toolId: string, stage: 'prod' | 'test' = 'prod'): string {
+    const key = stage === 'test' ? `${toolId}@test` : toolId;
     const f = this.read();
     f.relayTokens ??= {};
-    if (!f.relayTokens[toolId]) {
-      f.relayTokens[toolId] = `whr_${randomBytes(24).toString('base64url')}`;
+    if (!f.relayTokens[key]) {
+      f.relayTokens[key] = `whr_${randomBytes(24).toString('base64url')}`;
       this.write(f);
     }
-    return f.relayTokens[toolId];
+    return f.relayTokens[key];
   }
 
   relayTokens(): Record<string, string> {

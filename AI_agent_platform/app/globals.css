@@ -1048,3 +1048,17 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .mm-notices p { margin:4px 0 0; font-size:13px; }
 @media(max-width:760px){ .mm-kpis{grid-template-columns:repeat(2,minmax(0,1fr));} .mm-tool-row{grid-template-columns:1fr;} }
 .mm-model-line { margin:6px 0 0; font-size:13px; color:#3d4f66; }
+/* 試用／公開燈號（2026/11/02）：三個按鈕一樣寬，不撐滿整列 */
+.rc-light-switch{display:inline-grid;grid-template-columns:repeat(3,minmax(0,1fr));width:max-content;justify-self:start;border:1px solid #cfd9e5;border-radius:999px;overflow:hidden;margin:8px 0}
+.mg-center .rc-light-switch button{border:0;border-radius:0;padding:8px 16px;display:inline-flex;gap:6px;align-items:center;justify-content:center;background:#fff;white-space:nowrap}
+.mg-center .rc-light-switch button+button{border-left:1px solid #cfd9e5}
+.mg-center .rc-light-switch button.on{font-weight:700;color:#1f2f45}
+.mg-center .rc-light-switch .rc-light-trial.on{background:#fff4dc}
+.mg-center .rc-light-switch .rc-light-public.on{background:#e3f4e8}
+.mg-center .rc-light-switch .rc-light-ended.on{background:#eef1f5}
+.rc-light-switch.compact{margin:0}.mg-center .rc-light-switch.compact button{padding:5px 10px;font-size:12px;gap:4px}
+.rc-light-cell{display:inline-block;cursor:default}
+.rc-confirm{width:min(520px,100%)}.rc-confirm p{font-size:14px;line-height:1.6}
+/* 審核履歷（2026/11/02） */
+.rc-review details{margin:8px 0;border:1px solid #e3e9f0;border-radius:10px;padding:8px 12px}.rc-review summary{cursor:pointer;font-weight:600;font-size:13px}
+.rc-review td small{font-size:11px}

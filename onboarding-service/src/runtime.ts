@@ -28,10 +28,28 @@ export type ServiceSpec = {
   restart?: boolean;
 };
 
+/** 漏洞掃描器資訊（2026/11/02 客戶需求：記錄用哪個工具、哪一版，以及本機漏洞資料庫多久沒更新） */
+export type ScannerInfo = { tool: 'trivy'; version: string | null; dbUpdatedAt: string | null; dbDownloadedAt: string | null; offline: boolean };
+
+/** 解析 `trivy --version --format json`；舊版只有文字輸出時改從文字取版本與資料庫時間 */
+export function parseTrivyVersion(stdout: string, offline: boolean): ScannerInfo {
+  const iso = (v: unknown) => { if (typeof v !== 'string' || !v.trim()) return null; const d = new Date(v.replace(/ \+0000 UTC$/, 'Z').replace(' ', 'T')); return Number.isNaN(d.getTime()) ? null : d.toISOString(); };
+  try {
+    const j = JSON.parse(stdout) as { Version?: string; VulnerabilityDB?: { UpdatedAt?: string; DownloadedAt?: string } };
+    return { tool: 'trivy', version: j.Version ?? null, dbUpdatedAt: iso(j.VulnerabilityDB?.UpdatedAt), dbDownloadedAt: iso(j.VulnerabilityDB?.DownloadedAt), offline };
+  } catch { /* 文字格式 */ }
+  const version = /^Version:\s*(\S+)/m.exec(stdout)?.[1] ?? null;
+  const db = stdout.split(/Vulnerability DB:/)[1] ?? '';
+  const pick = (k: string) => iso(new RegExp(`${k}:\\s*(.+)`).exec(db)?.[1]?.trim().replace(/\.\d+ /, ' '));
+  return { tool: 'trivy', version, dbUpdatedAt: pick('UpdatedAt'), dbDownloadedAt: pick('DownloadedAt'), offline };
+}
+
 export interface Runtime {
   available(): Promise<{ docker: boolean; trivy: boolean; detail: string }>;
+  /** 漏洞掃描器版本與本機漏洞資料庫時間；找不到掃描器時回傳 null */
+  scannerInfo(): Promise<ScannerInfo | null>;
   build(contextDir: string, dockerfile: string, tag: string, labels: Record<string, string>, platform: string, timeoutMs: number, ctx: Ctx): Promise<{ ok: boolean; digest?: string; result: ExecResult }>;
-  scan(image: string, outFile: string, timeoutMs: number, ctx: Ctx): Promise<{ available: boolean; ok: boolean; json?: unknown; result?: ExecResult }>;
+  scan(image: string, outFile: string, timeoutMs: number, ctx: Ctx): Promise<{ available: boolean; ok: boolean; json?: unknown; result?: ExecResult; scanner?: ScannerInfo }>;
   runOnce(spec: Omit<ServiceSpec, 'hostPort' | 'containerPort'>, timeoutMs: number, ctx: Ctx): Promise<ExecResult>;
   start(spec: ServiceSpec, ctx: Ctx): Promise<ExecResult>;
   remove(name: string, ctx?: Ctx): Promise<void>;
@@ -106,14 +124,25 @@ export class DockerRuntime implements Runtime {
     return { ok: ins.code === 0, digest: ins.stdout.trim(), result };
   }
 
+  async scannerInfo(): Promise<ScannerInfo | null> {
+    const v = await run(this.cfg.trivy, ['--version', '--format', 'json'], { timeoutMs: 20000 });
+    if (v.code === 0) return parseTrivyVersion(v.stdout, this.cfg.trivyOffline);
+    const t = await run(this.cfg.trivy, ['--version'], { timeoutMs: 20000 });
+    return t.code === 0 ? parseTrivyVersion(t.stdout, this.cfg.trivyOffline) : null;
+  }
+
   async scan(image: string, outFile: string, timeoutMs: number, ctx: Ctx) {
-    const v = await run(this.cfg.trivy, ['--version'], { timeoutMs: 20000 });
-    if (v.code !== 0) return { available: false, ok: false };
-    const result = await run(this.cfg.trivy, ['image', '--quiet', '--scanners', 'vuln', '--severity', 'HIGH,CRITICAL', '--format', 'json', '--output', outFile, '--timeout', `${Math.floor(timeoutMs / 60000)}m`, image],
+    const before = await this.scannerInfo();
+    if (!before) return { available: false, ok: false };
+    // 不連網時只用本機現有的漏洞資料庫，避免下載失敗讓掃描變成「未完成」而擋住發布
+    const offline = this.cfg.trivyOffline ? ['--skip-db-update', '--skip-java-db-update', '--offline-scan'] : [];
+    const result = await run(this.cfg.trivy, ['image', '--quiet', ...offline, '--scanners', 'vuln', '--severity', 'HIGH,CRITICAL', '--format', 'json', '--output', outFile, '--timeout', `${Math.floor(timeoutMs / 60000)}m`, image],
       { timeoutMs, signal: ctx.signal, logFile: ctx.logFile, mask: ctx.mask });
-    if (result.code !== 0) return { available: true, ok: false, result };
+    // 連網模式掃描時會順便更新資料庫，掃描後再讀一次才是這次實際用的資料庫時間
+    const scanner = (this.cfg.trivyOffline ? before : await this.scannerInfo()) ?? before;
+    if (result.code !== 0) return { available: true, ok: false, result, scanner };
     const { readFileSync } = await import('node:fs');
-    return { available: true, ok: true, json: JSON.parse(readFileSync(outFile, 'utf8')), result };
+    return { available: true, ok: true, json: JSON.parse(readFileSync(outFile, 'utf8')), result, scanner };
   }
 
   private baseArgs(spec: Omit<ServiceSpec, 'hostPort' | 'containerPort'>): string[] {

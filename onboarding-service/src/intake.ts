@@ -70,7 +70,7 @@ export function intake(store: Store, cfg: Config, buf: Buffer, form: IntakeForm)
 
   const trialing = store.get<{ version: string }>("SELECT s.version FROM releases r JOIN submissions s ON s.id=r.submission_id WHERE r.tool_id=? AND r.status='trial'", m.tool.id);
   if (trialing) {
-    return { ok: false, warnings: inspected.warnings, issues: [{ file: '(平台)', reason: `此工具的 ${trialing.version} 正在試用中`, fix: '請先在試用區按「結束試用」（或由 AI Team 公開）後，再提交新版本' }] };
+    return { ok: false, warnings: inspected.warnings, issues: [{ file: '(平台)', reason: `此工具的 ${trialing.version} 正在試用中`, fix: '請 AI Team 把試用版公開或下架（或由 AI Team 公開）後，再提交新版本' }] };
   }
   const dup = store.get<{ id: string; version: string; status: string }>("SELECT id, version, status FROM submissions WHERE tool_id=? AND source_hash=? AND status NOT IN ('superseded','failed','cancelled','interrupted','withdrawn')", m.tool.id, sourceHash);
   if (dup) {

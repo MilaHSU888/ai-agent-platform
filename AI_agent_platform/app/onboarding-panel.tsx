@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ApiError, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { ApiError, downloadReviewCsv, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type ReviewRow, type ScannerInfo, type Session, type Submission, type VulnItem } from './onboarding-api';
 import { IconPicker } from './tool-icon';
 import { ToolModelSetting } from './model-admin';
-import { ArchiveControl, isTrialing, TrialCard, trialResultOf, VisibilityControl } from './trial-panel';
+import { ArchiveControl, isTrialing, LightSwitch, TrialCard } from './trial-panel';
 import type { Role } from './role';
 
 const STEP_LABELS: [string, string][] = [
@@ -35,9 +35,10 @@ function stepDetail(step: string, s: Record<string, unknown>): string {
   if (!s || !Object.keys(s).length) return '';
   if (step === 'build') return s.digest ? `image ${String(s.image)} · ${String(s.digest).slice(0, 19)}…` : s.timedOut ? '建置逾時' : `建置失敗（exit ${String(s.exitCode)}）`;
   if (step === 'scan') {
-    if (s.reason) return String(s.reason);
+    const by = scannerLabel(s.scanner as ScannerInfo | null | undefined);
+    if (s.reason) return `${String(s.reason)}${by ? `（${by}）` : ''}`;
     const c = (s.counts ?? {}) as Record<string, number>;
-    return `CRITICAL ${c.CRITICAL ?? 0} · HIGH ${c.HIGH ?? 0}（${String(s.uniqueCves ?? 0)} 個不重複 CVE）；僅記錄，不阻擋發布`;
+    return `CRITICAL ${c.CRITICAL ?? 0} · HIGH ${c.HIGH ?? 0}（${String(s.uniqueCves ?? 0)} 個不重複 CVE）；僅記錄，不阻擋發布${by ? `；${by}` : ''}`;
   }
   if (step === 'code_review') return s.reviewer ? `${String(s.reviewer)} 已檢查${s.note ? `：${String(s.note)}` : ''}` : '請開發者看過程式碼後，在下方按「已檢查」';
   if (step === 'platform_test') return s.gotStatus ? `健康檢查 ${String(s.healthPath)} → ${String(s.gotStatus)}（${String(s.secondsToHealthy)} 秒）` : `健康檢查未回應（${String(s.healthPath)}）`;
@@ -45,6 +46,44 @@ function stepDetail(step: string, s: Record<string, unknown>): string {
   if (step === 'preview') return s.url ? `${String(s.url)}${s.modelConfigured === false ? '（尚未設定模型連線，AI 功能不可用）' : ''}` : String(s.reason ?? '');
   if (step === 'validate') return `來源雜湊 ${String(s.sourceHash ?? '').slice(0, 12)}… · 第 ${String(s.revision ?? '')} 版提交`;
   return s.error ? String(s.error) : '';
+}
+
+/**
+ * 審核履歷（2026/11/02 資安稽核）：誰上傳、誰檢查程式碼、誰核准、誰公開與時間，依版本分組（最新版本在上）。
+ * - 發布管理 → 工具詳情：全部版本，可匯出這個工具的 CSV。
+ * - 開發者中心 → 提交詳情：只顯示這一版。
+ * 人名是網站選的示範身分，未經驗證（接上公司 AD 後改為登入帳號）。
+ */
+export function ReviewHistory({ toolId, version, exportable = false, refreshKey = '' }: { toolId: string; version?: string; exportable?: boolean; refreshKey?: string }) {
+  const [rows, setRows] = useState<ReviewRow[] | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    onboardingApi.reviewHistory(toolId).then((r) => { if (alive) { setRows(r); setError(''); } }).catch(() => { if (alive) setError('讀不到審核履歷（上架服務沒有回應）'); });
+    return () => { alive = false; };
+  }, [toolId, refreshKey]);
+  const shown = (rows ?? []).filter((r) => !version || r.version === version);
+  const versions = [...new Set(shown.map((r) => r.version))].reverse();
+  const when = (t: string) => new Date(t).toLocaleString('zh-TW', { hour12: false });
+  const table = (v: string) => <div className="mg-table-scroll"><table><thead><tr><th>時間</th><th>動作</th><th>人員</th><th>說明</th></tr></thead><tbody>
+    {shown.filter((r) => r.version === v).map((r, i) => <tr key={i}><td>{when(r.at)}</td><td>{r.action}</td>
+      <td>{r.actor === 'system' ? <span className="mg-muted">系統</span> : <>{r.actor} <small className="mg-muted">（{r.identity}）</small></>}</td><td className="onb-wrap">{r.note}</td></tr>)}
+  </tbody></table></div>;
+  return <div className="rc-review">
+    <div className="mg-row"><h3 className="rc-title">審核履歷{version ? `（${version}）` : ''}</h3>
+      {exportable && <button className="onb-link" onClick={() => void downloadReviewCsv(toolId).catch(() => setError('匯出失敗：上架服務沒有回應'))}>匯出 CSV ↓</button>}</div>
+    <p className="mg-muted">記錄誰上傳、誰檢查程式碼、誰核准、誰公開與時間，永久保存、不能刪除。本機試點沒有登入，人名是「目前身分（示範）」選的，未經驗證。</p>
+    {error && <p className="onb-error">{error}</p>}
+    {rows && !shown.length && <p className="mg-muted">尚無紀錄。</p>}
+    {version ? (shown.length > 0 && table(version)) : versions.map((v, i) => <details key={v} open={i === 0}><summary>{v}（{shown.filter((r) => r.version === v).length} 筆）</summary>{table(v)}</details>)}
+  </div>;
+}
+
+/** 掃描用的工具與版本：Trivy 版本＋漏洞資料庫更新日期（2026/11/02 起記錄；之前的紀錄沒有） */
+export function scannerLabel(sc: ScannerInfo | null | undefined): string {
+  if (!sc) return '';
+  const day = sc.dbUpdatedAt ? new Date(sc.dbUpdatedAt).toLocaleDateString('zh-TW') : '未知';
+  return `掃描工具 Trivy ${sc.version ?? '版本未知'}，漏洞資料庫 ${day}`;
 }
 
 /** URL 工具只有兩個步驟：表單檢查、連線檢查（其餘不適用，不顯示） */
@@ -197,7 +236,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <button type="button" aria-pressed={submissionForm.kind === 'url'} onClick={() => openSubmission(null, 'url')}><b>已有網址的網站（URL）</b><small>網站已在其他地方運作，例如 OpenWebUI、n8n 表單</small></button>
       </div>}
       {submissionForm.kind === 'url' ? <>
-      <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），試用通過再由 AI Team 公開。工具圖示由 AI Team 設定。</p>
+      <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），由 AI Team 切換為公開中。工具圖示由 AI Team 設定。</p>
       {submissionForm.tool && <p className="onb-note">工具名稱、用途說明與適用情境請由 AI Team 在發布管理修改。修改網址後需重新經 AI Team 審核。工具已公開時，新網址會先以試用入口並行，一般使用者仍使用目前網址，AI Team 公開後才切換。</p>}
       <form key={`url-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-url-form" onSubmit={(e) => {
         e.preventDefault();
@@ -212,14 +251,14 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label className="onb-wide">網址（使用者實際開啟的網頁）<input type="url" value={urlForm.url} onChange={(e) => setUrlForm({ ...urlForm, url: e.target.value })} placeholder="https://chat.example.com/" /></label>
         {!submissionForm.tool && <>
-          <label className="onb-wide">用途說明（顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼，例如 公司內部 AI 問答與文件摘要" /></label>
+          <label className="onb-wide">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼，例如 公司內部 AI 問答與文件摘要" /></label>
           <label className="onb-wide">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 查詢內規、整理文件初稿" /></label>
         </>}
         <label className="onb-wide">使用說明（選填，例如需先申請帳號、建議瀏覽器）<textarea value={urlForm.guide} maxLength={300} onChange={(e) => setUrlForm({ ...urlForm, guide: e.target.value })} /></label>
         <label className="onb-check onb-wide"><input type="checkbox" checked={urlForm.usesAi} onChange={(e) => setUrlForm({ ...urlForm, usesAi: e.target.checked, aiConfirmed: e.target.checked && urlForm.aiConfirmed })} />這個網站會使用 AI 模型</label>
         {urlForm.usesAi && <label className="onb-check onb-wide"><input type="checkbox" checked={urlForm.aiConfirmed} onChange={(e) => setUrlForm({ ...urlForm, aiConfirmed: e.target.checked })} />我確認此網站使用的模型與資料流符合公司規定（外部網站不會經過平台的 LLM Proxy）</label>}
         <div className="mg-actions onb-wide">
-          <button disabled={busy || !urlForm.url.trim() || (!submissionForm.tool && !profile.description.trim()) || (urlForm.usesAi && !urlForm.aiConfirmed) || !owner.trim() || (!submissionForm.tool && !toolName.trim())}>{busy ? '處理中…' : submissionForm.tool ? '送出修改' : '送出並檢查網址'}</button>
+          <button disabled={busy || !urlForm.url.trim() || (urlForm.usesAi && !urlForm.aiConfirmed) || !owner.trim() || (!submissionForm.tool && !toolName.trim())}>{busy ? '處理中…' : submissionForm.tool ? '送出修改' : '送出並檢查網址'}</button>
           <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setIssues([]); setWarnings([]); }}>取消</button>
         </div>
       </form>
@@ -238,10 +277,10 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>原始碼 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
         {!submissionForm.tool && <>
-          <label className="onb-span2">用途說明（顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
+          <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
           <label className="onb-span2">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 多家供應商報價整併、價格比較" /></label>
         </>}
-        <button disabled={!file || !owner.trim() || (!submissionForm.tool && (!toolName.trim() || !profile.description.trim())) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
+        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}
@@ -336,8 +375,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         {selected.status === 'awaiting_approval' && <p className="onb-note">{selected.kind === 'url' ? '網址檢查完成，等待 AI Team 在「發布管理」審核。' : '已確認測試結果，等待管理者在「發布管理」審核發布。'}</p>}
 
         {reasons.length > 0 && <ul className="onb-error">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
-        {selected.approvals.length > 0 && <div><h3>確認與核准紀錄</h3>{selected.approvals.map((a, i) =>
-          <p key={i} className="mg-event">{new Date(a.created_at).toLocaleString('zh-TW')}｜{a.actor}｜{({ code_review: '程式碼已檢查', test_confirmation: '測試確認', vuln_exception: '漏洞例外', release_approval: '發布核准' } as Record<string, string>)[a.kind] ?? a.kind}{a.subject ? ` ${a.subject}` : ''}{a.reason ? `：${a.reason}` : ''}{a.revoked_at ? '（已失效）' : ''}</p>)}</div>}
+        <ReviewHistory toolId={selected.toolId} version={selected.version} refreshKey={`${selected.status}-${selected.updatedAt}-${selected.approvals.length}`} />
       </section>}
     </div>
 
@@ -450,15 +488,12 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
     const base = { toolId: c.toolId, kind: c.kind, name: c.name, department: c.department, who: c.owner, at: c.releasedAt };
     if (c.offline) { rows.push({ ...base, key: `o-${c.toolId}`, cat: 'offline', version: c.version, status: '已下架', tone: '' }); continue; }
     if (c.visibility === 'public') rows.push({ ...base, key: `u-${c.toolId}`, cat: 'public', version: c.version, status: c.maintenance ? '維護中' : c.healthy ? '服務正常' : '服務未回應', tone: c.maintenance ? 'warn' : c.healthy ? 'good' : 'bad' });
-    if (isTrialing(c)) {
-      const res = trialResultOf(c)?.result;
-      rows.push({ ...base, key: `t-${c.toolId}`, cat: 'trial', version: c.trial ? c.trial.version : c.version, at: c.trial?.since ?? c.releasedAt, status: res === 'passed' ? '試用通過，待公開' : res === 'failed' ? '測試未通過' : '待開發者試用', tone: res === 'passed' ? 'good' : res === 'failed' ? 'bad' : 'warn' });
-    }
+    if (isTrialing(c)) rows.push({ ...base, key: `t-${c.toolId}`, cat: 'trial', version: c.trial ? c.trial.version : c.version, at: c.trial?.since ?? c.releasedAt, status: c.busy ? '公開處理中' : '試用中', tone: 'warn' });
   }
   const counts = Object.fromEntries(CATS.map((x) => [x.id, rows.filter((r) => r.cat === x.id).length])) as Record<Cat, number>;
-  // 最上方公告：需要 AI Team 動手的項目（待核准、已核准待發布、發布失敗、試用通過待公開）
-  const todo = rows.filter((r) => (r.cat === 'pending' && r.status !== '發布中') || (r.cat === 'trial' && r.status === '試用通過，待公開'));
-  const todoLabel = (r: Row) => r.cat === 'trial' ? '試用通過，請確認後公開' : r.status === '待核准' ? '待審核核准' : r.status === '發布失敗' ? '發布失敗，請查看' : '已核准，請發布';
+  // 最上方公告：需要 AI Team 動手的項目（待核准、已核准待發布、發布失敗）；試用中的工具由 AI Team 自行判斷何時切到公開中
+  const todo = rows.filter((r) => r.cat === 'pending' && r.status !== '發布中');
+  const todoLabel = (r: Row) => r.status === '待核准' ? '待審核核准' : r.status === '發布失敗' ? '發布失敗，請查看' : '已核准，請發布';
   const current: Cat = tab || (CATS.find((x) => counts[x.id] > 0)?.id ?? 'pending');
   const q = query.trim().toLowerCase();
   const shown = rows.filter((r) => r.cat === current && (dept === 'all' || r.department === dept) && (!q || r.name.toLowerCase().includes(q) || r.toolId.includes(q)));
@@ -483,17 +518,19 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
       </dl>
 
       {subs.length > 0 && <section className="rc-section"><h3 className="rc-title">待審核的申請</h3>{subs.map((sub) => approval(sub))}</section>}
-      {c && isTrialing(c) && <section className="rc-section"><h3 className="rc-title">試用中</h3><TrialCard bare tool={c} role={role} notice={notice} onDone={load} /></section>}
-      {c && c.visibility === 'public' && !c.offline && <section className="rc-section"><VisibilityControl tool={c} notice={notice} onDone={load} /></section>}
+      {c && !c.offline && <section className="rc-section"><h3 className="rc-title">試用／公開</h3>
+        {isTrialing(c) && <TrialCard bare tool={c} />}
+        {role === 'aiteam' ? <LightSwitch tool={c} notice={notice} onDone={load} /> : <p className="mg-muted">公開狀態由 AI Team 切換。</p>}</section>}
 
       {list.length > 0 && <section className="rc-section"><h3 className="rc-title">版本紀錄</h3>
         <div className="mg-table-scroll"><table><thead><tr><th>時間</th><th>動作</th><th>版本</th><th>狀態</th><th>說明</th><th></th></tr></thead><tbody>
           {list.map((h) => <tr key={h.id}><td>{when(h.createdAt)}</td><td>{relKind(h)}</td><td>{h.version}</td>
-            <td><span className={`mg-status ${relTone(h.status)}`}>{REL_STATUS[h.status] ?? h.status}</span></td><td className="onb-wrap">{h.detail.error ?? (h.detail.offline ? `下架：${h.detail.offline.reason}` : h.detail.ended ? (h.detail.ended.promotedTo ? '已公開' : `結束試用：${h.detail.ended.reason}`) : h.detail.reason) ?? ''}</td>
+            <td><span className={`mg-status ${relTone(h.status)}`}>{REL_STATUS[h.status] ?? h.status}</span></td><td className="onb-wrap">{h.detail.error ?? (h.detail.offline ? `下架：${h.detail.offline.reason}` : h.detail.ended ? (h.detail.ended.promotedTo ? '已公開' : `下架：${h.detail.ended.reason}`) : h.detail.reason) ?? ''}</td>
             <td className="onb-row-actions"><button className="onb-link" onClick={() => void onboardingApi.releaseLog(h.id).then((text) => setLog({ title: `${h.name} ${h.version} 日誌`, text }))}>日誌</button></td></tr>)}
         </tbody></table></div>
         <VersionSwitch list={list} disabled={busy || running} notice={notice} onDone={load} />
       </section>}
+      <section className="rc-section"><ReviewHistory toolId={open} exportable refreshKey={`${list.length}-${list[0]?.updatedAt ?? ''}-${subs.map((s) => s.updatedAt).join()}-${c?.visibility ?? ''}-${c?.busy ?? ''}`} /></section>
 
       <section className="rc-section"><h3 className="rc-title">設定</h3>
         <ToolNameEditor key={`${open}-${name}`} toolId={open} name={name} notice={notice} />
@@ -513,7 +550,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   const approval = (sub: Submission) => {
     const confirmNote = sub.approvals.filter((a) => a.kind === 'test_confirmation' && !a.revoked_at).at(-1);
     const exceptions = sub.approvals.filter((a) => a.kind === 'vuln_exception' && !a.revoked_at);
-    const scan = (sub.steps.scan?.summary ?? {}) as { counts?: Record<string, number> };
+    const scan = (sub.steps.scan?.summary ?? {}) as { counts?: Record<string, number>; scanner?: ScannerInfo | null };
     const ok = (k: string) => sub.steps[k]?.status === 'passed';
     const rel = history.find((h) => h.id === sub.release?.id);
     const inFlight = rel && ['pending', 'starting'].includes(rel.status);
@@ -533,7 +570,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
         <li>用途：{sub.profile?.description || '（未填）'}{sub.profile?.scenario && ` · 適用情境：${sub.profile.scenario}`}</li>
         <li>建置 {ok('build') ? '通過' : '未通過'} · 平台共通檢查 {ok('platform_test') ? '通過' : '未通過'} · 業務測試 {ok('business_test') ? '通過' : '未通過'}</li>
         <li>程式碼檢查：{(() => { const cr = sub.approvals.filter((a) => a.kind === 'code_review' && !a.revoked_at).at(-1); return cr ? `${cr.actor} 已檢查（${new Date(cr.created_at).toLocaleString('zh-TW')}）${cr.reason ? `：${cr.reason}` : ''}` : '尚未檢查'; })()}</li>
-        <li className={(scan.counts?.CRITICAL ?? 0) > 0 ? 'onb-error' : undefined}>漏洞（僅記錄，不阻擋）：CRITICAL {scan.counts?.CRITICAL ?? 0} · HIGH {scan.counts?.HIGH ?? 0}{exceptions.length > 0 && `；已核准例外 ${exceptions.map((e) => e.subject).join('、')}`}</li>
+        <li className={(scan.counts?.CRITICAL ?? 0) > 0 ? 'onb-error' : undefined}>漏洞（僅記錄，不阻擋）：CRITICAL {scan.counts?.CRITICAL ?? 0} · HIGH {scan.counts?.HIGH ?? 0}{scan.scanner && `（${scannerLabel(scan.scanner)}）`}{exceptions.length > 0 && `；已核准例外 ${exceptions.map((e) => e.subject).join('、')}`}</li>
         {confirmNote && <li>測試確認（{confirmNote.actor}，{new Date(confirmNote.created_at).toLocaleString('zh-TW')}）：{confirmNote.reason}</li>}
         {rel?.status === 'failed' && <li className="onb-error">上次發布失敗：{rel.detail.error}（入口維持原狀，可修正後再發布）</li>}
       </ul>}
@@ -546,7 +583,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
       </>}
       {sub.status === 'approved' && <div className="mg-actions">
         <button disabled={busy || !!inFlight} onClick={() => void guard(sub.id, () => onboardingApi.release(sub.id), toTrial ? `開始部署 ${sub.toolName} ${sub.version} 試用版（正式版本不受影響）` : `開始發布 ${sub.toolName} ${sub.version}（發布後為試用中，未公開）`)}>{inFlight ? '發布中…' : rel?.status === 'failed' ? '重新發布' : toTrial ? '發布為試用版' : '發布（先試用）'}</button>
-        <small className="mg-muted">{toTrial ? '工具已公開：新版會先以試用版並行，一般使用者仍使用目前版本。' : '發布後為試用中（未公開），開發者試用通過、AI Team 公開後才開放。'}</small>
+        <small className="mg-muted">{toTrial ? '工具已公開：新版會先以試用版並行，一般使用者仍使用目前版本。' : '發布後為試用中（未公開），AI Team 切換為公開中後才開放（第一次公開會清空試用資料）。'}</small>
         {rel && <button className="onb-link" onClick={() => void onboardingApi.releaseLog(rel.id).then((text) => setLog({ title: `${sub.toolName} ${sub.version} 發布日誌`, text }))}>查看發布日誌</button>}
       </div>}
     </article>;
@@ -570,9 +607,16 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
         </div></div>
       {shown.length === 0 ? <p className="mg-submission-empty">{rows.length === 0 ? '尚未有經上架服務處理的工具。' : '此狀態下沒有工具。'}</p> :
         <div className="mg-table-scroll"><table className="rc-table"><thead><tr><th>工具</th><th>版本</th><th>部門</th><th>{current === 'pending' ? '提交者／Owner' : 'Owner'}</th><th>狀態</th><th>更新時間</th><th></th></tr></thead><tbody>
-          {shown.map((r) => <tr key={r.key} className="rc-row" tabIndex={0} onClick={() => setOpen(r.toolId)} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(r.toolId); }}>
+          {shown.map((r) => <tr key={r.key} className="rc-row" tabIndex={0} onClick={(e) => { if (!(e.target as HTMLElement).closest('.rc-light-cell')) setOpen(r.toolId); }} onKeyDown={(e) => { if (e.key === 'Enter' && !(e.target as HTMLElement).closest('.rc-light-cell')) setOpen(r.toolId); }}>
             <td><b>{r.name}</b>{r.kind === 'url' && <span className="onb-kind-tag">URL</span>}</td><td>{r.version}</td><td>{deptName(r.department)}</td><td>{r.who}</td>
-            <td><span className={`mg-status ${r.tone}`}>{r.status}</span></td><td>{when(r.at)}</td><td className="rc-go">查看 ›</td></tr>)}
+            <td>{(() => {
+              // 試用中／已公開的工具：AI Team 直接在總表切換燈號（2026/11/02）；已公開且有新版試用時，由「試用中」那一列切換
+              const c = cat.find((x) => x.toolId === r.toolId);
+              const canSwitch = role === 'aiteam' && c && !c.offline && (r.cat === 'trial' || (r.cat === 'public' && !c.trial));
+              return canSwitch
+                ? <div className="rc-light-cell"><LightSwitch compact tool={c} notice={notice} onDone={load} /></div>
+                : <span className={`mg-status ${r.tone}`}>{r.status}</span>;
+            })()}</td><td>{when(r.at)}</td><td className="rc-go">查看 ›</td></tr>)}
         </tbody></table></div>}
     </section>
     {open && detail()}
@@ -719,9 +763,9 @@ export function ToolProfileEditor({ toolId, description, scenario, notice, onDon
     finally { setBusy(false); }
   };
   return <div className="onb-rename">
-    <label>用途說明<input value={d} maxLength={80} onChange={(e) => setD(e.target.value)} placeholder="一句話說明這個工具做什麼" /></label>
+    <label>用途說明（選填）<input value={d} maxLength={80} onChange={(e) => setD(e.target.value)} placeholder="一句話說明這個工具做什麼" /></label>
     <label>適用情境（選填）<input value={sc} maxLength={80} onChange={(e) => setSc(e.target.value)} placeholder="沒填時工具中心不顯示「適用情境」" /></label>
-    <button className="onb-primary-sm" disabled={busy || !changed || !d.trim()} onClick={() => void save()}>{busy ? '儲存中…' : '儲存說明'}</button>
+    <button className="onb-primary-sm" disabled={busy || !changed} onClick={() => void save()}>{busy ? '儲存中…' : '儲存說明'}</button>
     {error && <p className="onb-error">{error}</p>}
   </div>;
 }

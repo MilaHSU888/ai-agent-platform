@@ -9,7 +9,8 @@ import type { JobQueue } from './queue.ts';
 import { vulnerabilityList } from './pipeline.ts';
 import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRelease, requestRollback, offlineRelease, takeOffline } from './releases.ts';
 import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
-import { endTrial, failTrial, passTrial, publish, unpublish } from './trial.ts';
+import { setLight, type LightTarget } from './trial.ts';
+import { reviewHistory, reviewHistoryCsv } from './review-history.ts';
 import { setToolIcon, submitUrlTool } from './url-tools.ts';
 import { defaultModel, listEndpoints, seedDefault, setDefault, setEnabled, setLocalOnly, setToolModel, toolModel } from './models.ts';
 import { modelUsage } from './usage.ts';
@@ -128,14 +129,14 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const body = await json(req);
       const description = String(body.description ?? '').trim();
       const scenario = String(body.scenario ?? '').trim();
-      if (!description) throw new GateError(['請填寫用途說明']);
+      // 用途說明為選填（2026/11/02 客戶回饋）；沒填時工具中心不顯示
       if (description.length > 80 || scenario.length > 80) throw new GateError(['用途說明與適用情境各限 80 字']);
       if (!store.get('SELECT id FROM tools WHERE id=?', m[1])) throw new GateError(['找不到此工具']);
       store.tx(() => {
-        store.run('UPDATE tools SET description=?, scenario=?, updated_at=? WHERE id=?', description, scenario || null, now(), m[1]);
+        store.run('UPDATE tools SET description=?, scenario=?, updated_at=? WHERE id=?', description, scenario || null, now(), m[1]); // 清空時存空字串（代表刻意不填，不再沿用 workhub.yaml 的說明）
         store.audit(session!.actor, 'tool.profile_changed', m[1], { description, scenario });
       });
-      send(res, 200, { toolId: m[1], description, scenario: scenario || null });
+      send(res, 200, { toolId: m[1], description: description || null, scenario: scenario || null });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/name$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
@@ -284,29 +285,24 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       if (!off) throw new GateError(['此工具目前不是下架狀態']);
       send(res, 202, requestRedeploy(store, cfg, m[1], off.id, session!.actor, String(body.reason ?? '')));
     } },
-    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/trial-passed$/, auth: true, fn: async ({ req, res, session }, m) => {
-      const body = await json(req);
-      send(res, 200, passTrial(store, m[1], session!.actor, String(body.note ?? '')));
+    // 審核履歷（2026/11/02 資安稽核）：誰上傳、誰檢查程式碼、誰核准、誰公開與時間；CSV 可匯出單一工具或全部工具
+    { method: 'GET', re: /^\/api\/onboarding\/tools\/([\w-]+)\/review-history$/, auth: true, fn: ({ res }, m) => {
+      if (!store.get('SELECT id FROM tools WHERE id=?', m[1])) { send(res, 404, { error: '找不到此工具' }); return; }
+      send(res, 200, { rows: reviewHistory(store, m[1]) });
     } },
-    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/trial-failed$/, auth: true, fn: async ({ req, res, session }, m) => {
-      const body = await json(req);
-      send(res, 200, await failTrial(store, rt, m[1], session!.actor, String(body.reason ?? '')));
+    { method: 'GET', re: /^\/api\/onboarding\/review-history\.csv$/, auth: true, fn: ({ res, url }) => {
+      const toolId = url.searchParams.get('toolId') ?? undefined;
+      if (toolId && !/^[\w-]+$/.test(toolId)) { send(res, 400, { error: '工具代號格式不正確' }); return; }
+      const stamp = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10).replace(/-/g, '');
+      const name = `WorkHub審核履歷_${toolId ?? '全部工具'}_${stamp}.csv`;
+      send(res, 200, reviewHistoryCsv(reviewHistory(store, toolId)), { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` });
     } },
-    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/publish$/, auth: true, fn: async ({ req, res, session }, m) => {
+    // 試用／公開燈號（2026/11/02）：AI Team 切換「試用中／公開中／下架」；公開新版與第一次公開會排入工作（202）
+    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/light$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
-      const r = publish(store, cfg, m[1], session!.actor, String(body.note ?? ''));
-      if (r.mode === 'promote') queue.tick();
-      send(res, r.mode === 'promote' ? 202 : 200, r);
-    } },
-    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/unpublish$/, auth: true, fn: async ({ req, res, session }, m) => {
-      const body = await json(req);
-      unpublish(store, m[1], session!.actor, String(body.reason ?? ''));
-      send(res, 200, { toolId: m[1], visibility: 'trial' });
-    } },
-    { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/end-trial$/, auth: true, fn: async ({ req, res, session }, m) => {
-      const body = await json(req);
-      await endTrial(store, rt, m[1], session!.actor, String(body.reason ?? ''));
-      send(res, 200, { toolId: m[1] });
+      const r = await setLight(store, cfg, rt, m[1], String(body.target ?? '') as LightTarget, session!.actor, String(body.note ?? ''));
+      if (r.jobId) queue.tick();
+      send(res, r.jobId ? 202 : 200, r);
     } },
     { method: 'POST', re: /^\/api\/onboarding\/tools\/([\w-]+)\/icon$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
@@ -315,6 +311,13 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       send(res, 200, { toolId: m[1], icon: { symbol: Number(body.symbol), color: String(body.color) } });
     } },
     // ── 模型管理（DEC-040）：只有 AI Team 使用（本機以示範身分在網站端限制） ──
+    // 檢查工具版本（平台設定）：漏洞掃描器版本、本機漏洞資料庫時間與已幾天沒更新；不連網查最新版、不自動更新
+    { method: 'GET', re: /^\/api\/onboarding\/scanner$/, auth: true, fn: async ({ res }) => {
+      const info = await rt.scannerInfo();
+      const last = store.get<{ at: string }>("SELECT finished_at AS at FROM step_results WHERE step='scan' AND status IN ('passed','warning') AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1");
+      const days = info?.dbUpdatedAt ? Math.floor((Date.now() - new Date(info.dbUpdatedAt).getTime()) / 86_400_000) : null;
+      send(res, 200, { scanner: info, available: !!info, dbAgeDays: days, lastScanAt: last?.at ?? null, offline: cfg.trivyOffline });
+    } },
     { method: 'GET', re: /^\/api\/onboarding\/models$/, auth: true, fn: async ({ res }) => {
       await seedDefault(cfg, store, rt, secrets).catch(() => { /* 連不到端點時下次再試 */ });
       send(res, 200, { endpoints: await listEndpoints(store, rt, secrets), default: defaultModel(store) });

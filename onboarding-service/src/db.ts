@@ -100,6 +100,18 @@ export class Store {
       CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, tool_id TEXT, owner TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT);`);
     if (!this.all<{ name: string }>('PRAGMA table_info(submissions)').some((c) => c.name === 'kind')) this.db.exec("ALTER TABLE submissions ADD COLUMN kind TEXT NOT NULL DEFAULT 'zip'");
+    // 第一次公開的時間（2026/11/02）：新工具第一次切到「公開中」時清空試用資料，之後再切換不再清空。
+    // 既有資料：目前公開中、或曾經公開過的工具視為已公開過
+    if (!this.all<{ name: string }>('PRAGMA table_info(tools)').some((c) => c.name === 'first_published_at')) {
+      this.db.exec('ALTER TABLE tools ADD COLUMN first_published_at TEXT');
+      this.db.exec("UPDATE tools SET first_published_at=updated_at WHERE visibility='public' OR EXISTS (SELECT 1 FROM audit_events a WHERE a.target=tools.id AND a.action='tool.published')");
+    }
+    // 部門調整（2026/11/02，Tammy 提供 12 個部門）：製造一部、製造二部合併為製造部
+    this.db.exec("UPDATE tools SET department='mfg' WHERE department IN ('mfg1','mfg2')");
+    // 稽核紀錄永久保存、不能刪改（2026/11/02 資安稽核需求）；確認與核准紀錄不能刪除（失效時只標記 revoked_at）
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, '稽核紀錄不能刪除'); END;
+      CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, '稽核紀錄不能修改'); END;
+      CREATE TRIGGER IF NOT EXISTS approvals_no_delete BEFORE DELETE ON approvals BEGIN SELECT RAISE(ABORT, '確認與核准紀錄不能刪除'); END;`);
     const ecols = this.all<{ name: string }>('PRAGMA table_info(entry_events)').map((c) => c.name);
     if (!ecols.includes('trial')) this.db.exec('ALTER TABLE entry_events ADD COLUMN trial INTEGER NOT NULL DEFAULT 0');
   }

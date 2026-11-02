@@ -44,7 +44,7 @@ export async function syncRelay(cfg: Config, rt: Runtime, secrets: Secrets, stor
   const env = relayEnv(cfg, secrets);
   if (!env) return { ok: false, detail: '模型端點尚未設定' };
   writeRoutes(cfg, store);
-  const networks = Object.keys(secrets.relayTokens()).map(toolNetwork);
+  const networks = [...new Set(Object.keys(secrets.relayTokens()).map((k) => k.split('@')[0]))].map(toolNetwork);
   for (const n of networks) await rt.ensureNetwork(n, cfg.toolNetworkInternal, ctx);
   // 設定、映像或轉接程式本身有變都重建轉接服務（程式更新後重開上架服務即生效）
   const hash = createHash('sha256').update(JSON.stringify(env)).update(cfg.relay.image).update(existsSync(RELAY_SCRIPT) ? readFileSync(RELAY_SCRIPT) : '').digest('hex').slice(0, 16);
@@ -53,17 +53,17 @@ export async function syncRelay(cfg: Config, rt: Runtime, secrets: Secrets, stor
 
 /** 啟動工具容器前呼叫：準備隔離網路與轉接服務，回傳要給容器的網路與環境變數。
  *  用哪個模型由平台決定（AI Team 指定，否則平台預設）；workhub.yaml 的 approvedEndpoint 不再需要（DEC-040）。 */
-export async function prepareModelAccess(cfg: Config, rt: Runtime, secrets: Secrets, store: Store, m: Manifest, toolId: string, ctx?: Ctx): Promise<ModelAccess> {
+export async function prepareModelAccess(cfg: Config, rt: Runtime, secrets: Secrets, store: Store, m: Manifest, toolId: string, ctx?: Ctx, stage: 'prod' | 'test' = 'prod'): Promise<ModelAccess> {
   const network = toolNetwork(toolId);
   if (!(await rt.ensureNetwork(network, cfg.toolNetworkInternal, ctx))) throw new Error(`無法建立工具隔離網路 ${network}`);
   if (!m.model.uses) return { env: {}, network, note: '此工具不使用模型' };
   if (!relayEnv(cfg, secrets)) return { env: {}, network, note: '模型端點尚未設定（請執行「設定模型端點」），工具的 AI 功能會顯示未設定' };
   const resolved = toolModel(store, toolId).ref;
   if (!resolved) return { env: {}, network, note: '平台預設模型尚未設定（請 AI Team 在平台設定 → 模型端點選擇預設模型），工具的 AI 功能會顯示未設定' };
-  const token = secrets.relayToken(toolId);
+  const token = secrets.relayToken(toolId, stage);
   const r = await syncRelay(cfg, rt, secrets, store, ctx);
   if (!r.ok) throw new Error(r.detail);
   const wanted = new Set([...m.env.required, ...m.env.optional].map((e) => e.name));
   const all: Record<string, string> = { OPENAI_BASE_URL: RELAY_URL, OPENAI_API_KEY: token, OPENAI_MODEL: resolved.model };
-  return { env: Object.fromEntries(Object.entries(all).filter(([k, v]) => wanted.has(k) && v)), network, note: `模型經轉接服務連到 ${resolved.endpoint}（${resolved.model}；換模型由轉接服務即時套用）` };
+  return { env: Object.fromEntries(Object.entries(all).filter(([k, v]) => wanted.has(k) && v)), network, note: `模型經轉接服務連到 ${resolved.endpoint}（${resolved.model}；換模型由轉接服務即時套用）${stage === 'test' ? '；用量記為測試，不算進正式用量' : ''}` };
 }

@@ -9,7 +9,7 @@ export type Role = 'employee' | 'developer' | 'aiteam';
 export const ROLES: { id: Role; label: string; person: string; unit: string; avatar: string; department: string }[] = [
   { id: 'employee', label: '一般員工', person: '陳小華', unit: '一般員工', avatar: '陳', department: 'purchase' },
   { id: 'developer', label: '開發者', person: '林開發', unit: '資訊部・開發者', avatar: '林', department: 'it' },
-  { id: 'aiteam', label: 'AI Team', person: '王大明', unit: '資訊部・AI Team', avatar: '王', department: 'it' },
+  { id: 'aiteam', label: 'AI Team', person: 'Tammy', unit: '資訊部・AI Team', avatar: 'T', department: 'it' },
 ];
 const KEY = 'workhub-demo-role';
 const isRole = (v: unknown): v is Role => v === 'employee' || v === 'developer' || v === 'aiteam';
@@ -48,6 +48,18 @@ export function useDeveloperName(): [string, (n: string) => void] {
   return [name, set];
 }
 
+/** 示範用：AI Team 成員（2026/11/02 客戶提供）。紀錄上記錄是誰按的；正式環境改由 AD 帳號與 WorkHub 後台的 AI Team 名單決定 */
+export const AI_TEAM_MEMBERS = ['Tammy', 'Mumu'] as const;
+const AIT_KEY = 'workhub-demo-aiteam-member';
+export function useAiTeamMember(): [string, (n: string) => void] {
+  const [name, setName] = useState<string>(AI_TEAM_MEMBERS[0]);
+  useEffect(() => {
+    queueMicrotask(() => { try { const v = localStorage.getItem(AIT_KEY); if (v && (AI_TEAM_MEMBERS as readonly string[]).includes(v)) setName(v); } catch { /* 用預設 */ } });
+  }, []);
+  const set = useCallback((n: string) => { setName(n); try { localStorage.setItem(AIT_KEY, n); } catch { /* 只影響這個分頁 */ } }, []);
+  return [name, set];
+}
+
 /** 這個身分看不看得到某工具的試用內容：AI Team 全部；開發者只有自己當 Owner 的；一般員工都看不到 */
 export function canSeeTrial(role: Role, developer: string, owner: string) {
   return role === 'aiteam' || (role === 'developer' && !!developer && developer === owner);
@@ -58,7 +70,8 @@ const DEPT_KEY = 'workhub-demo-employee-department';
 export function useEmployeeDepartment(): [string, (d: string) => void] {
   const [dept, setDept] = useState('purchase');
   useEffect(() => {
-    queueMicrotask(() => { try { const v = localStorage.getItem(DEPT_KEY); if (v) setDept(v); } catch { /* 用預設 */ } });
+    // 2026/11/02 部門調整：舊的製造一部、製造二部（mfg1／mfg2）改為製造部（mfg）
+    queueMicrotask(() => { try { const v = localStorage.getItem(DEPT_KEY); if (v) setDept(v === 'mfg1' || v === 'mfg2' ? 'mfg' : v); } catch { /* 用預設 */ } });
   }, []);
   const set = useCallback((d: string) => { setDept(d); try { localStorage.setItem(DEPT_KEY, d); } catch { /* 只影響這個分頁 */ } }, []);
   return [dept, set];

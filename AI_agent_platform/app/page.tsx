@@ -5,8 +5,8 @@ import { ToolEntry } from "./tool-entry";
 import { ModelUsagePanel } from "./model-admin";
 import { ManagementCenter, managementViews, type ManagementView } from "./management-center";
 import { DEFAULT_LOCAL_MODEL, defaultConfig, entryBlock, initialDemo, normalizeModel, type DemoState } from "./demo-management";
-import { onboardingApi, type CatalogTool } from "./onboarding-api";
-import { canSeeTrial, canUseTool, ROLES, useDeveloperName, useEmployeeDepartment, useRole, VIEWS_BY_ROLE, type Role } from "./role";
+import { onboardingApi, setDemoActor, type CatalogTool } from "./onboarding-api";
+import { AI_TEAM_MEMBERS, canSeeTrial, canUseTool, ROLES, useAiTeamMember, useDeveloperName, useEmployeeDepartment, useRole, VIEWS_BY_ROLE, type Role } from "./role";
 
 const newEventId = () => `evt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
@@ -39,19 +39,21 @@ type Tool = {
   scenario?: string;
 };
 
+// 部門（2026/11/02 Tammy 提供的 12 個部門；製造一部、製造二部合併為製造部，新增工安室、品保部）。「全公司共用」是共用工具的分類，不是部門
 const departments: Department[] = [
   { id: "shared", name: "全公司共用", short: "全", count: 328, active: 286, tools: 7, saved: 916 },
-  { id: "finance", name: "財務部", short: "財", count: 18, active: 16, tools: 5, saved: 138 },
-  { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 6, saved: 171 },
-  { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 5, saved: 96 },
+  { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 6, saved: 121 },
   { id: "general", name: "總務部", short: "總", count: 15, active: 11, tools: 4, saved: 72 },
+  { id: "hr", name: "人力資源部", short: "人", count: 12, active: 10, tools: 5, saved: 96 },
+  { id: "safety", name: "工安室", short: "安", count: 6, active: 4, tools: 1, saved: 12 },
+  { id: "it", name: "資訊部", short: "資", count: 14, active: 14, tools: 6, saved: 171 },
+  { id: "finance", name: "財務部", short: "財", count: 18, active: 16, tools: 5, saved: 138 },
+  { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 6, saved: 318 },
   { id: "rd", name: "研發部", short: "研", count: 56, active: 47, tools: 7, saved: 496 },
   { id: "purchase", name: "採購部", short: "採", count: 21, active: 18, tools: 5, saved: 142 },
-  { id: "sales", name: "業務部", short: "業", count: 38, active: 34, tools: 6, saved: 318 },
   { id: "material", name: "資材部", short: "材", count: 26, active: 22, tools: 5, saved: 186 },
-  { id: "mfg1", name: "製造一部", short: "一", count: 52, active: 41, tools: 5, saved: 264 },
-  { id: "mfg2", name: "製造二部", short: "二", count: 48, active: 39, tools: 6, saved: 247 },
-  { id: "management", name: "經營管理室", short: "經", count: 8, active: 8, tools: 6, saved: 121 },
+  { id: "qa", name: "品保部", short: "品", count: 35, active: 28, tools: 1, saved: 64 },
+  { id: "mfg", name: "製造部", short: "製", count: 100, active: 80, tools: 6, saved: 511 },
 ];
 
 /** 示範卡片與實際上架工具的固定對照（tool.id → 示範卡片 id） */
@@ -86,7 +88,7 @@ const tools: Tool[] = [
   { id: "contract", name: "合約摘要助手", description: "整理行政合約重點與到期日", department: "general", type: "AI", users: 8, runs: 49, saved: 22, color: "violet", icon: "約" },
   { id: "room", name: "會議室資源管理", description: "空間、設備與借用衝突查詢", department: "general", type: "非 AI", users: 9, runs: 88, saved: 13, color: "cyan", icon: "室" },
 
-  { id: "vision", name: "AI 識圖大師", url: "", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "mfg2", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
+  { id: "vision", name: "AI 識圖大師", url: "", description: "辨識 RF 工程圖規格，逐筆定位、核對與匯出", department: "mfg", type: "AI", badge: "新工具", users: 32, runs: 274, saved: 112, color: "violet", icon: "圖" },
   { id: "spec", name: "規格文件助手", description: "摘要規格、比對版本與標示變更", department: "rd", type: "AI", badge: "熱門", users: 42, runs: 318, saved: 126, color: "violet", icon: "規" },
   { id: "patent", name: "專利檢索助手", description: "整理技術關鍵字與相似專利", department: "rd", type: "AI", users: 31, runs: 186, saved: 84, color: "blue", icon: "專" },
   { id: "testreport", name: "測試報告產生器", description: "彙整測試數據與報告格式", department: "rd", type: "非 AI", users: 38, runs: 241, saved: 71, color: "green", icon: "測" },
@@ -110,15 +112,10 @@ const tools: Tool[] = [
   { id: "label", name: "標籤批次產生", description: "批次產生入出庫與料件標籤", department: "material", type: "非 AI", users: 18, runs: 142, saved: 31, color: "green", icon: "標" },
   { id: "demand", name: "需求彙整助手", description: "彙整交期、需求變更與缺料項目", department: "material", type: "AI", users: 16, runs: 118, saved: 41, color: "violet", icon: "需" },
 
-  { id: "shift1", name: "交班摘要助手", description: "彙整生產、異常與待處理事項", department: "mfg1", type: "AI", users: 38, runs: 304, saved: 92, color: "blue", icon: "班" },
-  { id: "daily1", name: "生產日報整併", description: "合併線別日報並計算達成率", department: "mfg1", type: "非 AI", users: 41, runs: 266, saved: 61, color: "green", icon: "日" },
-  { id: "issue1", name: "異常通報中心", description: "通報設備、品質與物料異常", department: "mfg1", type: "非 AI", users: 35, runs: 182, saved: 42, color: "orange", icon: "異" },
-  { id: "sop1", name: "SOP 快速查詢", description: "依站別與機種取得核准版 SOP", department: "mfg1", type: "AI", users: 32, runs: 215, saved: 69, color: "violet", icon: "程" },
-
-  { id: "shift2", name: "交班摘要助手", description: "彙整生產、異常與待處理事項", department: "mfg2", type: "AI", users: 36, runs: 288, saved: 86, color: "blue", icon: "班" },
-  { id: "daily2", name: "生產日報整併", description: "合併線別日報並計算達成率", department: "mfg2", type: "非 AI", users: 38, runs: 248, saved: 58, color: "green", icon: "日" },
-  { id: "issue2", name: "異常通報中心", description: "通報設備、品質與物料異常", department: "mfg2", type: "非 AI", users: 34, runs: 174, saved: 41, color: "orange", icon: "異" },
-  { id: "sop2", name: "SOP 快速查詢", description: "依站別與機種取得核准版 SOP", department: "mfg2", type: "AI", users: 29, runs: 202, saved: 62, color: "violet", icon: "程" },
+  { id: "shift2", name: "交班摘要助手", description: "彙整生產、異常與待處理事項", department: "mfg", type: "AI", users: 36, runs: 288, saved: 86, color: "blue", icon: "班" },
+  { id: "daily2", name: "生產日報整併", description: "合併線別日報並計算達成率", department: "mfg", type: "非 AI", users: 38, runs: 248, saved: 58, color: "green", icon: "日" },
+  { id: "issue2", name: "異常通報中心", description: "通報設備、品質與物料異常", department: "mfg", type: "非 AI", users: 34, runs: 174, saved: 41, color: "orange", icon: "異" },
+  { id: "sop2", name: "SOP 快速查詢", description: "依站別與機種取得核准版 SOP", department: "mfg", type: "AI", users: 29, runs: 202, saved: 62, color: "violet", icon: "程" },
 
   { id: "kpi", name: "經營 KPI 看板", description: "彙整部門目標、實績與變化趨勢", department: "management", type: "非 AI", users: 8, runs: 128, saved: 27, color: "green", icon: "標" },
   { id: "report", name: "管理報告助手", description: "依指標產生月報重點與初稿", department: "management", type: "AI", users: 8, runs: 94, saved: 36, color: "violet", icon: "報" },
@@ -172,6 +169,7 @@ export default function Home() {
   const [role, setRole] = useRole();
   const [developer, setDeveloper] = useDeveloperName();
   const [employeeDepartment, setEmployeeDepartment] = useEmployeeDepartment();
+  const [aiTeamMember, setAiTeamMember] = useAiTeamMember();
   const myDepartment = role === "employee" ? employeeDepartment : ROLES.find((r) => r.id === role)!.department;
   const allowed = VIEWS_BY_ROLE[role];
   const changeRole = (r: Role) => { setRole(r); if (!VIEWS_BY_ROLE[r].includes(view)) setView("tools"); setSelectedToolId(""); };
@@ -218,7 +216,7 @@ export default function Home() {
   const matchDemo = useCallback((r: CatalogTool) => tools.find((t) => t.id === RELEASED_ALIAS[r.toolId]) ?? tools.find((t) => t.name === r.name) ?? demo.added.find((t) => t.name === r.name), [demo.added]);
   const releasedExtra = useMemo<Tool[]>(() => released
     .filter((r) => !matchDemo(r))
-    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: r.description || '已透過上架服務發布的工具', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: r.icon?.color ?? 'blue', symbol: r.icon?.symbol, icon: r.name.slice(0, 1) }) as Tool), [released, matchDemo]);
+    .map((r) => ({ id: `rel-${r.toolId}`, name: r.name, description: r.description || '', department: r.department, type: r.usesModel ? 'AI' : '非 AI', users: 0, runs: 0, saved: 0, color: r.icon?.color ?? 'blue', symbol: r.icon?.symbol, icon: r.name.slice(0, 1) }) as Tool), [released, matchDemo]);
   const releasedById = useMemo(() => Object.fromEntries(released.map((r) => {
     const match = matchDemo(r);
     return [match?.id ?? `rel-${r.toolId}`, r];
@@ -265,6 +263,9 @@ export default function Home() {
   const owners = useMemo(() => [...new Set([...released.map((r) => r.owner), ...submissionOwners])].sort(), [released, submissionOwners]);
   // 記住的開發者若已不在 Owner 清單（例如工具已封存），改用清單第一位，避免下拉選單顯示的人和實際篩選的人不一致
   const devName = (owners.includes(developer) ? developer : owners[0]) || "";
+  // 目前操作的人（示範身分，未驗證）：送到上架服務記在審核履歷與稽核紀錄
+  const actorName = role === "aiteam" ? aiTeamMember : role === "developer" ? (devName || ROLES.find((r) => r.id === "developer")!.person) : ROLES.find((r) => r.id === "employee")!.person;
+  useEffect(() => { setDemoActor(actorName); }, [actorName]);
   const seesTrial = (id: string) => { const r = releasedById[id]; return !!r && canSeeTrial(role, devName, r.owner); };
   const deptName = (id: string) => departments.find((d) => d.id === id)?.name ?? id;
   const usable = (tool: Tool) => canUseTool(role, myDepartment, tool.department, devName, releasedById[tool.id]?.owner);
@@ -323,8 +324,9 @@ export default function Home() {
           <label className="department-switcher" title="示範用：本機試點沒有登入，切換身分可看到不同人看得到的工具與按鈕；不是安全保護"><span>目前身分（示範）</span><select aria-label="目前身分" value={role} onChange={(event) => changeRole(event.target.value as Role)}>{ROLES.map((r) => <option value={r.id} key={r.id}>{r.label}</option>)}</select></label>
           {role === "employee" && <label className="department-switcher" title="示範用：一般員工所屬的部門；只能使用所屬部門與全公司共用的工具"><span>所屬部門（示範）</span><select aria-label="所屬部門" value={employeeDepartment} onChange={(event) => { setEmployeeDepartment(event.target.value); setSelectedToolId(""); }}>{departments.filter((d) => d.id !== "shared").map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>}
           {role === "developer" && <label className="department-switcher" title="示範用：選擇目前的開發者（對應工具的 Owner）；開發者只看得到自己當 Owner 的試用工具"><span>開發者（Owner）</span><select aria-label="目前開發者" value={devName} onChange={(event) => setDeveloper(event.target.value)}>{owners.length ? owners.map((o) => <option key={o} value={o}>{o}</option>) : <option value="">（尚無已發布工具）</option>}</select></label>}
-          <div className="avatar">{ROLES.find((r) => r.id === role)!.avatar}</div>
-          <div className="user-copy"><strong>{role === "developer" && devName ? devName : ROLES.find((r) => r.id === role)!.person}</strong><small>{deptName(myDepartment)}・{ROLES.find((r) => r.id === role)!.unit.replace(/^資訊部・/, "")}</small></div>
+          {role === "aiteam" && <label className="department-switcher" title="示範用：選擇目前操作的 AI Team 成員；審核履歷會記錄是誰按的（未經驗證）"><span>AI Team 成員</span><select aria-label="目前 AI Team 成員" value={aiTeamMember} onChange={(event) => setAiTeamMember(event.target.value)}>{AI_TEAM_MEMBERS.map((n) => <option key={n} value={n}>{n}</option>)}</select></label>}
+          <div className="avatar">{actorName.slice(0, 1).toUpperCase()}</div>
+          <div className="user-copy"><strong>{actorName}</strong><small>{deptName(myDepartment)}・{ROLES.find((r) => r.id === role)!.unit.replace(/^資訊部・/, "")}</small></div>
         </div>
       </header>
 
@@ -382,7 +384,7 @@ export default function Home() {
               <div className="empty-state"><strong>找不到符合的工具</strong><p>請調整搜尋字詞或工具類型。</p></div>
             )}
 
-            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className={`metal-symbol symbol-${selectedTool.symbol ?? 1}`}></i></span><div><div><h2>{selectedTool.name}</h2></div><p>{selectedTool.description}</p>{getToolScenario(selectedTool) && <small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.visibility === "trial" && <small className="trial-note">試用中（未公開）：只有 Owner（{releasedById[selectedTool.id].owner}）與 AI Team 看得到；AI Team 公開後才開放給一般使用者。</small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.trial?.url && <small className="trial-note">新版 {releasedById[selectedTool.id].trial!.version} 試用中（一般使用者仍使用 {releasedById[selectedTool.id].version}）：<a href={releasedById[selectedTool.id].trial!.url!} target="_blank" rel="noopener noreferrer" onClick={() => void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: releasedById[selectedTool.id].toolId, kind: "click", trial: true }).catch(() => {})}>開啟試用版 ↗</a></small>}</div><div className="demo-entry-actions"><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{!usable(selectedTool) ? <span>僅限{deptName(selectedTool.department)}同仁使用</span> : entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
+            {selectedTool && <section className="tool-detail-card"><span className={`tool-icon metal-tile compact ${selectedTool.color}`}><i className={`metal-symbol symbol-${selectedTool.symbol ?? 1}`}></i></span><div><div><h2>{selectedTool.name}</h2></div>{selectedTool.description && <p>{selectedTool.description}</p>}{getToolScenario(selectedTool) && <small>適用情境：<strong>{getToolScenario(selectedTool)}</strong></small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.visibility === "trial" && <small className="trial-note">試用中（未公開）：只有 Owner（{releasedById[selectedTool.id].owner}）與 AI Team 看得到；AI Team 公開後才開放給一般使用者。</small>}{seesTrial(selectedTool.id) && releasedById[selectedTool.id]?.trial?.url && <small className="trial-note">新版 {releasedById[selectedTool.id].trial!.version} 試用中（一般使用者仍使用 {releasedById[selectedTool.id].version}）：<a href={releasedById[selectedTool.id].trial!.url!} target="_blank" rel="noopener noreferrer" onClick={() => void onboardingApi.entryEvent({ clientEventId: newEventId(), toolId: releasedById[selectedTool.id].toolId, kind: "click", trial: true }).catch(() => {})}>開啟試用版 ↗</a></small>}</div><div className="demo-entry-actions"><button onClick={() => setDemo(s => ({...s,favorites:s.favorites.includes(selectedTool.id)?s.favorites.filter(id=>id!==selectedTool.id):[...s.favorites,selectedTool.id]}))}>{demo.favorites.includes(selectedTool.id)?'★ 取消收藏':'☆ 收藏'}</button>{!usable(selectedTool) ? <span>僅限{deptName(selectedTool.department)}同仁使用</span> : entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)) ? <><span>{entryBlock(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool))}</span>{!(shown.configs[selectedTool.id] ?? defaultConfig(selectedTool)).access && <button disabled={demo.requests.includes(selectedTool.id)} onClick={() => {setDemo(s=>({...s,requests:[...s.requests,selectedTool.id]}));setMessage('已加入本機權限申請，可至聯絡管理者示範核准');}}>{demo.requests.includes(selectedTool.id)?'申請中':'申請權限'}</button>}</> : <ToolEntry tool={selectedTool} onEntry={() => recordClick(selectedTool.id)} onOpenInternal={() => setActiveTool(selectedTool)} />}</div></section>}
           </div>
         ) : view === "analytics" ? (
           <Analytics totalRuns={totalRuns} totalSaved={totalSaved} />
@@ -434,7 +436,7 @@ function GeneralToolWorkspace({ tool, onBack }: { tool: Tool; onBack: () => void
           <div>
             <span className={tool.type === "AI" ? "ai-tag" : "plain-tag"}>{tool.type} 工具</span>
             <h1>{tool.name}</h1>
-            <p>{tool.description}</p>
+            {tool.description && <p>{tool.description}</p>}
           </div>
         </section>
 
@@ -509,8 +511,9 @@ const knowledgeSuggestions: Record<string, string[]> = {
   purchase: ["新供應商如何申請建檔？", "詢比議價需要幾家廠商？", "採購單變更流程是什麼？", "交期異常如何處理？"],
   sales: ["客戶報價的核准層級？", "RFQ 案件如何建檔？", "客訴案件如何通報？", "樣品申請需要哪些資料？"],
   material: ["領料與退料流程是什麼？", "呆滯料如何判定？", "盤點差異如何處理？", "安全庫存如何設定？"],
-  mfg1: ["製造異常如何通報？", "換線前需要確認哪些項目？", "SOP 版次如何確認？", "交班紀錄要填哪些內容？"],
-  mfg2: ["設備點檢的頻率？", "生產異常如何分級？", "首件檢查流程是什麼？", "工單結案需要哪些資料？"],
+  safety: ["工安事故如何通報？", "動火作業需要哪些許可？", "防護具如何申請？", "安全教育訓練多久一次？"],
+  qa: ["首件檢查流程是什麼？", "不合格品如何處理？", "量具校正多久一次？", "客訴品質異常如何回覆？"],
+  mfg: ["製造異常如何通報？", "設備點檢的頻率？", "SOP 版次如何確認？", "工單結案需要哪些資料？"],
   management: ["月會資料的繳交期限？", "KPI 異常如何提出改善？", "專案風險如何分級？", "決策事項如何追蹤？"],
 };
 

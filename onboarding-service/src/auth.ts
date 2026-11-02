@@ -14,6 +14,17 @@ import { join } from 'node:path';
 import type { Config } from './config.ts';
 
 export const TOKEN_HEADER = 'x-workhub-proxy-token';
+/** 網站「目前身分（示範）」選的人（encodeURIComponent 編碼）。本機試點沒有登入，這個名字沒有經過驗證，紀錄上一律標示「示範，未驗證」（2026/11/02） */
+export const ACTOR_HEADER = 'x-workhub-actor';
+
+/** 解析示範身分：1～40 字，只允許文字、數字、空白與 . _ - ；不合格時回傳 null（改用操作者） */
+export function demoActor(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  let v: string;
+  try { v = decodeURIComponent(raw).trim(); } catch { return null; }
+  if (!v || v.length > 40 || v === 'system' || !/^[\p{L}\p{N} ._-]+$/u.test(v)) return null;
+  return v;
+}
 
 export class Auth {
   cfg: Config;
@@ -43,6 +54,7 @@ export class Auth {
     if (typeof h !== 'string') return null;
     const a = Buffer.from(h);
     const b = Buffer.from(this.token);
-    return a.length === b.length && timingSafeEqual(a, b) ? { actor: this.cfg.operator } : null;
+    if (!(a.length === b.length && timingSafeEqual(a, b))) return null;
+    return { actor: demoActor(req.headers[ACTOR_HEADER]) ?? this.cfg.operator };
   }
 }

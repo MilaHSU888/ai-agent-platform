@@ -32,11 +32,11 @@ test('other internal tools retain their open action; optional URLs also work for
   assert.match(render({id:'other',url:'https://tools.example.com/'}), /<a /);
 });
 
-test('vision remains in manufacturing 2; embedded code and customer assets have moved out', async () => {
+test('vision remains in manufacturing; embedded code and customer assets have moved out', async () => {
   const page = await readFile(new URL('app/page.tsx', root),'utf8');
   const css = await readFile(new URL('app/globals.css', root),'utf8');
-  assert.match(page, /id: "vision", name: "AI 識圖大師"[^\n]+department: "mfg2"/);
-  assert.match(page, /id: "mfg2", name: "製造二部"[^\n]+tools: 6/);
+  assert.match(page, /id: "vision", name: "AI 識圖大師"[^\n]+department: "mfg"/);
+  assert.match(page, /id: "mfg", name: "製造部"[^\n]+tools: 6/);
   assert.match(page, /<ToolEntry tool=\{selectedTool\}/);
   assert.match(page, /tool.department === activeDepartment/);
   assert.doesNotMatch(page, /VisionWorkspace|VisionReviewWorkspace|customerReviewRows|buildReviewWorkbook|ai-vision-process/);

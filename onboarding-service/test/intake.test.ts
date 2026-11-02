@@ -125,3 +125,14 @@ test('漏洞清單：同一 CVE 合併、CRITICAL 與有修正版者優先、附
   assert.equal(list[1].fixable, true);
   assert.equal(list[0].url, 'https://avd.aquasec.com/nvd/cve-a');
 });
+
+test('掃描器版本：解析 trivy --version 的 JSON 與文字格式', async () => {
+  const { parseTrivyVersion } = await import('../src/runtime.ts');
+  const j = parseTrivyVersion(JSON.stringify({ Version: '0.67.2', VulnerabilityDB: { Version: 2, UpdatedAt: '2026-10-30T06:12:41.000000000Z', DownloadedAt: '2026-10-30T08:00:00Z' } }), true);
+  assert.deepEqual(j, { tool: 'trivy', version: '0.67.2', dbUpdatedAt: '2026-10-30T06:12:41.000Z', dbDownloadedAt: '2026-10-30T08:00:00.000Z', offline: true });
+  const txt = parseTrivyVersion('Version: 0.56.2\nVulnerability DB:\n  Version: 2\n  UpdatedAt: 2024-10-16 06:17:52.112853049 +0000 UTC\n  NextUpdate: 2024-10-17 06:17:52.112852839 +0000 UTC\n  DownloadedAt: 2024-10-16 08:00:01.5 +0000 UTC\n', false);
+  assert.equal(txt.version, '0.56.2');
+  assert.equal(txt.dbUpdatedAt, '2024-10-16T06:17:52.000Z');
+  assert.equal(txt.dbDownloadedAt, '2024-10-16T08:00:01.000Z');
+  assert.equal(parseTrivyVersion('', false).version, null);
+});

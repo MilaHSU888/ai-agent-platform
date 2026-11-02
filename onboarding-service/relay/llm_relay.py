@@ -85,10 +85,13 @@ class Relay(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             return
         auth = self.headers.get("Authorization", "")
-        tool = TOKENS.get(auth[7:].strip()) if auth.startswith("Bearer ") else None
-        if not tool:
+        owner = TOKENS.get(auth[7:].strip()) if auth.startswith("Bearer ") else None
+        if not owner:
             return self._error(401, "relay_unauthorized", "轉接通行碼無效：此容器未獲准使用模型", meta)
+        # 預覽與試用版容器拿到「<工具>@test」的通行碼：模型路由與正式版相同，但用量另外標成測試（2026/11/02）
+        tool, _, stage = owner.partition("@")
         meta["tool"] = tool
+        meta["stage"] = "test" if stage == "test" else "prod"
         if (method, path) not in ROUTES:
             return self._error(404, "relay_route_not_allowed", f"轉接服務不提供 {method} {path}", meta)
         ep_id, model = route_for(tool)

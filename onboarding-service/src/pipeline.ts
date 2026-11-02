@@ -152,13 +152,15 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
     set('scan', 'running');
     const sc = await rt.scan(tag, join(evDir, 'trivy.json'), cfg.timeouts.scanMs, ctxFor('scan'));
     if (stopIfCancelled()) return;
+    // 記錄這次用的掃描器版本與漏洞資料庫時間（2026/11/02 客戶需求：之後知道何時該更新）
+    const scanner = sc.scanner ?? null;
     if (!sc.available || !sc.ok) {
       results.scan = 'incomplete';
-      set('scan', 'incomplete', { reason: sc.available ? '掃描執行失敗' : '找不到漏洞掃描器（trivy）' });
+      set('scan', 'incomplete', { reason: sc.available ? (scanner?.offline ? '掃描執行失敗（不連網模式：請確認本機已有漏洞資料庫，見 SOP）' : '掃描執行失敗') : '找不到漏洞掃描器（trivy）', scanner });
     } else {
       const s = summarizeTrivy(sc.json);
       results.scan = s.critical.length ? 'warning' : 'passed';
-      set('scan', results.scan, { policy: 'record only; not blocking', ...s, needsException: [] });
+      set('scan', results.scan, { policy: 'record only; not blocking', ...s, needsException: [], scanner });
     }
 
     // 4. 程式碼檢查：改由客戶人工審查（DEC-019）。自動流程不代審，標為「待確認」，由開發者在網站按「已檢查」才算通過
@@ -219,7 +221,7 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
     const pvName = `wh-preview-${m.tool.id}`;
     const pvVol = `wh-preview-${m.tool.id}-r${sub.revision}-data`;
     const port = await allocatePort(store, cfg.ports.previewStart, cfg.ports.previewEnd, 'preview_port');
-    const access = await prepareModelAccess(cfg, rt, secrets, store, m, m.tool.id, pvCtx);
+    const access = await prepareModelAccess(cfg, rt, secrets, store, m, m.tool.id, pvCtx, 'test'); // 預覽的模型用量記為測試
     const env = access.env;
     const pst = await rt.start({ image: tag, name: pvName, labels: { ...labels, 'workhub.kind': 'preview' }, hostPort: port, containerPort: m.run.port, volume: mount ? pvVol : undefined, mountPath: mount, env, memoryBytes, cpus: m.run.resources.cpu, command: m.run.command, network: access.network }, pvCtx);
     const ph = pst.code === 0

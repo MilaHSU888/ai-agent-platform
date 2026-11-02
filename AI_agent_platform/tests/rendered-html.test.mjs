@@ -7,7 +7,7 @@ import Home from '../app/page.tsx';
 
 test('WorkHub renders the actual tool catalogue and department navigation', () => {
   const html = renderToStaticMarkup(createElement(Home));
-  assert.match(html, /製造二部/);
+  assert.match(html, /製造部/);
   assert.match(html, /tool-search/);
   assert.match(html, /企業知識庫問答/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site|vision-app/);

@@ -47,8 +47,26 @@ export function activeRelease(store: Store, toolId: string): Rel | undefined {
   return store.get<Rel>("SELECT * FROM releases WHERE tool_id=? AND status='active' ORDER BY created_at DESC LIMIT 1", toolId);
 }
 
-function busy(store: Store, toolId: string) {
-  return store.get("SELECT r.id FROM releases r WHERE r.tool_id=? AND r.status IN ('pending','starting')", toolId);
+export function busy(store: Store, toolId: string) {
+  return store.get("SELECT r.id FROM releases r WHERE r.tool_id=? AND r.status IN ('pending','starting')", toolId)
+    ?? store.get("SELECT j.id FROM jobs j JOIN submissions s ON s.id=j.submission_id WHERE s.tool_id=? AND j.kind='publish' AND j.status IN ('queued','running')", toolId);
+}
+
+/**
+ * 清掉預覽容器與預覽資料卷（2026/11/02）：工具發布後，不再審核中的提交其預覽都用不到了。
+ * 仍在審核中（建置、待確認、待核准、已核准未發布）的提交保留預覽。回傳清掉的資料卷數。
+ */
+export async function cleanupPreviews(store: Store, rt: Runtime, toolId: string, ctx?: Ctx): Promise<number> {
+  const subs = store.all<{ id: string; revision: number; status: string; preview_container: string | null; kind: string }>('SELECT id, revision, status, preview_container, kind FROM submissions WHERE tool_id=?', toolId);
+  const inReview = (s: { status: string }) => ['queued', 'running', 'awaiting_confirmation', 'awaiting_approval', 'approved'].includes(s.status);
+  let n = 0;
+  for (const s of subs.filter((x) => x.kind !== 'url' && !inReview(x))) {
+    await rt.removeVolume(`wh-preview-${toolId}-r${s.revision}-data`, ctx);
+    n++;
+    if (s.preview_container) store.run('UPDATE submissions SET preview_port=NULL, preview_container=NULL WHERE id=?', s.id);
+  }
+  if (!subs.some((s) => inReview(s) && s.preview_container)) await rt.remove(`wh-preview-${toolId}`, ctx);
+  return n;
 }
 
 /** 管理者按「發布」：只接受已核准、核准綁定同一份 image 的提交；同一工具同時只跑一個發布工作。 */
@@ -63,7 +81,7 @@ export function requestRelease(store: Store, cfg: Config, subId: string, actor: 
   const prev = activeRelease(store, sub.tool_id);
   // 已公開且有上線版本：新版先並行試用，不直接取代一般使用者正在用的版本
   const asTrial = !!prev && visibilityOf(store, sub.tool_id) === 'public';
-  if (asTrial && trialRelease(store, sub.tool_id)) throw new GateError(['此工具已有試用中的新版本，請先公開或結束試用']);
+  if (asTrial && trialRelease(store, sub.tool_id)) throw new GateError(['此工具已有試用中的新版本，請先公開或下架']);
   const kind: Detail['kind'] = asTrial ? 'trial' : 'release';
   const relId = newId('rel');
   const jobId = newId('job');
@@ -145,10 +163,16 @@ export async function takeOffline(store: Store, cfg: Config, rt: Runtime, toolId
   return { releaseId: current.id };
 }
 
-async function specFor(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx, trial = false): Promise<ServiceSpec> {
+/** 工具是否已經公開過（第一次公開時才清空試用資料） */
+export function everPublished(store: Store, toolId: string): boolean {
+  return !!store.get<{ f: string | null }>('SELECT first_published_at AS f FROM tools WHERE id=?', toolId)?.f;
+}
+
+/** stage：試用版與從未公開過的工具，模型用量記為測試；公開過的正式版本記為正式 */
+async function specFor(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, sub: Sub, port: number, ctx: Ctx, trial = false, stage?: 'prod' | 'test'): Promise<ServiceSpec> {
   const m = JSON.parse(sub.manifest_json) as Manifest;
   const mount = m.run.persistentData[0]?.path;
-  const access = await prepareModelAccess(cfg, rt, secrets, store, m, sub.tool_id, ctx);
+  const access = await prepareModelAccess(cfg, rt, secrets, store, m, sub.tool_id, ctx, stage ?? (trial || !everPublished(store, sub.tool_id) ? 'test' : 'prod'));
   return {
     image: sub.image_digest!, name: trial ? trialContainerName(sub.tool_id) : containerName(sub.tool_id),
     labels: { 'workhub.tool': sub.tool_id, 'workhub.submission': sub.id, 'workhub.kind': trial ? 'trial' : 'release', 'workhub.version': sub.version },
@@ -167,6 +191,7 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
   const job = store.get<{ release_id: string; kind: string }>('SELECT release_id, kind FROM jobs WHERE id=?', jobId)!;
   const rel = store.get<Rel>('SELECT * FROM releases WHERE id=?', job.release_id)!;
   const detail = JSON.parse(rel.detail_json) as Detail;
+  if (job.kind === 'publish') return runFirstPublishJob(store, cfg, rt, secrets, jobId, signal);
   if (store.get<{ kind: string }>('SELECT kind FROM submissions WHERE id=?', rel.submission_id)?.kind === 'url') return runUrlReleaseJob(store, rt, jobId, rel, detail);
   if (detail.kind === 'trial') return runTrialJob(store, cfg, rt, secrets, jobId, rel, detail, signal);
   const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', rel.submission_id)!;
@@ -275,6 +300,55 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
     await rt.remove(trialContainerName(sub.tool_id), ctx);
     if (mount) await rt.removeVolume(trialVolumeName(sub.tool_id), ctx);
   }
+  // 發布後清掉預覽資料（預覽與正式資料本來就分開，這裡只是不讓預覽資料卷一直累積）
+  if (ok && detail.kind === 'release') await cleanupPreviews(store, rt, sub.tool_id, ctx);
+}
+
+/**
+ * 新工具第一次切到「公開中」（2026/11/02 客戶需求）：試用期間的資料直接清空，公開後從空白資料開始正式使用。
+ * 步驟：移除試用中的容器 → 刪除資料卷 → 以同一份 image 重新啟動（模型用量改記為正式）→ 健康檢查通過才公開。
+ * 失敗時工具維持試用中、入口暫停，AI Team 可再切一次「公開中」重試（試用資料已清空，不會還原）。
+ */
+async function runFirstPublishJob(store: Store, cfg: Config, rt: Runtime, secrets: Secrets, jobId: string, signal: AbortSignal) {
+  const job = store.get<{ release_id: string }>('SELECT release_id FROM jobs WHERE id=?', jobId)!;
+  const rel = store.get<Rel>('SELECT * FROM releases WHERE id=?', job.release_id)!;
+  const sub = store.get<Sub>('SELECT * FROM submissions WHERE id=?', rel.submission_id)!;
+  const m = JSON.parse(sub.manifest_json) as Manifest;
+  const mount = m.run.persistentData[0]?.path;
+  const detail = JSON.parse(rel.detail_json) as Detail;
+  const actor = store.get<{ actor: string }>("SELECT actor FROM audit_events WHERE action='tool.publish_requested' AND target=? ORDER BY id DESC LIMIT 1", sub.tool_id)?.actor ?? 'system';
+  const ctx: Ctx = { logFile: join(cfg.dataDir, 'evidence', sub.id, jobId, 'release.log'), signal, mask: makeMasker(secrets.allSecretValues()) };
+  const { mkdirSync } = await import('node:fs');
+  mkdirSync(join(cfg.dataDir, 'evidence', sub.id, jobId), { recursive: true });
+  const step = (name: string, status: Step['status'], d?: string) => {
+    detail.steps.push({ name, status, at: now(), detail: d });
+    store.run('UPDATE releases SET detail_json=?, updated_at=? WHERE id=?', JSON.stringify(detail), now(), rel.id);
+  };
+  store.run("UPDATE jobs SET status='running', started_at=? WHERE id=?", now(), jobId);
+  let ok = false;
+  let error = '';
+  try {
+    if (!rel.port) throw new Error('找不到工具的入口埠');
+    await rt.remove(containerName(sub.tool_id), ctx);
+    if (mount) { await rt.removeVolume(volumeName(sub.tool_id), ctx); step('清空試用資料', 'passed', '試用期間的資料已刪除，公開後從空白資料開始'); }
+    else step('清空試用資料', 'skipped', '此工具沒有持久資料目錄');
+    const st = await rt.start(await specFor(store, cfg, rt, secrets, sub, rel.port, ctx, false, 'prod'), ctx);
+    if (st.code !== 0) { step('啟動正式版', 'failed', st.stderr.slice(0, 300)); throw new Error('容器啟動失敗'); }
+    const h = await healthy(rt, cfg, sub, rel.port, signal);
+    if (!h.ok) { step('健康檢查', 'failed', `${m.run.healthCheck.path} 回應 ${h.status ?? '無'}`); throw new Error('健康檢查未通過'); }
+    step('公開', 'passed', `${m.run.healthCheck.path} → ${h.status}（${h.seconds} 秒）`);
+    ok = true;
+  } catch (e) {
+    error = (e as Error).message;
+    await rt.logs(containerName(sub.tool_id), ctx);
+    step('公開', 'failed', `${error}；工具維持試用中，可再切一次「公開中」重試`);
+  }
+  const t = now();
+  store.tx(() => {
+    if (ok) store.run("UPDATE tools SET visibility='public', first_published_at=?, updated_at=? WHERE id=?", t, t, sub.tool_id);
+    store.run('UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=?', ok ? 'succeeded' : 'failed', t, ok ? null : error, jobId);
+    store.audit(actor, ok ? 'tool.published' : 'tool.publish_failed', sub.tool_id, { version: sub.version, trialDataCleared: !!mount, firstPublish: true, error: ok ? undefined : error });
+  });
 }
 
 /** 已公開工具的新版：並行部署試用版（另一個容器、另一個埠、空白資料），舊版照常服務；正式資料不複製給試用版。 */
@@ -328,20 +402,9 @@ async function runTrialJob(store: Store, cfg: Config, rt: Runtime, secrets: Secr
     store.run('UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=?', ok ? 'succeeded' : 'failed', t, ok ? null : error, jobId);
     store.audit(detail.actor ?? 'system', ok ? 'trial.succeeded' : 'trial.failed', rel.id, { tool: sub.tool_id, version: sub.version, error: ok ? undefined : error });
   });
+  if (ok) await cleanupPreviews(store, rt, sub.tool_id, ctx);
 }
 
-export type TrialResult = { result: 'passed' | 'failed'; note: string; actor: string; at: string };
-/** 這一版（同一份原始碼與 image）最近一次的試用結果：開發者按「試用通過」或「測試未通過」；沒有結果回傳 null */
-export function trialResult(store: Store, subId: string): TrialResult | null {
-  const r = store.get<{ kind: string; reason: string; actor: string; created_at: string }>(`SELECT a.kind, a.reason, a.actor, a.created_at FROM approvals a JOIN submissions s ON s.id=a.submission_id
-    WHERE a.submission_id=? AND a.kind IN ('trial_passed','trial_failed') AND a.revoked_at IS NULL AND a.source_hash=s.source_hash AND a.image_digest IS s.image_digest
-    ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1`, subId);
-  return r ? { result: r.kind === 'trial_passed' ? 'passed' : 'failed', note: r.reason, actor: r.actor, at: r.created_at } : null;
-}
-/** 這一版最近一次的試用結果是否為「試用通過」 */
-export function trialPassed(store: Store, subId: string): boolean {
-  return trialResult(store, subId)?.result === 'passed';
-}
 
 /** WorkHub 入口：列出上線中（或下架中）的版本，附公開狀態與試用版；並即時探測服務是否回應。
  *  依角色過濾在網站端進行（本機試點無登入）；正式環境須由後端依登入身分過濾（P1-AUTH-006）。 */
@@ -377,8 +440,8 @@ export async function catalog(store: Store, rt: Runtime) {
       toolId: r.tool_id, name: r.name, department: r.department, owner: r.owner, version: r.version, releaseId: r.id,
       kind: r.kind === 'url' ? 'url' as const : 'zip' as const,
       icon: r.icon_json ? JSON.parse(r.icon_json) as { symbol: number; color: string } : null,
-      // URL 工具的用途說明（ZIP 工具沒有，網站沿用預設說明）
-      description: r.description || (r.kind === 'url' ? (JSON.parse(r.manifest_json) as UrlConfig).description : (JSON.parse(r.manifest_json) as { tool?: { description?: string } }).tool?.description) || null,
+      // 用途說明（選填）：平台設定為準；從未設定（null）才沿用提交內容；空字串代表刻意不填，工具中心不顯示
+      description: (r.description ?? (r.kind === 'url' ? (JSON.parse(r.manifest_json) as UrlConfig).description : (JSON.parse(r.manifest_json) as { tool?: { description?: string } }).tool?.description)) || null,
       scenario: r.scenario || null,
       // 使用模型的 ZIP 工具：目前用哪個模型（AI Team 指定或平台預設）與是否僅限地端
       model: r.kind !== 'url' && live.usesModel ? toolModel(store, r.tool_id) : null,
@@ -387,12 +450,12 @@ export async function catalog(store: Store, rt: Runtime) {
       maintenance: r.maintenance_json ? JSON.parse(r.maintenance_json) as { at: string; actor: string; reason: string } : null,
       usesModel: live.usesModel, releasedAt: r.updated_at,
       visibility,
-      // 試用中的工具：上線版本本身就是試用版，記錄是否已按「試用通過」
-      trialPassed: visibility === 'trial' && !offline ? trialPassed(store, r.submission_id) : undefined,
-      trialResult: visibility === 'trial' && !offline ? trialResult(store, r.submission_id) : null,
+      // 燈號（2026/11/02）：是否公開過（第一次公開會清空試用資料）、是否有發布／公開工作進行中
+      everPublished: everPublished(store, r.tool_id),
+      busy: !!busy(store, r.tool_id),
       // 已公開工具的新版試用：與正式版本並行
       trial: tr && trSub && trEntry ? { releaseId: tr.id, submissionId: tr.submission_id, version: trSub.version, url: trEntry.url,
-        healthy: trEntry.healthy, passed: trialPassed(store, tr.submission_id), result: trialResult(store, tr.submission_id), since: tr.updated_at } : null,
+        healthy: trEntry.healthy, since: tr.updated_at } : null,
     };
   }));
 }
