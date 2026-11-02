@@ -70,7 +70,8 @@ const DEPT_KEY = 'workhub-demo-employee-department';
 export function useEmployeeDepartment(): [string, (d: string) => void] {
   const [dept, setDept] = useState('purchase');
   useEffect(() => {
-    queueMicrotask(() => { try { const v = localStorage.getItem(DEPT_KEY); if (v) setDept(v); } catch { /* 用預設 */ } });
+    // 2026/11/02 部門調整：舊的製造一部、製造二部（mfg1／mfg2）改為製造部（mfg）
+    queueMicrotask(() => { try { const v = localStorage.getItem(DEPT_KEY); if (v) setDept(v === 'mfg1' || v === 'mfg2' ? 'mfg' : v); } catch { /* 用預設 */ } });
   }, []);
   const set = useCallback((d: string) => { setDept(d); try { localStorage.setItem(DEPT_KEY, d); } catch { /* 只影響這個分頁 */ } }, []);
   return [dept, set];

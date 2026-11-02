@@ -106,6 +106,8 @@ export class Store {
       this.db.exec('ALTER TABLE tools ADD COLUMN first_published_at TEXT');
       this.db.exec("UPDATE tools SET first_published_at=updated_at WHERE visibility='public' OR EXISTS (SELECT 1 FROM audit_events a WHERE a.target=tools.id AND a.action='tool.published')");
     }
+    // 部門調整（2026/11/02，Tammy 提供 12 個部門）：製造一部、製造二部合併為製造部
+    this.db.exec("UPDATE tools SET department='mfg' WHERE department IN ('mfg1','mfg2')");
     // 稽核紀錄永久保存、不能刪改（2026/11/02 資安稽核需求）；確認與核准紀錄不能刪除（失效時只標記 revoked_at）
     this.db.exec(`CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, '稽核紀錄不能刪除'); END;
       CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, '稽核紀錄不能修改'); END;
