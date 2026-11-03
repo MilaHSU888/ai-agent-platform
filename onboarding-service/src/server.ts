@@ -11,6 +11,7 @@ import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRele
 import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { setLight, type LightTarget } from './trial.ts';
 import { reviewHistory, reviewHistoryCsv } from './review-history.ts';
+import { answerAutopack, autopackList, autopackLog, autopackView, autopackZip, cancelAutopack, confirmAutopack, createAutopack, type AutopackWorker } from './autopack/job.ts';
 import { setToolIcon, submitUrlTool } from './url-tools.ts';
 import { defaultModel, listEndpoints, seedDefault, setDefault, setEnabled, setLocalOnly, setToolModel, toolModel } from './models.ts';
 import { modelUsage } from './usage.ts';
@@ -90,7 +91,7 @@ async function json(req: IncomingMessage): Promise<Record<string, unknown>> {
 
 export type App = { server: Server; auth: Auth };
 
-export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtime, secrets: Secrets, proxyToken?: string): App {
+export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtime, secrets: Secrets, proxyToken?: string, autopack?: AutopackWorker): App {
   const auth = new Auth(cfg, proxyToken);
 
   const submissionView = (id: string) => {
@@ -284,6 +285,48 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const off = offlineRelease(store, m[1]);
       if (!off) throw new GateError(['此工具目前不是下架狀態']);
       send(res, 202, requestRedeploy(store, cfg, m[1], off.id, session!.actor, String(body.reason ?? '')));
+    } },
+    // ── 原始碼自動打包（2026/11/03）：上傳原始碼 → 平台打包 → 開發者確認報告 → 進原本的上架流程 ──
+    { method: 'POST', re: /^\/api\/onboarding\/autopack$/, auth: true, fn: async ({ req, res, url, session }) => {
+      if (!String(req.headers['content-type'] ?? '').startsWith('application/zip')) { send(res, 415, { error: '請上傳原始碼的 ZIP 檔' }); return; }
+      const buf = await readBody(req, cfg.autopack.uploadBytes);
+      const mode = url.searchParams.get('mode') === 'update' ? 'update' : 'new';
+      const r = createAutopack(store, cfg, buf, { mode, expectedToolId: url.searchParams.get('expectedToolId') ?? undefined, name: url.searchParams.get('name') ?? undefined,
+        department: url.searchParams.get('department') ?? '', owner: url.searchParams.get('owner') ?? '', actor: session!.actor, originalFilename: url.searchParams.get('filename') ?? 'source.zip',
+        description: url.searchParams.get('description') ?? undefined });
+      if (!r.ok) { send(res, 422, { error: '上傳資料未通過檢查', issues: r.issues, warnings: [] }); return; }
+      void autopack?.tick();
+      send(res, 201, { autopack: autopackView(store, r.id) });
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/autopack$/, auth: true, fn: ({ res }) => { send(res, 200, { autopacks: autopackList(store) }); } },
+    { method: 'GET', re: /^\/api\/onboarding\/autopack\/([\w-]+)$/, auth: true, fn: ({ res }, m) => {
+      const v = autopackView(store, m[1]);
+      if (!v) { send(res, 404, { error: '找不到這筆自動打包' }); return; }
+      send(res, 200, { autopack: v });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/answers$/, auth: true, fn: async ({ req, res, session }, m) => {
+      const body = await json(req);
+      answerAutopack(store, m[1], session!.actor, (body.answers ?? {}) as Record<string, string>);
+      void autopack?.tick();
+      send(res, 200, { autopack: autopackView(store, m[1]) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/confirm$/, auth: true, fn: ({ res, session }, m) => {
+      const r = confirmAutopack(store, cfg, m[1], session!.actor);
+      queue.tick();
+      send(res, 200, { autopack: autopackView(store, m[1]), submission: submissionView(r.submissionId) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/cancel$/, auth: true, fn: ({ res, session }, m) => {
+      cancelAutopack(store, cfg, m[1], session!.actor);
+      send(res, 200, { autopack: autopackView(store, m[1]) });
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/log$/, auth: true, fn: ({ res }, m) => {
+      if (!autopackView(store, m[1])) { send(res, 404, { error: '找不到這筆自動打包' }); return; }
+      send(res, 200, autopackLog(cfg, m[1]), { 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`自動打包紀錄_${m[1]}.txt`)}` });
+    } },
+    { method: 'GET', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/files\.zip$/, auth: true, fn: ({ res }, m) => {
+      const z = autopackView(store, m[1]) ? autopackZip(cfg, m[1]) : null;
+      if (!z) { send(res, 404, { error: '沒有可下載的打包結果' }); return; }
+      send(res, 200, z, { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`自動打包結果_${m[1]}.zip`)}` });
     } },
     // 審核履歷（2026/11/02 資安稽核）：誰上傳、誰檢查程式碼、誰核准、誰公開與時間；CSV 可匯出單一工具或全部工具
     { method: 'GET', re: /^\/api\/onboarding\/tools\/([\w-]+)\/review-history$/, auth: true, fn: ({ res }, m) => {

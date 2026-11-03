@@ -26,10 +26,12 @@ export type ServiceSpec = {
   network: string;
   /** 正式發布：Docker 重啟後自動恢復 */
   restart?: boolean;
+  /** 唯讀掛上主機資料夾（只用在業務測試：測試資料不放進映像檔，測試時才掛上，2026/11/03） */
+  binds?: { host: string; target: string }[];
 };
 
 /** 漏洞掃描器資訊（2026/11/02 客戶需求：記錄用哪個工具、哪一版，以及本機漏洞資料庫多久沒更新） */
-export type ScannerInfo = { tool: 'trivy'; version: string | null; dbUpdatedAt: string | null; dbDownloadedAt: string | null; offline: boolean };
+export type ScannerInfo = { tool: 'trivy'; version: string | null; dbUpdatedAt: string | null; dbDownloadedAt: string | null; offline: boolean; cacheDir?: string };
 
 /** 解析 `trivy --version --format json`；舊版只有文字輸出時改從文字取版本與資料庫時間 */
 export function parseTrivyVersion(stdout: string, offline: boolean): ScannerInfo {
@@ -125,10 +127,12 @@ export class DockerRuntime implements Runtime {
   }
 
   async scannerInfo(): Promise<ScannerInfo | null> {
-    const v = await run(this.cfg.trivy, ['--version', '--format', 'json'], { timeoutMs: 20000 });
-    if (v.code === 0) return parseTrivyVersion(v.stdout, this.cfg.trivyOffline);
-    const t = await run(this.cfg.trivy, ['--version'], { timeoutMs: 20000 });
-    return t.code === 0 ? parseTrivyVersion(t.stdout, this.cfg.trivyOffline) : null;
+    // 漏洞資料庫固定放在平台資料夾的 trivy-cache（B6）
+    const cache = ['--cache-dir', this.cfg.trivyCacheDir];
+    const v = await run(this.cfg.trivy, [...cache, '--version', '--format', 'json'], { timeoutMs: 20000 });
+    if (v.code === 0) return { ...parseTrivyVersion(v.stdout, this.cfg.trivyOffline), cacheDir: this.cfg.trivyCacheDir };
+    const t = await run(this.cfg.trivy, [...cache, '--version'], { timeoutMs: 20000 });
+    return t.code === 0 ? { ...parseTrivyVersion(t.stdout, this.cfg.trivyOffline), cacheDir: this.cfg.trivyCacheDir } : null;
   }
 
   async scan(image: string, outFile: string, timeoutMs: number, ctx: Ctx) {
@@ -136,7 +140,7 @@ export class DockerRuntime implements Runtime {
     if (!before) return { available: false, ok: false };
     // 不連網時只用本機現有的漏洞資料庫，避免下載失敗讓掃描變成「未完成」而擋住發布
     const offline = this.cfg.trivyOffline ? ['--skip-db-update', '--skip-java-db-update', '--offline-scan'] : [];
-    const result = await run(this.cfg.trivy, ['image', '--quiet', ...offline, '--scanners', 'vuln', '--severity', 'HIGH,CRITICAL', '--format', 'json', '--output', outFile, '--timeout', `${Math.floor(timeoutMs / 60000)}m`, image],
+    const result = await run(this.cfg.trivy, ['image', '--cache-dir', this.cfg.trivyCacheDir, '--quiet', ...offline, '--scanners', 'vuln', '--severity', 'HIGH,CRITICAL', '--format', 'json', '--output', outFile, '--timeout', `${Math.floor(timeoutMs / 60000)}m`, image],
       { timeoutMs, signal: ctx.signal, logFile: ctx.logFile, mask: ctx.mask });
     // 連網模式掃描時會順便更新資料庫，掃描後再讀一次才是這次實際用的資料庫時間
     const scanner = (this.cfg.trivyOffline ? before : await this.scannerInfo()) ?? before;
@@ -150,6 +154,7 @@ export class DockerRuntime implements Runtime {
     for (const [k, v] of Object.entries(spec.labels)) args.push('--label', `${k}=${v}`);
     if ((spec as ServiceSpec).restart) args.push('--restart', 'unless-stopped');
     if (spec.volume && spec.mountPath) args.push('-v', `${spec.volume}:${spec.mountPath}`);
+    for (const b of (spec as ServiceSpec).binds ?? []) args.push('--mount', `type=bind,source=${b.host},target=${b.target},readonly`);
     for (const k of Object.keys(spec.env)) args.push('-e', k); // 值經由子程序環境傳入，不出現在命令列
     return args;
   }

@@ -8,6 +8,7 @@ import { Secrets } from './secrets.ts';
 import { JobQueue } from './queue.ts';
 import { createApp } from './server.ts';
 import { cleanupPreviews, runReleaseJob } from './releases.ts';
+import { AutopackWorker } from './autopack/job.ts';
 import { relayEnv, syncRelay } from './relay.ts';
 import { seedDefault } from './models.ts';
 
@@ -37,7 +38,19 @@ queue.extraKinds.rollback = (id, signal) => runReleaseJob(store, cfg, rt, secret
 queue.extraKinds.redeploy = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 queue.extraKinds.trial = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
 queue.extraKinds.publish = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
-const { server } = createApp(store, cfg, queue, rt, secrets);
+// 原始碼自動打包：獨立排隊線，一次一件，不卡住原本的上架檢查（2026/11/03）
+const autopack = new AutopackWorker(store, cfg, rt, secrets);
+const { server } = createApp(store, cfg, queue, rt, secrets, undefined, autopack);
+// 漏洞資料庫固定放在平台資料夾（B6）：第一次啟動時，把 Trivy 預設快取裡已下載的資料庫複製過來
+{
+  const { existsSync, cpSync } = await import('node:fs');
+  const { homedir } = await import('node:os');
+  if (!existsSync(join(cfg.trivyCacheDir, 'db', 'trivy.db'))) {
+    for (const old of [join(homedir(), 'Library', 'Caches', 'trivy'), join(homedir(), '.cache', 'trivy')]) {
+      if (existsSync(join(old, 'db', 'trivy.db'))) { cpSync(join(old, 'db'), join(cfg.trivyCacheDir, 'db'), { recursive: true }); break; }
+    }
+  }
+}
 
 const avail = await rt.available();
 // 模型轉接服務：設定改變（例如換金鑰）時重新套用；尚未有工具使用模型時不啟動
@@ -67,6 +80,7 @@ server.listen(cfg.port, cfg.host, () => {
   console.log(' 關閉此視窗會停止上架服務；已排隊的工作下次啟動時會繼續。');
   console.log(line);
   queue.start();
+  autopack.start();
   // 清掉已發布工具累積的舊預覽資料（2026/11/02 起發布後自動清；這裡補清之前留下來的）
   if (avail.docker) void (async () => {
     let n = 0;
@@ -77,6 +91,7 @@ server.listen(cfg.port, cfg.host, () => {
 
 const shutdown = () => {
   queue.stop();
+  autopack.stop();
   server.close();
   setTimeout(() => process.exit(0), 3000).unref();
 };

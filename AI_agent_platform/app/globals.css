@@ -1062,3 +1062,34 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 /* 審核履歷（2026/11/02） */
 .rc-review details{margin:8px 0;border:1px solid #e3e9f0;border-radius:10px;padding:8px 12px}.rc-review summary{cursor:pointer;font-weight:600;font-size:13px}
 .rc-review td small{font-size:11px}
+
+/* 原始碼自動打包（2026/11/03） */
+.ap-intro { margin:0 0 12px; padding-left:28px; }
+.ap-intro li { margin:2px 0; }
+.ap-list { display:grid; gap:6px; margin:8px 0 12px; }
+.ap-detail { border-top:1px solid #eceff5; padding-top:12px; }
+.ap-steps { list-style:none; padding:0; margin:0 0 12px; display:grid; gap:4px; }
+.ap-step { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; font-size:14px; }
+.ap-step > span { width:18px; text-align:center; font-weight:700; }
+.ap-step.passed > span { color:#1f7a45; } .ap-step.failed > span { color:#b42318; } .ap-step.running > span, .ap-step.waiting > span { color:#b26b00; }
+.ap-step small { color:#7c8494; flex-basis:100%; padding-left:26px; }
+.ap-questions { display:grid; gap:12px; margin:8px 0 16px; }
+.ap-q { border:1.5px solid #f0d9a8; background:#fffaf0; border-radius:10px; padding:10px 14px; display:grid; gap:6px; }
+.ap-q legend { font-weight:700; padding:0 4px; }
+.ap-q p { margin:0; }
+.ap-refs { margin:0; padding-left:20px; font-size:13px; color:#555; }
+.ap-handoff p { margin:6px 0 0; }
+.ap-downloads { display:flex; gap:16px; flex-wrap:wrap; }
+.ap-report h3 { margin:16px 0 8px; } .ap-report h4 { margin:14px 0 6px; }
+.ap-report ul { margin:0; padding-left:20px; }
+.ap-summary { border-collapse:collapse; font-size:14px; width:100%; max-width:720px; }
+.ap-summary th { text-align:left; color:#7c8494; font-weight:500; padding:3px 12px 3px 0; white-space:nowrap; vertical-align:top; width:1%; }
+.ap-summary td { padding:3px 0; word-break:break-word; }
+.ap-changes { display:grid; gap:4px; }
+.ap-changes summary { cursor:pointer; font-size:14px; }
+.ap-by { font-size:12px; padding:1px 6px; border-radius:6px; background:#eef1f8; color:#2d3a8c; }
+.ap-by.model { background:#fff1dc; color:#8a5300; }
+.ap-diff { max-height:360px; overflow:auto; background:#f8f9fc; border:1px solid #eceff5; border-radius:8px; padding:8px 10px; font-size:12px; line-height:1.45; white-space:pre; }
+.ap-add { color:#1f7a45; } .ap-del { color:#b42318; }
+.ap-diff .ap-add { background:#e9f7ef; display:inline-block; min-width:100%; } .ap-diff .ap-del { background:#fdecea; display:inline-block; min-width:100%; }
+.ap-confirm { margin-top:14px; } .ap-confirm ul { margin:6px 0; }

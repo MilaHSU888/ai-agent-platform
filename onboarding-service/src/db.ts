@@ -108,6 +108,14 @@ export class Store {
     }
     // 部門調整（2026/11/02，Tammy 提供 12 個部門）：製造一部、製造二部合併為製造部
     this.db.exec("UPDATE tools SET department='mfg' WHERE department IN ('mfg1','mfg2')");
+    // 原始碼自動打包（2026/11/03）：一筆打包工作一列；測試資料與程式碼分開存放（submissions.testdata_json），公開後刪除
+    this.db.exec(`CREATE TABLE IF NOT EXISTS autopacks (
+      id TEXT PRIMARY KEY, mode TEXT NOT NULL, tool_id TEXT, name TEXT, department TEXT NOT NULL, owner TEXT NOT NULL, actor TEXT NOT NULL,
+      original_filename TEXT NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL, detail_json TEXT NOT NULL DEFAULT '{}',
+      active_ms INTEGER NOT NULL DEFAULT 0, submission_id TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    const scols = this.all<{ name: string }>('PRAGMA table_info(submissions)').map((c) => c.name);
+    if (!scols.includes('testdata_json')) this.db.exec('ALTER TABLE submissions ADD COLUMN testdata_json TEXT');
+    if (!scols.includes('autopack_id')) this.db.exec('ALTER TABLE submissions ADD COLUMN autopack_id TEXT');
     // 稽核紀錄永久保存、不能刪改（2026/11/02 資安稽核需求）；確認與核准紀錄不能刪除（失效時只標記 revoked_at）
     this.db.exec(`CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, '稽核紀錄不能刪除'); END;
       CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, '稽核紀錄不能修改'); END;

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, downloadReviewCsv, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type ReviewRow, type ScannerInfo, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { AutopackPanel } from './autopack-panel';
 import { IconPicker } from './tool-icon';
 import { ToolModelSetting } from './model-admin';
 import { ArchiveControl, isTrialing, LightSwitch, TrialCard } from './trial-panel';
@@ -118,7 +119,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const [items, setItems] = useState<Submission[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [submissionForm, setSubmissionForm] = useState<{ tool: Submission | null; kind: 'zip' | 'url' } | null>(null);
+  const [submissionForm, setSubmissionForm] = useState<{ tool: Submission | null; kind: 'zip' | 'url' | 'source' } | null>(null);
   const emptyUrl = { url: '', usesAi: false, aiConfirmed: false, guide: '' };
   const [urlForm, setUrlForm] = useState(emptyUrl);
   const formRef = useRef<HTMLElement | null>(null);
@@ -180,8 +181,8 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
 
   // 每個工具只列最新一筆提交（items 由新到舊）
   const myTools = visible.filter((x, i) => visible.findIndex((y) => y.toolId === x.toolId) === i);
-  const openSubmission = (tool: Submission | null, kind: 'zip' | 'url' = 'zip') => {
-    setSubmissionForm({ tool, kind: tool ? (tool.kind === 'url' ? 'url' : 'zip') : kind }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
+  const openSubmission = (tool: Submission | null, kind: 'zip' | 'url' | 'source' = 'zip') => {
+    setSubmissionForm({ tool, kind: tool ? (tool.kind === 'url' ? 'url' : kind === 'source' ? 'source' : 'zip') : kind }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
     const uc = tool?.urlConfig;
     setUrlForm(uc ? { url: uc.url, usesAi: uc.usesAi, aiConfirmed: uc.aiConfirmed, guide: uc.guide } : emptyUrl);
     setOwner(tool?.owner ?? '');
@@ -233,7 +234,12 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
       <div className="mg-row"><div><h2>{submissionForm.tool ? (submissionForm.kind === 'url' ? `修改網址設定：${submissionForm.tool.toolName}` : `提交新版本：${submissionForm.tool.toolName}`) : '新增工具'}</h2></div></div>
       {!submissionForm.tool && <div className="onb-kind-switch" role="group" aria-label="上架方式">
         <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(null, 'zip')}><b>小工具（上傳 ZIP）</b><small>由平台建置、檢查、測試並執行</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(null, 'source')}><b>上傳原始碼，平台自動打包</b><small>沒有雲端 AI 可用時：平台用地端模型打包，你確認報告後送出</small></button>
         <button type="button" aria-pressed={submissionForm.kind === 'url'} onClick={() => openSubmission(null, 'url')}><b>已有網址的網站（URL）</b><small>網站已在其他地方運作，例如 OpenWebUI、n8n 表單</small></button>
+      </div>}
+      {submissionForm.tool && submissionForm.tool.kind !== 'url' && <div className="onb-kind-switch" role="group" aria-label="新版本上傳方式">
+        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(submissionForm.tool, 'zip')}><b>上傳已打包的 ZIP</b><small>已依上架資料包打包好</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(submissionForm.tool, 'source')}><b>上傳原始碼，平台自動打包</b><small>沿用同一個工具代號，平台比對上一版</small></button>
       </div>}
       {submissionForm.kind === 'url' ? <>
       <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），由 AI Team 切換為公開中。工具圖示由 AI Team 設定。</p>
@@ -262,6 +268,31 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
           <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setIssues([]); setWarnings([]); }}>取消</button>
         </div>
       </form>
+      </> : submissionForm.kind === 'source' ? <>
+      <p className="mg-muted">把整個專案資料夾壓成 ZIP 上傳即可，不用填問卷、不用自己寫 Dockerfile。平台會判斷語言與框架、哪些資料要保存、有沒有用 AI，產生打包檔並在不連網的環境跑測試；看不出來的地方才會在下方「自動打包」發問。</p>
+      <ul className="onb-note ap-intro">
+        <li>支援 Python、Node.js、Java、.NET（新版 .NET）、Go、PHP、純靜態網頁。Windows 專用程式（.NET Framework、WinForms、WPF）、VBA、Access、桌面視窗程式、連接硬體設備的程式，平台會告訴你原因並轉給 AI Team。</li>
+        <li>測試資料（例如 tests/fixtures 裡的樣本檔）一起放進 ZIP 即可：平台會分開存放、不放進工具，測試時才唯讀掛上，工具公開後刪除。</li>
+        <li>金鑰、密碼請不要放進 ZIP；平台找到時會先問你。打包最多 60 分鐘（等你回答的時間不算），超過會轉給 AI Team。</li>
+      </ul>
+      {health && !health.docker && <p className="onb-error">找不到 Docker，無法自動打包。</p>}
+      <form key={`src-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-upload" onSubmit={(e) => {
+        e.preventDefault(); if (!file) return;
+        const t = submissionForm.tool;
+        void act(async () => {
+          await onboardingApi.autopackUpload(file, { mode: t ? 'update' : 'new', expectedToolId: t?.toolId, name: t ? undefined : toolName, department, owner, description: t ? undefined : profile.description });
+          setFile(null); setSubmissionForm(null);
+          window.dispatchEvent(new Event('workhub:autopack'));
+        }, '已收到原始碼，開始自動打包');
+      }}>
+        <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 報價比較" /></label>
+        <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+        <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
+        <label>原始碼 ZIP（整個專案資料夾）<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        {!submissionForm.tool && <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>}
+        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
+        <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
+      </form>
       </> : <>
       {submissionForm.tool
         ? <div className="onb-note onb-kit-note"><span>程式修改完後，照第一次上架的方式打包上傳；版本號不用改，平台會自動編號。</span><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a></div>
@@ -284,9 +315,11 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}
-      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : '提交包未通過檢查（已停止建置）'} issues={issues} />
+      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : submissionForm.kind === 'source' ? '原始碼未通過檢查' : '提交包未通過檢查（已停止建置）'} issues={issues} />
       <IssueTable title="提醒" issues={warnings} />
     </section>}
+
+    <AutopackPanel role={role} developer={developer} notice={notice} onSubmitted={(id) => { setSelectedId(id); setLog(null); setNote(''); void refresh(); }} />
 
     <div className="onb-grid">
       <section className="mg-panel"><div className="mg-row"><div><h2>{role === 'aiteam' ? '全部提交' : '我的提交'}</h2><small className="mg-muted">{role === 'aiteam' ? 'AI Team 看得到所有開發者的提交' : `${developer || '（未選擇開發者）'} 當 Owner 的工具`}</small></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>

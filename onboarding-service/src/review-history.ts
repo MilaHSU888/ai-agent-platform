@@ -17,6 +17,7 @@ const AUDIT_LABEL: Record<string, string> = {
   'tool.published': '公開', 'tool.unpublished': '切回試用中', 'trial.ended': '下架試用版', 'tool.publish_failed': '公開失敗',
   'release.offline': '下架', 'release.rollback_requested': '回復', 'release.redeploy_requested': '重新上線',
   'submission.withdrawn': '取消提交', 'tool.archived': '封存',
+  'autopack.created': '上傳原始碼（自動打包）', 'autopack.handed_off': '自動打包轉給 AI Team', 'autopack.confirmed': '確認打包報告', 'testdata.deleted': '測試資料已刪除',
 };
 
 export const identityOf = (actor: string) => (actor === 'system' ? '系統' : '示範，未驗證');
@@ -47,15 +48,20 @@ export function reviewHistory(store: Store, toolId?: string): ReviewRow[] {
         push({ at: a.created_at, version: s.version, action: APPROVAL_LABEL[a.kind] ?? a.kind, actor: a.actor, note });
       }
     }
-    const targets = [t.id, ...subs.map((s) => s.id), ...rels.map((r) => r.id)];
+    // 自動打包：建立打包時還沒有工具代號，紀錄掛在打包編號上；以送出後的提交版本對應
+    const aps = store.all<{ autopack_id: string; version: string }>('SELECT autopack_id, version FROM submissions WHERE tool_id=? AND autopack_id IS NOT NULL', t.id);
+    const verOfAp = new Map(aps.map((x) => [x.autopack_id, x.version]));
+    const targets = [t.id, ...subs.map((s) => s.id), ...rels.map((r) => r.id), ...aps.map((x) => x.autopack_id)];
     const ph = targets.map(() => '?').join(',');
     for (const e of store.all<{ at: string; actor: string; action: string; target: string; detail_json: string }>(
       `SELECT at, actor, action, target, detail_json FROM audit_events WHERE target IN (${ph}) AND action IN (${Object.keys(AUDIT_LABEL).map(() => '?').join(',')}) ORDER BY id`, ...targets, ...Object.keys(AUDIT_LABEL))) {
       const d = JSON.parse(e.detail_json) as Record<string, unknown>;
-      const version = String(d.version ?? verOfRel.get(e.target) ?? verOfSub.get(e.target) ?? '');
+      const version = String(d.version ?? verOfRel.get(e.target) ?? verOfSub.get(e.target) ?? verOfAp.get(e.target) ?? verOfAp.get(String(d.autopack ?? '')) ?? '');
       let action = AUDIT_LABEL[e.action];
       if (e.action === 'tool.publish_requested') action = d.trialRelease ? '切換為公開中（換上新版）' : '切換為公開中（清空試用資料）';
       if (e.action === 'tool.published' && d.trialDataCleared) action = '公開（第一次，試用資料已清空）';
+      if (e.action === 'testdata.deleted') { push({ at: e.at, version, action, actor: e.actor, note: `${(d.files as unknown[] | undefined)?.length ?? 0} 個檔案（只記檔名與檢查碼）` }); continue; }
+      if (e.action === 'autopack.handed_off') { push({ at: e.at, version, action, actor: e.actor, note: String(d.reason ?? '') }); continue; }
       const note = [d.note, d.reason, d.error].filter((x) => typeof x === 'string' && x).join('；');
       push({ at: e.at, version, action, actor: e.actor, note });
     }

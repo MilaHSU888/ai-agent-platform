@@ -22,7 +22,7 @@ export type ZipEntry = {
 };
 
 const ARCHIVE_EXT = /\.(zip|tar|tgz|gz|bz2|xz|7z|rar|zst|tbz2?)$/i;
-const SECRET_FILES: { re: RegExp; label: string }[] = [
+export const SECRET_FILES: { re: RegExp; label: string }[] = [
   { re: /(^|\/)\.env(\.(?!example$|sample$|template$)[^/]+)?$/i, label: '環境設定檔（.env）' },
   { re: /\.(pem|key|p12|pfx|keystore|jks)$/i, label: '私鑰或憑證檔' },
   { re: /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/i, label: 'SSH 金鑰' },
@@ -30,7 +30,7 @@ const SECRET_FILES: { re: RegExp; label: string }[] = [
   { re: /(^|\/)(credentials|secrets?)\.(json|ya?ml|txt|env)$/i, label: '憑證檔' },
   { re: /(^|\/)\.aws\/credentials$/i, label: 'AWS 認證檔' },
 ];
-const SECRET_CONTENT: { re: RegExp; label: string }[] = [
+export const SECRET_CONTENT: { re: RegExp; label: string }[] = [
   { re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/, label: '私鑰內容' },
   { re: /\bAKIA[0-9A-Z]{16}\b/, label: 'AWS Access Key' },
   { re: /\bsk-[A-Za-z0-9_-]{20,}/, label: 'API 金鑰（sk-）' },
@@ -40,7 +40,8 @@ const SECRET_CONTENT: { re: RegExp; label: string }[] = [
 ];
 const IGNORED = (name: string) => name.startsWith('__MACOSX/') || /(^|\/)\.DS_Store$/.test(name);
 
-export function readCentralDirectory(buf: Buffer, cfg: Config): { entries: ZipEntry[]; issues: Issue[] } {
+/** policy=false：只做結構安全檢查（原始碼自動打包用；.git、.env、巢狀壓縮檔由打包流程自行排除或詢問） */
+export function readCentralDirectory(buf: Buffer, cfg: Config, policy = true): { entries: ZipEntry[]; issues: Issue[] } {
   const issues: Issue[] = [];
   const fail = (reason: string, fix: string) => ({ entries: [], issues: [{ file: '(ZIP)', reason, fix }] });
   if (buf.length < 22) return fail('檔案太小，不是有效的 ZIP', '請重新壓縮原始碼資料夾後上傳');
@@ -109,14 +110,14 @@ export function readCentralDirectory(buf: Buffer, cfg: Config): { entries: ZipEn
     if (!e.isDir && ![0, 8].includes(e.method)) {
       issues.push({ file: e.name, reason: `不支援的壓縮方式（${e.method}）`, fix: '請用一般 ZIP（deflate）重新壓縮' });
     }
-    if (segs[0] === '.git' || segs.includes('.git')) {
+    if (policy && (segs[0] === '.git' || segs.includes('.git'))) {
       issues.push({ file: e.name, reason: '包含 .git 版本庫資料（可能夾帶歷史中的機密）', fix: '壓縮前排除 .git 資料夾' });
     }
-    if (!e.isDir && ARCHIVE_EXT.test(e.name)) {
+    if (policy && !e.isDir && ARCHIVE_EXT.test(e.name)) {
       issues.push({ file: e.name, reason: '包含巢狀壓縮檔', fix: '解開後以一般檔案放入，或從提交包移除' });
     }
     const secret = SECRET_FILES.find((s) => s.re.test(e.name));
-    if (!e.isDir && secret) {
+    if (policy && !e.isDir && secret) {
       issues.push({ file: e.name, reason: `疑似${secret.label}，不可放入提交包`, fix: '移除此檔；連線參數與憑證改由平台安全設定注入' });
     }
     if (e.size > cfg.limits.singleFileBytes) {
