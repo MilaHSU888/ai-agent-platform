@@ -80,9 +80,10 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     trivyOffline: process.env.ONBOARDING_TRIVY_OFFLINE !== '0',
     helperImage: process.env.ONBOARDING_HELPER_IMAGE ?? 'busybox:1.36.1',
     limits: {
-      uploadBytes: 100 * 1024 * 1024,
+      // 2026/11/03 Mila：已打包 ZIP 與自動打包上限統一 300 MB；偏大時不擋，列出可能不需要的檔案
+      uploadBytes: 300 * 1024 * 1024,
       entries: 5000,
-      totalUncompressedBytes: 500 * 1024 * 1024,
+      totalUncompressedBytes: 1024 ** 3,
       singleFileBytes: 200 * 1024 * 1024,
       compressionRatio: 200,
     },

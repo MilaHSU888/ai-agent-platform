@@ -55,7 +55,7 @@ export function AutopackPanel({ role, developer, notice, onSubmitted }: Props) {
 
   if (visible.length === 0) return null;
   return <section className="mg-panel ap" aria-label="自動打包">
-    <div className="mg-row"><div><h2>自動打包</h2><p className="mg-muted">上傳原始碼後由平台打包；需要你決定的事會在這裡發問，完成後請看報告並確認送出。</p></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
+    <div className="mg-row"><div><h2>自動打包</h2><p className="mg-muted">上傳專案 ZIP 後由平台打包；需要你決定的事會在這裡發問，完成後請看報告並確認送出。</p></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
     <div className="ap-list">{visible.map((x) => <button key={x.id} className={`mg-submission ${open?.id === x.id ? 'current' : ''}`} onClick={() => { setOpenId(x.id); setAnswers({}); }}>
       <span><b>{x.name ?? x.toolId ?? x.filename}</b><small>{x.mode === 'update' ? '版本更新' : '第一次上架'} · {x.filename} · {x.owner} · {new Date(x.createdAt).toLocaleString('zh-TW')}</small></span>
       <span className={`mg-status ${STATUS[x.status][1]}`}>{STATUS[x.status][0]}</span>

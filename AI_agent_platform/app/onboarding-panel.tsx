@@ -22,9 +22,8 @@ const SUB_STATUS: Record<string, string> = {
 const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
 const ACTIVE = ['queued', 'running'];
 
-/** 上傳大小上限（與上架服務設定一致：已打包 ZIP 100 MB、自動打包原始碼 300 MB） */
-const ZIP_LIMIT = 100 * 1024 * 1024;
-const SOURCE_LIMIT = 300 * 1024 * 1024;
+/** 上傳大小上限（與上架服務設定一致：兩種 ZIP 都是 300 MB，2026/11/03 Mila 決定統一） */
+const UPLOAD_LIMIT = 300 * 1024 * 1024;
 
 type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void; role?: Role; developer?: string };
 type Conn = 'checking' | 'offline' | 'ready';
@@ -223,7 +222,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const needsReview = !!selected && ['running', 'awaiting_confirmation'].includes(selected.status) && ['awaiting', 'skipped'].includes(steps.code_review?.status ?? '') && ['passed', 'warning'].includes(steps.scan?.status ?? '');
 
   return <div className="onb">
-    <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」，再選擇上傳 ZIP 小工具，或登錄已經有網址的網站；已上架的工具要更新，請在下方該工具旁操作。</p></div>
+    <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」，再選擇上傳已打包的 ZIP、上傳專案 ZIP 由平台自動打包，或登錄已經有網址的網站；已上架的工具要更新，請在下方該工具旁操作。</p></div>
       <div className="onb-head-actions"><button className="onb-primary-sm" disabled={busy} onClick={() => openSubmission(null)}>＋ 新增工具</button></div></div>
       {myTools.length > 0 && <div className="onb-tool-list">{myTools.map((t) => {
         const building = items.some((x) => x.toolId === t.toolId && ACTIVE.includes(x.status));
@@ -237,13 +236,13 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
     {submissionForm && <section ref={formRef} className="mg-panel" aria-label={submissionForm.tool ? (submissionForm.kind === 'url' ? '修改網址設定' : '提交新版本') : '新增工具'}>
       <div className="mg-row"><div><h2>{submissionForm.tool ? (submissionForm.kind === 'url' ? `修改網址設定：${submissionForm.tool.toolName}` : `提交新版本：${submissionForm.tool.toolName}`) : '新增工具'}</h2></div></div>
       {!submissionForm.tool && <div className="onb-kind-switch" role="group" aria-label="上架方式">
-        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(null, 'zip')}><b>小工具（上傳 ZIP）</b><small>由平台建置、檢查、測試並執行</small></button>
-        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(null, 'source')}><b>上傳原始碼，平台自動打包</b><small>沒有雲端 AI 可用時：平台用地端模型打包，你確認報告後送出</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(null, 'zip')}><b>上傳已打包的 ZIP</b><small>已依上架資料包加好 Dockerfile、workhub.yaml，平台直接建置</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(null, 'source')}><b>上傳專案 ZIP，平台自動打包</b><small>整個專案資料夾壓縮上傳，不用自己打包；你確認打包報告後送出</small></button>
         <button type="button" aria-pressed={submissionForm.kind === 'url'} onClick={() => openSubmission(null, 'url')}><b>已有網址的網站（URL）</b><small>網站已在其他地方運作，例如 OpenWebUI、n8n 表單</small></button>
       </div>}
       {submissionForm.tool && submissionForm.tool.kind !== 'url' && <div className="onb-kind-switch" role="group" aria-label="新版本上傳方式">
-        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(submissionForm.tool, 'zip')}><b>上傳已打包的 ZIP</b><small>已依上架資料包打包好</small></button>
-        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(submissionForm.tool, 'source')}><b>上傳原始碼，平台自動打包</b><small>沿用同一個工具代號，平台比對上一版</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(submissionForm.tool, 'zip')}><b>上傳已打包的 ZIP</b><small>已依上架資料包加好 Dockerfile、workhub.yaml</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(submissionForm.tool, 'source')}><b>上傳專案 ZIP，平台自動打包</b><small>沿用同一個工具代號，平台比對上一版</small></button>
       </div>}
       {submissionForm.kind === 'url' ? <>
       <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），由 AI Team 切換為公開中。工具圖示由 AI Team 設定。</p>
@@ -292,10 +291,10 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 報價比較" /></label>
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
-        <label>原始碼 ZIP（整個專案資料夾）<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
-        {file && file.size > SOURCE_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過自動打包的上限 {SOURCE_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
+        <label>專案 ZIP（整個專案資料夾壓縮）<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 {UPLOAD_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
         {!submissionForm.tool && <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>}
-        <button disabled={!file || file.size > SOURCE_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
+        <button disabled={!file || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </> : <>
@@ -311,14 +310,14 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 出貨進度查詢" title={submissionForm.tool ? '要改名請到發布管理的工具發布詳情' : undefined} /></label>
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
-        <label>原始碼 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
-        {file && file.size > ZIP_LIMIT && <div className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過已打包 ZIP 的上限 {ZIP_LIMIT / 1024 / 1024} MB。如果是還沒打包的原始碼（例如含 Windows 離線套件、安裝檔），請改用自動打包（上限 {SOURCE_LIMIT / 1024 / 1024} MB），平台會自動排除用不到的檔案。
-          <button type="button" className="onb-primary-sm" onClick={() => setSubmissionForm({ ...submissionForm, kind: 'source' })}>改用「上傳原始碼，平台自動打包」</button></div>}
+        <label>已打包的 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 {UPLOAD_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、資料檔或影片後重新壓縮。</p>}
+        {file && file.size <= UPLOAD_LIMIT && file.size > 50 * 1024 * 1024 && <p className="onb-note onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，比一般小工具大很多；上傳後平台會列出可能不需要的檔案（虛擬環境、安裝檔、資料檔）。如果還沒加 Dockerfile、workhub.yaml，請改選「上傳專案 ZIP，平台自動打包」。</p>}
         {!submissionForm.tool && <>
           <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
           <label className="onb-span2">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 多家供應商報價整併、價格比較" /></label>
         </>}
-        <button disabled={!file || file.size > ZIP_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
+        <button disabled={!file || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}

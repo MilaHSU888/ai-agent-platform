@@ -396,3 +396,13 @@ test('模型不能刪掉測試會匯入的名稱（2026/11/03 實測 OLLAMA_HINT
   writeFileSync(join(src, 'app.py'), 'from parsers.ai_parser import parse\nfrom settings import X\n');
   assert.deepEqual(importedNames(src, ['parsers/ai_parser.py']), { 'parsers/ai_parser.py': ['OLLAMA_HINT', 'parse'] });
 });
+
+test('已打包 ZIP 偏大：不擋，列出虛擬環境、安裝檔、大型資料檔（2026/11/03）', async () => {
+  const { bulkyWarnings } = await import('../src/intake.ts');
+  const e = (name: string, size: number) => ({ name, method: 8, flags: 0, crc: 0, compressedSize: size, size, localOffset: 0, isDir: false, isSymlink: false });
+  const entries = [e('app/main.py', 1000), e('app/venv/lib/x.so', 30e6), e('app/wheels/a-cp314-win_amd64.whl', 20e6), e('app/setup.exe', 5e6), e('app/data/big.xlsx', 8e6)];
+  assert.deepEqual(bulkyWarnings(10e6, entries, ''), []);
+  const w = bulkyWarnings(70e6, entries, '');
+  assert.deepEqual(w.map((x) => x.reason.replace(/^ZIP 有 \d+ MB，其中/, '').replace(/約.*$/, '')), ['虛擬環境或套件', 'Windows 安裝檔', '資料檔或影音']);
+  assert.match(w[0].file, /app\/venv/);
+});
