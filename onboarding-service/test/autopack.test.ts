@@ -474,3 +474,14 @@ test('專案 ZIP 檔案數放寬到 5 萬（夾帶 node_modules 等）；超過�
   assert.equal(r.ok, false);
   assert.match(JSON.stringify(r), /檔案數 6 超過上限 4/);
 });
+
+test('偵測 AI：網址前半段放在環境變數、只寫 /chat/completions 的 OpenAI 相容呼叫也算（2026/11/03 CNC 翻譯）', () => {
+  const files = [
+    { path: 'app.py', size: 1, text: 'from fastapi import FastAPI\nfrom translator import t\napp = FastAPI()\n' },
+    { path: 'translator.py', size: 1, text: 'import os, requests\nBASE = os.getenv("UMT_5090_API_BASE", "http://127.0.0.1:18001/v1")\ndef t(x):\n    return requests.post(f"{BASE}/chat/completions", json={"messages": []})\n' },
+    { path: 'requirements.txt', size: 1, text: 'fastapi\nuvicorn\nrequests\n' },
+  ];
+  const a = analyze(files, [], []);
+  assert.equal(a.ai.uses, true);
+  assert.deepEqual(a.ai.rewriteFiles, ['translator.py']);
+});

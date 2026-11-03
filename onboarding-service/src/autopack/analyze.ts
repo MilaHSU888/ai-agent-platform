@@ -290,7 +290,8 @@ export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: 
   a.windowsDeps = [...win.entries()].map(([name, refs]) => ({ name, refs }));
 
   // ── AI 模型 ──
-  const aiRe = /(OLLAMA_URL|ollama|\/api\/chat|\/api\/generate|\/v1\/chat\/completions|chat\.completions\.create|from openai|import openai|require\(['"]openai['"]\)|from ['"]openai['"]|langchain|ChatOpenAI|OpenAIClient|openai-java|Azure\.AI\.OpenAI)/i;
+  // 2026/11/03 實測：CNC 翻譯以 f"{api_base}/chat/completions" 呼叫，網址前半段在環境變數，原本的規則沒抓到
+  const aiRe = /(OLLAMA_URL|ollama|\/api\/chat|\/api\/generate|\/chat\/completions|\/v1\/completions|chat\.completions\.create|from openai|import openai|require\(['"]openai['"]\)|from ['"]openai['"]|langchain|ChatOpenAI|OpenAIClient|openai-java|Azure\.AI\.OpenAI)/i;
   const aiHits = grep(keepFiles, aiRe, { code: true, skipTests: true });
   a.ai.uses = aiHits.length > 0;
   a.ai.refs = [...new Map(aiHits.map((h) => [h.f.path, { file: h.f.path, line: h.line, detail: h.m[1] }])).values()].slice(0, 8);
