@@ -506,6 +506,8 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     for (;;) {
       checkTime();
       const round = d.fixRounds;
+      // 每一輪各自一行（第 2 次起加註），失敗與修正的先後看得清楚
+      const nm = (n: string) => (round ? `${n}（第 ${round + 1} 次）` : n);
       const ctx = (name: string): Ctx => ({ logFile: join(dir, `${name}-${round}.log`), signal, mask: (s) => s });
       const fail = async (what: string, tail: string) => {
         if (d.fixRounds >= cfg.autopack.maxFixRounds) throw new HandOff(`修了 ${cfg.autopack.maxFixRounds} 次仍然${what}失敗`, `最後一次的錯誤：\n${tail.slice(-1500)}`);
@@ -522,16 +524,16 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
         step(`修正第 ${d.fixRounds} 次`, last.applied.length ? 'passed' : 'failed', last.applied.length ? `改了 ${last.applied.join('、')}` : last.error ?? '模型沒有提出修改');
       };
       // 建置
-      step('建置', 'running', round ? `第 ${round + 1} 次` : undefined);
+      step(nm('建置'), 'running');
       const b = await rt.build(src, join(src, 'Dockerfile'), tag, { 'workhub.autopack': id }, cfg.hostPlatform, Math.min(cfg.timeouts.buildMs, Math.max(1000, remaining())), ctx('build'));
       if (signal.aborted) throw new Error('已中斷');
-      if (!b.ok) { step('建置', 'failed'); await fail('建置', readTail(join(dir, `build-${round}.log`), b.result.stderr + b.result.stdout)); continue; }
-      step('建置', 'passed');
+      if (!b.ok) { step(nm('建置'), 'failed'); await fail('建置', readTail(join(dir, `build-${round}.log`), b.result.stderr + b.result.stdout)); continue; }
+      step(nm('建置'), 'passed');
       checkTime();
       const manifest = readFileSync(join(src, 'workhub.yaml'), 'utf8');
       const mem = memoryToBytes(/memory:\s*(\S+)/.exec(manifest)?.[1] ?? '1Gi') ?? 1024 ** 3;
       // 斷網業務測試（測試資料唯讀掛上）
-      step('斷網業務測試', 'running', d.generated!.test.label);
+      step(nm('斷網業務測試'), 'running', d.generated!.test.label);
       const vol = `wh-autopack-${id.slice(-10)}-data`.toLowerCase();
       const binds = (d.testData?.mounts ?? []).map((m) => ({ host: join(cfg.dataDir, d.testData!.dir, m.from), target: m.target })).filter((x) => existsSync(x.host));
       const t = await rt.runOnce({ image: tag, name: `wh-autopack-test-${id.slice(-10)}`.toLowerCase(), labels: { 'workhub.autopack': id }, volume: d.generated!.dataDir ? vol : undefined, mountPath: d.generated!.dataDir ?? undefined,
@@ -539,12 +541,12 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       if (d.generated!.dataDir) await rt.removeVolume(vol);
       const out = (t.stdout + t.stderr).trim();
       d.verify = { ...(d.verify ?? {}), testTail: out.split('\n').slice(-8) };
-      if (t.code !== 0 || t.timedOut) { step('斷網業務測試', 'failed', t.timedOut ? '逾時' : `結束碼 ${t.code}`); await fail('業務測試', readTail(join(dir, `test-${round}.log`), out)); continue; }
+      if (t.code !== 0 || t.timedOut) { step(nm('斷網業務測試'), 'failed', t.timedOut ? '逾時' : `結束碼 ${t.code}`); await fail('業務測試', readTail(join(dir, `test-${round}.log`), out)); continue; }
       d.verify.test = summarizeTest(out, d.generated!.test.smoke);
-      step('斷網業務測試', 'passed', d.verify.test);
+      step(nm('斷網業務測試'), 'passed', d.verify.test);
       checkTime();
       // 啟動後健康檢查（隔離網路，跟平台上架時一樣）
-      step('健康檢查', 'running');
+      step(nm('健康檢查'), 'running');
       const port = Number(/port:\s*(\d+)/.exec(manifest)?.[1] ?? a.port);
       const health = /path:\s*(\S+)/.exec(manifest)?.[1] ?? a.healthPath;
       const name = `wh-autopack-run-${id.slice(-10)}`.toLowerCase();
@@ -557,9 +559,9 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       await rt.logs(name, ctx('run'));
       await rt.remove(name);
       if (d.generated!.dataDir) await rt.removeVolume(vol);
-      if (!h.ok) { step('健康檢查', 'failed', `${health} 回應 ${h.status ?? '無'}`); await fail('啟動後的健康檢查', readTail(join(dir, `run-${round}.log`), '')); continue; }
+      if (!h.ok) { step(nm('健康檢查'), 'failed', `${health} 回應 ${h.status ?? '無'}`); await fail('啟動後的健康檢查', readTail(join(dir, `run-${round}.log`), '')); continue; }
       d.verify.build = '成功'; d.verify.health = `${health} → ${h.status}（${h.seconds} 秒）`;
-      step('健康檢查', 'passed', d.verify.health);
+      step(nm('健康檢查'), 'passed', d.verify.health);
       return;
     }
   }
