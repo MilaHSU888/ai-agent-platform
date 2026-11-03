@@ -1,7 +1,7 @@
 /**
  * 原始碼自動打包：地端模型（平台預設模型，5090）補程式與修正錯誤。
  * - 指令改寫自上架資料包的「給 AI 的打包指令」，拆成一次只做一件事的小步驟（地端 27B 模型能力比雲端 AI 弱）。
- * - 模型只能回傳「改哪個檔、改成什麼（完整內容）」，由平台檢查後套用；不能刪檔、不能改測試資料、不能刪或跳過測試。
+ * - 模型只能回傳「改哪個檔、改成什麼（完整內容）」，由平台檢查後套用；不能刪檔、不能改測試資料、不能修改專案原有的測試。
  * - 送給模型前遮掉金鑰；只送需要的檔案。
  */
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -23,7 +23,7 @@ const SYSTEM = [
   '1. 工具資料只能寫到環境變數 DATA_DIR 指定的資料夾（容器內是 /data），寫在其他地方的資料在更新後會不見。',
   '2. 呼叫 AI 模型只能用環境變數 OPENAI_BASE_URL、OPENAI_API_KEY、OPENAI_MODEL（OpenAI 相容的 /chat/completions 介面），不能寫死模型網址或金鑰；沒設定時要能正常啟動，只是 AI 功能顯示未設定。',
   '3. 工具要接受外部連線（監聽 0.0.0.0），並有健康檢查網址。',
-  '4. 不可以刪除或跳過測試，不可以為了通過測試而改測試的預期結果。',
+  '4. 專案原有的測試檔一律不能修改（測試是驗收標準），要讓程式通過原本的測試；不可以刪除或跳過測試。',
   '5. 不要放任何金鑰、密碼或真實資料。',
   '回覆格式：只回一個 JSON 物件，不要其他文字：',
   '{"edits":[{"path":"相對於專案根目錄的路徑","content":"修改後的完整檔案內容"}],"note":"一句話說明改了什麼"}',
@@ -56,7 +56,6 @@ export function parseReply(raw: string): ModelReply {
 
 const EDITABLE = /\.(py|js|mjs|cjs|ts|tsx|jsx|json|java|kt|kts|cs|go|php|html?|css|ya?ml|toml|txt|cfg|ini|xml|gradle|properties|sh|md|csproj|mod|sum)$|(^|\/)(Dockerfile|\.dockerignore|requirements[\w.-]*\.txt|Procfile)$/i;
 const TEST_FILE = /(^|\/)(tests?|__tests__|spec)\/|(^|\/)(test_[^/]+|[^/]+_test)\.py$|\.(test|spec)\.[jt]sx?$|Tests?\.(java|cs)$|_test\.go$/;
-const countTests = (t: string) => (t.match(/^\s*(async\s+)?def\s+test_|\b(it|test)\s*\(|@Test\b|\[(Fact|Test|Theory)\]|^func\s+Test/gm) ?? []).length;
 const countSkips = (t: string) => (t.match(/pytest\.mark\.skip|pytest\.skip\(|unittest\.skip|\.skip\(|\bxit\(|\bxdescribe\(|@Disabled|@Ignore|\[Ignore\]|t\.Skip\(|\.only\(/g) ?? []).length;
 
 /** 檢查模型的修改能不能套用；回傳可套用的修改與被擋下的原因 */
@@ -72,11 +71,9 @@ export function vetEdits(edits: Edit[], opts: { exists: (p: string) => boolean; 
     if (Buffer.byteLength(e.content) > 256 * 1024) { rejected.push({ path: p, reason: '檔案太大（超過 256 KB）' }); continue; }
     if (/^workhub\.yaml$/.test(p)) { rejected.push({ path: p, reason: 'workhub.yaml 由平台產生，模型不能修改' }); continue; }
     if (!opts.exists(p) && !opts.allowNew(p)) { rejected.push({ path: p, reason: '不能新增這個檔案' }); continue; }
-    if (TEST_FILE.test(p) && opts.exists(p)) {
-      const before = opts.read(p) ?? '';
-      if (countTests(e.content) < countTests(before)) { rejected.push({ path: p, reason: '不能刪除測試' }); continue; }
-      if (countSkips(e.content) > countSkips(before)) { rejected.push({ path: p, reason: '不能跳過測試' }); continue; }
-    }
+    // 專案原有的測試是驗收標準：模型一律不能修改（2026/11/03 實測：模型改測試檔反而改出語法錯誤）
+    if (TEST_FILE.test(p) && opts.exists(p)) { rejected.push({ path: p, reason: '專案原有的測試不能修改' }); continue; }
+    if (TEST_FILE.test(p) && (countSkips(e.content) > 0)) { rejected.push({ path: p, reason: '不能跳過測試' }); continue; }
     ok.push({ path: p, content: e.content });
   }
   return { ok, rejected };

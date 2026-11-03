@@ -356,7 +356,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     const src = join(dir, 'src');
     const tasks: { name: string; task: string; files: string[]; extra?: string }[] = [];
     if (a.ai.rewriteFiles.length) tasks.push({ name: 'AI 連線改用平台設定', files: a.ai.rewriteFiles,
-      task: '把程式呼叫 AI 模型的方式改成 OpenAI 相容介面：網址讀環境變數 OPENAI_BASE_URL（例如 http://llm-relay:8080/v1，呼叫 POST {OPENAI_BASE_URL}/chat/completions），金鑰讀 OPENAI_API_KEY（放在 Authorization: Bearer），模型名稱讀 OPENAI_MODEL。移除寫死的模型網址（例如 Ollama 的 localhost:11434）。沒設定這些環境變數時，AI 功能要顯示「AI 未設定」但工具照常運作。保留原本的提示詞、回傳格式與錯誤處理；原本函式名稱與參數不要改，讓既有測試照常可用。' });
+      task: '讓這個工具在平台上改用平台的 AI 模型，用「新增」的方式，不要拆掉原本的寫法：有設定環境變數 OPENAI_BASE_URL 時，改走 OpenAI 相容介面（POST {OPENAI_BASE_URL}/chat/completions，金鑰讀 OPENAI_API_KEY 放在 Authorization: Bearer，模型名稱讀 OPENAI_MODEL；需要結構化輸出時用 response_format 或在提示詞要求 JSON，回覆內容在 choices[0].message.content）；檢查 AI 是否可用時，有 OPENAI_BASE_URL 就改查 GET {OPENAI_BASE_URL}/models。沒設定 OPENAI_BASE_URL 時，原本的呼叫方式（例如 Ollama 的 /api/chat）完全照舊，讓專案原有的測試照常通過。原本的函式、常數、參數、提示詞、回傳格式與錯誤處理都要保留，不要改名或刪除。' });
     for (const o of a.data.outside) if (d.answers?.[o.id] === 'keep') tasks.push({ name: `資料改存到資料目錄（${o.ref.file}）`, files: [o.ref.file, ...(existsSync(join(src, 'settings.py')) && o.ref.file !== 'settings.py' ? ['settings.py'] : [])],
       task: `${o.ref.file} 第 ${o.ref.line} 行把資料寫在程式資料夾（${o.ref.detail}），容器更新後會不見。改成寫到環境變數 DATA_DIR 指定的資料夾底下（例如 DATA_DIR/${o.path.replace(/^data\//, '')}）；若專案已有集中設定（例如 settings.py 的 DATA_DIR 或對應的變數），直接沿用。只改路徑，不改其他邏輯。` });
     for (const [i, q] of (d.questions ?? []).entries()) if (q.kind === 'secret' && d.answers?.[q.id] === 'env') tasks.push({ name: `移除寫死的金鑰（${q.refs[0].file}）`, files: [q.refs[0].file],
@@ -430,7 +430,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
         if (!model) throw new HandOff('地端模型尚未設定', `${what}失敗，但平台預設模型還沒設定，無法自動修正。\n${tail.slice(-800)}`);
         step(`修正第 ${d.fixRounds} 次`, 'running', `${what}失敗，交給地端模型修正`);
         const files = ['Dockerfile', ...referencedFiles(tail, src)].slice(0, 5);
-        await runModelTask(model, `${what}失敗。請找出原因並修正（可以修改 Dockerfile 或程式碼）。不可以刪除或跳過測試，也不可以修改 workhub.yaml。`, files,
+        await runModelTask(model, `${what}失敗。請找出原因並修正程式碼或 Dockerfile，讓專案原有的測試通過。測試檔只供參考，一律不能修改（測試就是驗收標準）；也不可以修改 workhub.yaml。常見原因：先前修改時刪掉或改名了測試會用到的函式、常數，或改變了原本的行為——請恢復原本的行為，新增的平台設定只在有對應環境變數時才生效。`, files,
           `錯誤訊息（最後一段）：\n${tail.slice(-4000)}\n\n專案檔案清單：\n${listFiles(src).slice(0, 150).join('\n')}`, `修正第 ${d.fixRounds} 次`);
         const last = d.modelLog.at(-1)!;
         step(`修正第 ${d.fixRounds} 次`, last.applied.length ? 'passed' : 'failed', last.applied.length ? `改了 ${last.applied.join('、')}` : last.error ?? '模型沒有提出修改');

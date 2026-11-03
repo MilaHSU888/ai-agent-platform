@@ -177,7 +177,7 @@ test('模型回覆：容忍說明文字；不能刪測試、跳過測試、改�
     { path: 'new.exe', content: 'MZ' },
   ], { exists: (p) => p in files, read: (p) => files[p] ?? null, testData: new Set(['tests/fixtures/a.xlsx']), allowNew: () => true });
   assert.deepEqual(v.ok.map((e) => e.path), ['a.py']);
-  assert.deepEqual(v.rejected.map((x) => x.reason), ['不能刪除測試', '不能跳過測試', '不能修改測試資料', '路徑不安全', '不能清空或刪除檔案', 'workhub.yaml 由平台產生，模型不能修改', '只能修改程式碼與打包設定檔']);
+  assert.deepEqual(v.rejected.map((x) => x.reason), ['專案原有的測試不能修改', '專案原有的測試不能修改', '不能修改測試資料', '路徑不安全', '不能清空或刪除檔案', 'workhub.yaml 由平台產生，模型不能修改', '只能修改程式碼與打包設定檔']);
   const d = lineDiff('a\nb\nc\n', 'a\nB\nc\nd\n');
   assert.equal(d.add, 2); assert.equal(d.del, 1);
   assert.equal(slugFrom('quote_aggregator_winvm_20261001.zip'), 'quote-aggregator');
@@ -216,7 +216,7 @@ test('自動打包完整流程：暫停提問 → 模型補程式 → 建置測�
     assert.ok(rep.changes.some((c: any) => c.path === 'core/exporter.py' && c.kind === 'modified' && c.by === 'model' && /DATA_DIR/.test(c.diff)));
     assert.ok(rep.changes.some((c: any) => c.path === '.workhub/seed/templates/比較表範本.xlsx'), '範本第一次啟動複製到資料目錄');
     assert.ok(!rep.changes.some((c: any) => c.path.startsWith('tests/fixtures/')), '測試資料不放進工具');
-    assert.deepEqual(rep.model.rejected.sort(), ['tests/fixtures/米妮.xlsx：不能修改測試資料', 'tests/test_export.py：不能刪除測試']);
+    assert.deepEqual(rep.model.rejected.sort(), ['tests/fixtures/米妮.xlsx：不能修改測試資料', 'tests/test_export.py：專案原有的測試不能修改']);
     assert.equal(rep.testData.length, 2);
     assert.ok(rep.excluded.some((e: any) => e.path === 'pkg/install.ps1'));
     assert.match(rep.markdown, /# 打包報告：報價彙整/);
