@@ -97,7 +97,7 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
         <p>{q.detail}</p>
         {q.refs.length > 0 && <ul className="ap-refs">{q.refs.map((x, i) => <li key={i}><code>{x.file}{x.line ? `:${x.line}` : ''}</code> {x.detail}</li>)}</ul>}
         {q.options.map((o) => <label key={o.value} className="onb-check"><input type="radio" name={q.id} checked={answers[q.id] === o.value} onChange={() => setAnswers({ ...answers, [q.id]: o.value })} />{o.label}</label>)}
-        {q.input && answers[q.id] === q.input.when && <label className="ap-q-input">{q.input.label}<input value={answers[q.input.key] ?? q.input.default} maxLength={40} onChange={(e) => setAnswers({ ...answers, [q.input!.key]: e.target.value.trim().toLowerCase() })} /><small>{q.input.hint}</small></label>}
+        {q.input && answers[q.id] === q.input.when && <label className="ap-q-input">{q.input.label}<input value={answers[q.input.key] ?? q.input.default} placeholder={q.input.hint} maxLength={200} onChange={(e) => setAnswers({ ...answers, [q.input!.key]: q.input!.key === 'dup.toolId' ? e.target.value.trim().toLowerCase() : e.target.value.trim() })} /><small>{q.input.hint}</small></label>}
       </fieldset>)}
       <div className="mg-actions"><button className="onb-primary-sm" disabled={busy || ap.questions.some((q) => !answers[q.id])}>送出回答，繼續打包</button></div>
     </form>}

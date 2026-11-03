@@ -293,7 +293,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const mode = url.searchParams.get('mode') === 'update' ? 'update' : 'new';
       const r = createAutopack(store, cfg, buf, { mode, expectedToolId: url.searchParams.get('expectedToolId') ?? undefined, name: url.searchParams.get('name') ?? undefined,
         department: url.searchParams.get('department') ?? '', owner: url.searchParams.get('owner') ?? '', actor: session!.actor, originalFilename: url.searchParams.get('filename') ?? 'source.zip',
-        description: url.searchParams.get('description') ?? undefined });
+        description: url.searchParams.get('description') ?? undefined, usesAi: url.searchParams.get('usesAi') ?? undefined });
       if (!r.ok) { send(res, 422, { error: '上傳資料未通過檢查', issues: r.issues, warnings: [] }); return; }
       void autopack?.tick();
       send(res, 201, { autopack: autopackView(store, r.id) });

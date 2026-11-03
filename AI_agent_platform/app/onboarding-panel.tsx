@@ -136,6 +136,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const [owner, setOwner] = useState('');
   const [toolName, setToolName] = useState('');
   const [profile, setProfile] = useState({ description: '', scenario: '' });
+  const [aiAnswer, setAiAnswer] = useState<'' | 'yes' | 'no' | 'unsure'>('');
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [warnings, setWarnings] = useState<Issue[]>([]);
@@ -191,6 +192,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
     setOwner(tool?.owner ?? '');
     setToolName(tool?.toolName ?? '');
     setProfile({ description: '', scenario: '' });
+    setAiAnswer('');
     setDepartment(tool?.department ?? departments.find((d) => d.id === 'purchase')?.id ?? departments[0]?.id ?? '');
   };
 
@@ -280,7 +282,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         e.preventDefault(); if (!file) return;
         const t = submissionForm.tool;
         void act(async () => {
-          await onboardingApi.autopackUpload(file, { mode: t ? 'update' : 'new', expectedToolId: t?.toolId, name: t ? undefined : toolName, department, owner, description: t ? undefined : profile.description });
+          await onboardingApi.autopackUpload(file, { mode: t ? 'update' : 'new', expectedToolId: t?.toolId, name: t ? undefined : toolName, department, owner, description: t ? undefined : profile.description, usesAi: aiAnswer || 'unsure' });
           setFile(null); setSubmissionForm(null);
           window.dispatchEvent(new Event('workhub:autopack'));
         }, '已收到原始碼，開始自動打包');
@@ -289,9 +291,12 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>專案 ZIP（整個專案資料夾壓縮）<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        <fieldset className="onb-span2 ap-ai-ask"><legend>這個工具會用到 AI 模型嗎？（必填）</legend>
+          {([['yes', '會'], ['no', '不會'], ['unsure', '不確定']] as const).map(([v, l]) => <label key={v} className="onb-check"><input type="radio" name="usesAi" checked={aiAnswer === v} onChange={() => setAiAnswer(v)} />{l}</label>)}
+          <small>平台會和程式內容對照；不一致時會在打包過程中問你。</small></fieldset>
         {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 {UPLOAD_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
         {!submissionForm.tool && <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>}
-        <button disabled={!file || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
+        <button disabled={!file || !aiAnswer || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </> : <>

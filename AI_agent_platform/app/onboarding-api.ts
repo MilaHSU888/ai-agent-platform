@@ -46,7 +46,7 @@ export type ReleaseRecord = {
 export type Session = { authenticated: boolean; actor?: string; environment?: string };
 /** 原始碼自動打包（2026/11/03） */
 export type AutopackRef = { file: string; line?: number; detail: string };
-export type AutopackQuestion = { id: string; kind: 'duplicate' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: AutopackRef[]; options: { value: string; label: string }[];
+export type AutopackQuestion = { id: string; kind: 'duplicate' | 'ai' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: AutopackRef[]; options: { value: string; label: string }[];
   input?: { key: string; when: string; label: string; default: string; hint: string } };
 export type AutopackChange = { path: string; kind: 'added' | 'modified'; diff: string; add: number; del: number; by: 'template' | 'model' };
 export type AutopackReport = {
@@ -134,8 +134,8 @@ export const onboardingApi = {
   setToolModel: (toolId: string, r: ModelRef | null, reason: string) => call<ToolModelInfo>('POST', `/tools/${toolId}/model`, r ? { ...r, reason } : { useDefault: true, reason }),
   setLocalOnly: (toolId: string, on: boolean) => call<{ localOnly: boolean }>('POST', `/tools/${toolId}/local-only`, { on }),
   scanner: () => call<ScannerStatus>('GET', '/scanner'),
-  autopackUpload: (file: File, f: { mode: 'new' | 'update'; expectedToolId?: string; name?: string; department: string; owner: string; description?: string }) =>
-    call<{ autopack: Autopack }>('POST', `/autopack?mode=${f.mode}&department=${encodeURIComponent(f.department)}&owner=${encodeURIComponent(f.owner)}&filename=${encodeURIComponent(file.name)}${f.expectedToolId ? `&expectedToolId=${encodeURIComponent(f.expectedToolId)}` : ''}${f.name ? `&name=${encodeURIComponent(f.name.trim())}` : ''}${f.description ? `&description=${encodeURIComponent(f.description.trim())}` : ''}`, file, 'application/zip').then((r) => r.autopack),
+  autopackUpload: (file: File, f: { mode: 'new' | 'update'; expectedToolId?: string; name?: string; department: string; owner: string; description?: string; usesAi: 'yes' | 'no' | 'unsure' }) =>
+    call<{ autopack: Autopack }>('POST', `/autopack?mode=${f.mode}&usesAi=${f.usesAi}&department=${encodeURIComponent(f.department)}&owner=${encodeURIComponent(f.owner)}&filename=${encodeURIComponent(file.name)}${f.expectedToolId ? `&expectedToolId=${encodeURIComponent(f.expectedToolId)}` : ''}${f.name ? `&name=${encodeURIComponent(f.name.trim())}` : ''}${f.description ? `&description=${encodeURIComponent(f.description.trim())}` : ''}`, file, 'application/zip').then((r) => r.autopack),
   autopacks: () => call<{ autopacks: Autopack[] }>('GET', '/autopack').then((r) => r.autopacks),
   answerAutopack: (id: string, answers: Record<string, string>) => call<{ autopack: Autopack }>('POST', `/autopack/${id}/answers`, { answers }),
   confirmAutopack: (id: string) => call<{ autopack: Autopack; submission: Submission }>('POST', `/autopack/${id}/confirm`, {}),

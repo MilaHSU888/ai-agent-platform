@@ -68,7 +68,7 @@ const SOURCE: ZipFile[] = [
   { name: 'pkg/app/tests/fixtures/v2/艾爾莎.pdf', data: '%PDF-1.4 fake' },
 ];
 
-const upload = (t: Awaited<ReturnType<typeof setup>>, files = SOURCE, q = 'mode=new&name=報價彙整&department=purchase&owner=林開發&filename=quote_aggregator_winvm_20261001.zip') =>
+const upload = (t: Awaited<ReturnType<typeof setup>>, files = SOURCE, q = 'mode=new&name=報價彙整&department=purchase&owner=林開發&usesAi=yes&filename=quote_aggregator_winvm_20261001.zip') =>
   t.call('POST', `/api/onboarding/autopack?${q}`, makeZip(files), { 'X-WorkHub-Actor': encodeURIComponent('林開發') });
 
 /** 假的地端模型：依任務回傳修改；也故意夾帶會被擋下的修改（刪測試、改測試資料） */
@@ -280,7 +280,7 @@ test('建置或測試失敗：交給模型修正，修好就繼續；修了 3 �
   try {
     const orig = t.rt.runOnce.bind(t.rt);
     t.rt.runOnce = async (spec) => { const r = await orig(spec); return { ...r, code: fail ? 1 : 0, stdout: fail ? 'E   AssertionError: tests/test_a.py' : '1 passed' }; };
-    const id = (await upload(t, simple, 'mode=new&name=小工具&department=it&owner=林開發&filename=small.zip')).data.autopack.id;
+    const id = (await upload(t, simple, 'mode=new&name=小工具&department=it&owner=林開發&filename=small.zip&usesAi=unsure')).data.autopack.id;
     await t.runWorker();
     const v = (await t.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
     assert.equal(v.status, 'awaiting_review', JSON.stringify(v.steps));
@@ -292,7 +292,7 @@ test('建置或測試失敗：交給模型修正，修好就繼續；修了 3 �
   const fake2 = fakeModel(() => JSON.stringify({ note: '試試看', edits: [{ path: 'app.py', content: 'import streamlit as st\n# try\n' }] }));
   const t2 = await setup({ build: false }, fake2);
   try {
-    const id = (await upload(t2, simple, 'mode=new&name=小工具&department=it&owner=林開發&filename=small.zip')).data.autopack.id;
+    const id = (await upload(t2, simple, 'mode=new&name=小工具&department=it&owner=林開發&filename=small.zip&usesAi=unsure')).data.autopack.id;
     await t2.runWorker();
     const v = (await t2.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
     assert.equal(v.status, 'handed_off');
@@ -310,7 +310,7 @@ test('建置或測試失敗：交給模型修正，修好就繼續；修了 3 �
 test('轉給 AI Team 的情況：不支援的類型、需要連外、真的金鑰、模型未設定、超過 60 分鐘', async () => {
   const t = await setup({}, undefined);
   try {
-    const gui = (await upload(t, [{ name: 'app.py', data: 'import tkinter\n' }, { name: 'requirements.txt', data: 'pillow\n' }], 'mode=new&name=視窗&department=it&owner=A&filename=gui.zip')).data.autopack.id;
+    const gui = (await upload(t, [{ name: 'app.py', data: 'import tkinter\n' }, { name: 'requirements.txt', data: 'pillow\n' }], 'mode=new&name=視窗&department=it&owner=A&filename=gui.zip&usesAi=unsure')).data.autopack.id;
     await t.runWorker();
     let v = (await t.call('GET', `/api/onboarding/autopack/${gui}`)).data.autopack;
     assert.equal(v.status, 'handed_off');
@@ -356,7 +356,7 @@ test('轉給 AI Team 的情況：不支援的類型、需要連外、真的金�
   slow.build = async (...args) => { clock += 61 * 60_000; return rt.build(...args); };
   const w = new AutopackWorker(store, cfg0, slow, new Secrets(cfg0.dataDir), { model: () => async () => '{"edits":[]}', clock: () => clock, retryDelayScale: 0 });
   const { createAutopack } = await import('../src/autopack/job.ts');
-  const r = createAutopack(store, cfg0, makeZip([{ name: 'app.py', data: 'import streamlit as st\n' }, { name: 'requirements.txt', data: 'streamlit\n' }]), { mode: 'new', name: 'x', department: 'it', owner: 'A', actor: 'A', originalFilename: 'x.zip' });
+  const r = createAutopack(store, cfg0, makeZip([{ name: 'app.py', data: 'import streamlit as st\n' }, { name: 'requirements.txt', data: 'streamlit\n' }]), { mode: 'new', name: 'x', usesAi: 'no', department: 'it', owner: 'A', actor: 'A', originalFilename: 'x.zip' });
   assert.ok(r.ok);
   await w.tick(); await w.idle;
   const row = store.get<{ status: string; error: string }>('SELECT status, error FROM autopacks')!;
@@ -369,7 +369,7 @@ test('版本更新：沿用工具代號，和上一版比對資料表欄位', as
   const t = await setup({}, fake);
   const v1: ZipFile[] = [{ name: 'app.py', data: 'import streamlit as st\nimport sqlite3\nsqlite3.connect("x").execute("CREATE TABLE IF NOT EXISTS quotes (id INTEGER, price REAL);")\n' }, { name: 'requirements.txt', data: 'streamlit\n' }, { name: 'tests/test_a.py', data: 'def test_a():\n    assert True\n' }];
   try {
-    let id = (await upload(t, v1, 'mode=new&name=查價&department=purchase&owner=A&filename=pricing.zip')).data.autopack.id;
+    let id = (await upload(t, v1, 'mode=new&name=查價&department=purchase&owner=A&filename=pricing.zip&usesAi=unsure')).data.autopack.id;
     await t.runWorker();
     const sub = (await t.call('POST', `/api/onboarding/autopack/${id}/confirm`, {})).data.submission.id;
     await t.runQueue();
@@ -378,7 +378,7 @@ test('版本更新：沿用工具代號，和上一版比對資料表欄位', as
     await t.call('POST', `/api/onboarding/submissions/${sub}/approvals`, { reason: 'ok' });
     await t.call('POST', `/api/onboarding/submissions/${sub}/release`); await t.runQueue();
     const v2 = v1.map((f) => (f.name === 'app.py' ? { ...f, data: String(f.data).replace('price REAL', 'price REAL, currency TEXT') } : f));
-    id = (await upload(t, v2, 'mode=update&expectedToolId=pricing&department=purchase&owner=A&filename=pricing-v2.zip')).data.autopack.id;
+    id = (await upload(t, v2, 'mode=update&expectedToolId=pricing&department=purchase&owner=A&filename=pricing-v2.zip&usesAi=unsure')).data.autopack.id;
     await t.runWorker();
     const v = (await t.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
     assert.equal(v.status, 'awaiting_review', JSON.stringify(v.steps));
@@ -468,7 +468,7 @@ test('專案 ZIP 檔案數放寬到 5 萬（夾帶 node_modules 等）；超過�
   const files = Array.from({ length: 6 }, (_, i) => ({ name: `node_modules/x${i}.js`, data: 'x' }));
   const small = { ...cfg, limits: { ...cfg.limits, entries: 3 }, autopack: { ...cfg.autopack, entries: 10 } };
   const store = new Store(join(cfg.dataDir, 'ap.db'));
-  const form = { mode: 'new' as const, name: 'X', department: 'it', owner: 'A', actor: 'A', originalFilename: 'x.zip' };
+  const form = { mode: 'new' as const, name: 'X', department: 'it', owner: 'A', actor: 'A', originalFilename: 'x.zip', usesAi: 'no' };
   assert.equal(createAutopack(store, small, makeZip(files), form).ok, true, '一般 ZIP 的 3 個上限不適用專案 ZIP');
   const r = createAutopack(store, { ...small, autopack: { ...small.autopack, entries: 4 } }, makeZip(files), form);
   assert.equal(r.ok, false);
@@ -484,4 +484,35 @@ test('偵測 AI：網址前半段放在環境變數、只寫 /chat/completions �
   const a = analyze(files, [], []);
   assert.equal(a.ai.uses, true);
   assert.deepEqual(a.ai.rewriteFiles, ['translator.py']);
+});
+
+test('上傳時回答會不會用 AI，平台對照：說會但找不到 → 問檔案；說不會但找到 → 問確認（2026/11/03）', async () => {
+  const proj = [
+    { name: 'app.py', data: 'import streamlit as st\nfrom svc import ask\nst.write(ask("hi"))\n' },
+    { name: 'svc.py', data: 'import os, requests\nURL = os.getenv("MY_AI", "http://10.0.0.5:9000")\ndef ask(p):\n    return requests.post(URL + "/generate_text", json={"prompt": p}).json()\n' },
+    { name: 'requirements.txt', data: 'streamlit\nrequests\n' },
+  ];
+  const fake = fakeModel((user) => user.includes('OPENAI_BASE_URL') && user.includes('svc.py') ? JSON.stringify({ note: '改用平台模型', edits: [{ path: 'svc.py', content: 'import os, requests\nURL = os.getenv("MY_AI", "http://10.0.0.5:9000")\ndef ask(p):\n    base = os.getenv("OPENAI_BASE_URL")\n    if base:\n        return requests.post(f"{base}/chat/completions", json={"model": os.getenv("OPENAI_MODEL"), "messages": [{"role": "user", "content": p}]}).json()\n    return requests.post(URL + "/generate_text", json={"prompt": p}).json()\n' }] }) : null);
+  const t = await setup({}, fake);
+  try {
+    assert.equal((await upload(t, proj, 'mode=new&name=問答&department=it&owner=A&filename=qa.zip')).status, 422, '必填');
+    const a = (await upload(t, proj, 'mode=new&name=問答&department=it&owner=A&usesAi=yes&filename=qa.zip')).data.autopack.id as string;
+    await t.runWorker();
+    let v = (await t.call('GET', `/api/onboarding/autopack/${a}`)).data.autopack;
+    const q = v.questions.find((x: any) => x.kind === 'ai');
+    assert.equal(q.id, 'ai.missing');
+    const others = Object.fromEntries(v.questions.filter((x: any) => x.kind !== 'ai').map((x: any) => [x.id, x.kind === 'external' ? 'not_needed' : x.kind === 'secret' ? 'env' : 'keep']));
+    assert.equal((await t.call('POST', `/api/onboarding/autopack/${a}/answers`, { answers: { ...others, 'ai.missing': 'file', 'ai.file': 'nope.py' } })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/autopack/${a}/answers`, { answers: { ...others, 'ai.missing': 'file', 'ai.file': 'svc.py' } })).status, 200);
+    await t.runWorker();
+    v = (await t.call('GET', `/api/onboarding/autopack/${a}`)).data.autopack;
+    assert.equal(v.status, 'awaiting_review', JSON.stringify(v.handoff));
+    assert.match(v.report.summary['使用 AI'], /^是.*開發者回答：會/);
+    assert.ok(v.report.changes.some((c: any) => c.path === 'svc.py' && c.by === 'model'));
+    // 說不會，但平台看到呼叫模型的程式
+    const b = (await upload(t, SOURCE, 'mode=new&name=報價&department=purchase&owner=A&usesAi=no&filename=quote2.zip')).data.autopack.id as string;
+    await t.runWorker();
+    v = (await t.call('GET', `/api/onboarding/autopack/${b}`)).data.autopack;
+    assert.ok(v.questions.some((x: any) => x.id === 'ai.unexpected'));
+  } finally { await t.close(); }
 });

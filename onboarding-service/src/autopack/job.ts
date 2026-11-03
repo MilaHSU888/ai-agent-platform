@@ -31,7 +31,7 @@ import type { TestDataInfo } from './testdata.ts';
 
 export type AutopackStatus = 'queued' | 'running' | 'awaiting_answer' | 'awaiting_review' | 'submitted' | 'handed_off' | 'cancelled' | 'failed';
 type Stage = 'extract' | 'ask' | 'generate' | 'model' | 'verify' | 'report' | 'done';
-export type Question = { id: string; kind: 'duplicate' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: Ref[]; options: { value: string; label: string }[];
+export type Question = { id: string; kind: 'duplicate' | 'ai' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: Ref[]; options: { value: string; label: string }[];
   /** 選某個選項時要另外填的欄位（例如自訂 tool.id），答案存在 answers[key] */
   input?: { key: string; when: string; label: string; default: string; hint: string } };
 type Step = { name: string; status: 'passed' | 'failed' | 'skipped' | 'running' | 'waiting'; at: string; detail?: string };
@@ -57,6 +57,8 @@ export type Detail = {
   answers?: Record<string, string>;
   toolId?: string;
   description?: string;
+  /** 開發者在上傳表單回答「會不會用到 AI」（2026/11/03 Mila：必填，平台對照自己的判斷） */
+  declaredAi?: AiAnswer;
   prevSubmission?: string | null;
   schemaChanges?: string[];
   generated?: { command: string[]; test: { command: string[]; label: string; smoke: boolean }; dataDir: string | null; notes: string[] };
@@ -82,7 +84,8 @@ const TEST_DATA_DIR = (id: string) => join('testdata', id);
 /** 專案 ZIP 的上限：還沒整理的專案常夾帶虛擬環境、node_modules（平台會排除），檔案數放寬 */
 const autopackLimits = (cfg: Config): Config => ({ ...cfg, limits: { ...cfg.limits, uploadBytes: cfg.autopack.uploadBytes, totalUncompressedBytes: cfg.autopack.totalUncompressedBytes, entries: cfg.autopack.entries } });
 
-export type CreateForm = { mode: 'new' | 'update'; expectedToolId?: string; name?: string; department: string; owner: string; actor: string; originalFilename: string; description?: string };
+export type AiAnswer = 'yes' | 'no' | 'unsure';
+export type CreateForm = { mode: 'new' | 'update'; expectedToolId?: string; name?: string; department: string; owner: string; actor: string; originalFilename: string; description?: string; usesAi?: string };
 
 export function createAutopack(store: Store, cfg: Config, buf: Buffer, f: CreateForm): { ok: true; id: string } | { ok: false; issues: Issue[] } {
   const issues: Issue[] = [];
@@ -90,6 +93,7 @@ export function createAutopack(store: Store, cfg: Config, buf: Buffer, f: Create
   if (!f.department.trim()) bad('department', '缺少部門', '選擇工具所屬部門');
   if (!f.owner.trim()) bad('owner', '缺少工具負責人', '填寫 Owner');
   if (f.mode === 'new' && !(f.name ?? '').trim()) bad('name', '請填寫工具名稱', '填寫使用者看得懂的工具名稱');
+  if (!['yes', 'no', 'unsure'].includes(f.usesAi ?? '')) bad('usesAi', '請回答這個工具會不會用到 AI 模型', '選「會」、「不會」或「不確定」');
   if (f.mode === 'update') {
     const t = store.get<{ kind: string; archived_json: string | null }>('SELECT kind, archived_json FROM tools WHERE id=?', f.expectedToolId ?? '');
     if (!t || t.archived_json) bad('toolId', '找不到要更新的工具', '從工具清單選擇「提交新版本」');
@@ -107,7 +111,7 @@ export function createAutopack(store: Store, cfg: Config, buf: Buffer, f: Create
   store.tx(() => {
     store.run(`INSERT INTO autopacks(id,mode,tool_id,name,department,owner,actor,original_filename,status,stage,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id, f.mode, f.mode === 'update' ? f.expectedToolId! : null, (f.name ?? '').trim() || null, f.department, f.owner, f.actor, f.originalFilename.slice(0, 200), 'queued', 'extract',
-      JSON.stringify({ steps: [], modelLog: [], fixRounds: 0, description: (f.description ?? '').trim() } satisfies Detail), t, t);
+      JSON.stringify({ steps: [], modelLog: [], fixRounds: 0, description: (f.description ?? '').trim(), declaredAi: f.usesAi as AiAnswer } satisfies Detail), t, t);
     store.audit(f.actor, 'autopack.created', f.mode === 'update' ? f.expectedToolId! : id, { autopack: id, filename: f.originalFilename, mode: f.mode });
   });
   return { ok: true, id };
@@ -139,6 +143,12 @@ export function answerAutopack(store: Store, cfg: Config, id: string, actor: str
       store.audit(actor, 'autopack.cancelled', r.tool_id ?? id, { autopack: id, reason: 'duplicate_tool' });
     });
     return;
+  }
+  const aiQ = (d.questions ?? []).find((q) => q.kind === 'ai' && q.id === 'ai.missing');
+  if (aiQ && merged[aiQ.id] === 'file') {
+    const f = (merged['ai.file'] ?? '').trim().replace(/^\.?\//, '');
+    if (!f || f.includes('..') || !existsSync(join(autopackDir(cfg, id), 'src', f))) throw new GateError([`找不到檔案 ${f || '（未填）'}，請填專案資料夾裡的相對路徑，例如 translator.py 或 core/ai.py`]);
+    merged['ai.file'] = f;
   }
   if (dupQ && merged[dupQ.id] === 'new') {
     const t = (merged['dup.toolId'] ?? '').trim() || dupQ.input!.default;
@@ -342,19 +352,21 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     step('分析程式碼', 'passed', summaryLine(a, tdFiles.length));
 
     // 要問人的事（SOP 12.5）
-    d.questions = [...(dup ? [duplicateQuestion(dup, d.toolId!)] : []), ...buildQuestions(a)];
+    d.questions = [...(dup ? [duplicateQuestion(dup, d.toolId!)] : []), ...aiQuestion(a, d.declaredAi), ...buildQuestions(a)];
     d.answers = d.answers ?? {};
   }
 
   // ── 2. 暫停提問（等開發者在網頁上回答） ──
   function stageAsk() {
     const qs = d.questions ?? [];
+    const src = join(dir, 'src');
     const open = qs.filter((q) => !d.answers?.[q.id]);
     if (open.length) { step('等待開發者回答', 'waiting', `${open.length} 個問題`); throw new Paused(); }
     if (qs.length) step('等待開發者回答', 'passed', `已回答 ${qs.length} 題`);
     for (const q of qs) {
       const v = d.answers![q.id];
       if (q.kind === 'duplicate' && v === 'new' && d.answers!['dup.toolId'] && d.answers!['dup.toolId'] !== d.toolId) { d.toolId = d.answers!['dup.toolId']; save(store, id, { tool: d.toolId, detail: d }); }
+      if (q.kind === 'ai') applyAiAnswer(d.analysis!, q, v, d.answers!['ai.file'], src);
       if (q.kind === 'secret' && v === 'reupload') throw new HandOff('需要先移除寫死的金鑰', `${q.refs.map(refText).join('、')}：請把金鑰改成環境變數後，重新上傳原始碼。`);
       if (q.kind === 'external' && v === 'needed') throw new HandOff('工具需要連外部系統', `${q.title}。工具在平台上不能連外，需要 AI Team 協助申請或評估。`);
       if (q.kind === 'windows' && v === 'needed') throw new HandOff('需要 Windows 專用套件', `${q.title}。平台是 Linux，需要 AI Team 協助評估改寫方式。`);
@@ -566,6 +578,26 @@ function topTestDir(p: string) {
   return parts.slice(0, i >= 0 ? i + 1 : parts.length - 1).join('/') || '.';
 }
 
+/** 開發者回答和平台判斷不一致時要問的題目 */
+function aiQuestion(a: Analysis, declared: AiAnswer | undefined): Question[] {
+  if (declared === 'yes' && !a.ai.uses) return [{ id: 'ai.missing', kind: 'ai', title: '你說這個工具會用到 AI 模型，但平台找不到呼叫模型的程式',
+    detail: '請告訴平台是哪個檔案呼叫模型（例如組網址呼叫 /chat/completions、或用公司內部套件），平台會把它改成用平台的模型；找不到也可以轉給 AI Team。', refs: [],
+    options: [{ value: 'file', label: '我指定呼叫模型的檔案' }, { value: 'none', label: '其實沒有用 AI，繼續打包' }, { value: 'help', label: '我也不確定在哪裡（轉給 AI Team）' }],
+    input: { key: 'ai.file', when: 'file', label: '呼叫模型的檔案（專案資料夾裡的相對路徑）', default: '', hint: '例如 translator.py、core/ai.py' } }];
+  if (declared === 'no' && a.ai.uses) return [{ id: 'ai.unexpected', kind: 'ai', title: '你說這個工具不會用到 AI 模型，但程式裡有呼叫模型的寫法',
+    detail: `位置：${a.ai.refs.map(refText).join('、')}。如果工具會用到，平台會改成用平台的模型（才連得到、才算得到用量）。`, refs: a.ai.refs,
+    options: [{ value: 'yes', label: '會用到，請改成用平台的模型' }, { value: 'no', label: '確定不會用到（這段程式不會執行）' }] }];
+  return [];
+}
+
+function applyAiAnswer(a: Analysis, q: Question, v: string, file: string | undefined, src: string) {
+  if (q.id === 'ai.missing') {
+    if (v === 'help') throw new HandOff('找不到呼叫 AI 模型的程式', '開發者說工具會用到 AI 模型，但平台與開發者都找不到呼叫模型的程式，請 AI Team 協助確認。');
+    if (v === 'file' && file) { a.ai.uses = true; a.ai.refs = [{ file, detail: '開發者指定' }]; a.ai.rewriteFiles = /OPENAI_BASE_URL/.test(readFileSync(join(src, file), 'utf8')) ? [] : [file]; }
+  }
+  if (q.id === 'ai.unexpected' && v === 'no') { a.ai.uses = false; a.ai.rewriteFiles = []; }
+}
+
 function duplicateQuestion(dup: { id: string; name: string }, suggested: string): Question {
   return { id: 'dup', kind: 'duplicate', title: `平台上已經有「${dup.name}」（${dup.id}），這次上傳的是它的新版本嗎？`,
     detail: '工具代號或名稱和現有工具相同。如果是新版本，要從該工具的「提交新版本」上傳，才會沿用原本的資料、權限與使用紀錄；如果是另一個工具，請給它一個不同的代號。', refs: [],
@@ -682,6 +714,7 @@ function buildReport(d: Detail, r: Row, originalDir: string, srcDir: string, fil
   const confirm: string[] = [];
   const aiDone = d.modelLog.find((m) => m.task === 'AI 連線改用平台設定')?.applied ?? [];
   if (a.ai.uses) confirm.push(a.ai.rewriteFiles.length ? `AI 功能：已改用平台指定的模型（改了 ${aiDone.join('、')}），上線後請測試 AI 相關功能` : 'AI 功能：程式原本就讀平台設定，上線後請測試 AI 相關功能');
+  if (d.declaredAi === 'unsure') confirm.push(a.ai.uses ? `AI：平台判斷這個工具有用 AI（${a.ai.refs.map((x) => x.file).join('、')}），已改用平台的模型；如果判斷錯了請取消打包重新上傳` : 'AI：平台判斷這個工具沒有用 AI，上線後不會接平台的模型；如果其實有用，請取消打包，上傳時回答「會」');
   if (fixed.length) confirm.push('資料保存位置有修改，請確認匯出、上傳等功能存檔正常');
   if (g.test.smoke) confirm.push('專案沒有業務測試，目前只有啟動測試；建議之後補上');
   if (d.schemaChanges?.length) confirm.push(`和上一版相比資料格式有變（${d.schemaChanges.join('；')}），請確認新版能讀舊資料`);
@@ -698,7 +731,7 @@ function buildReport(d: Detail, r: Row, originalDir: string, srcDir: string, fil
     '服務埠': String(a.port),
     '健康檢查': a.healthPath,
     '資料目錄': g.dataDir ?? '不保存資料',
-    '使用 AI': a.ai.uses ? '是（經平台模型轉接）' : '否',
+    '使用 AI': `${a.ai.uses ? '是（經平台模型轉接）' : '否'}${d.declaredAi ? `（開發者回答：${{ yes: '會', no: '不會', unsure: '不確定' }[d.declaredAi]}）` : ''}`,
     '對外連線': network,
     '業務測試': `${g.test.label}：${d.verify?.test ?? ''}`,
   };
