@@ -16,6 +16,7 @@ import { newId, now, type Store } from './db.ts';
 import { GateError } from './approvals.ts';
 import { activeRelease, busy, everPublished, takeOffline, trialContainerName, trialRelease, trialVolumeName, visibilityOf, type Detail } from './releases.ts';
 import type { Runtime } from './runtime.ts';
+import { purgeTestData } from './autopack/testdata.ts';
 
 type Sub = { id: string; tool_id: string; version: string; status: string; source_hash: string; image_digest: string | null; manifest_json: string; kind: string };
 type Rel = { id: string; submission_id: string; image_digest: string; detail_json: string; volume: string | null; port: number | null };
@@ -59,6 +60,7 @@ export async function setLight(store: Store, cfg: Config, rt: Runtime, toolId: s
       store.run('UPDATE tools SET visibility=\'public\', first_published_at=COALESCE(first_published_at, ?), updated_at=? WHERE id=?', t0, t0, toolId);
       store.audit(actor, 'tool.published', toolId, { version: sub.version, note: reason || undefined });
     });
+    purgeTestData(store, cfg, toolId, actor); // 公開後刪除測試資料（A2）
     return { mode: 'visibility', version: sub.version };
   }
 

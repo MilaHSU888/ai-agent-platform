@@ -56,6 +56,10 @@ export type Config = {
   relay: { image: string; timeoutSeconds: number };
   /** 工具網路是否隔離（無對外路由）。true：工具只連得到模型轉接服務 */
   toolNetworkInternal: boolean;
+  /** 漏洞資料庫固定放在平台資料夾（2026/11/03，B6）：本機 pilot/onboarding-data/trivy-cache，正式環境 <平台資料目錄>/trivy-cache */
+  trivyCacheDir: string;
+  /** 原始碼自動打包（2026/11/03）：上傳上限、一件最多幾分鐘、修正幾次、每次呼叫模型的逾時 */
+  autopack: { uploadBytes: number; totalUncompressedBytes: number; entries: number; maxMinutes: number; maxFixRounds: number; modelTimeoutMs: number };
 };
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
@@ -76,9 +80,10 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     trivyOffline: process.env.ONBOARDING_TRIVY_OFFLINE !== '0',
     helperImage: process.env.ONBOARDING_HELPER_IMAGE ?? 'busybox:1.36.1',
     limits: {
-      uploadBytes: 100 * 1024 * 1024,
-      entries: 5000,
-      totalUncompressedBytes: 500 * 1024 * 1024,
+      // 2026/11/03 Mila：已打包 ZIP 與專案 ZIP 上限統一 1 GB（虛擬環境、套件等平台會略過）；偏大時不擋，列出可能不需要的檔案
+      uploadBytes: 1024 ** 3,
+      entries: 50_000, // 2026/11/03：與專案 ZIP 一致；檔案多時不擋，列出可能不需要的資料夾
+      totalUncompressedBytes: 1024 ** 3,
       singleFileBytes: 200 * 1024 * 1024,
       compressionRatio: 200,
     },
@@ -92,6 +97,10 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     sessionHours: 12,
     relay: { image: process.env.ONBOARDING_RELAY_IMAGE ?? 'python:3.14-slim-trixie', timeoutSeconds: 125 },
     toolNetworkInternal: process.env.ONBOARDING_TOOL_NETWORK !== 'open',
+    trivyCacheDir: '',
+    autopack: { uploadBytes: 1024 ** 3, totalUncompressedBytes: 1024 ** 3, entries: 50_000, maxMinutes: 60, maxFixRounds: 5, modelTimeoutMs: 10 * 60 * 1000 },
   };
-  return { ...base, ...overrides };
+  const merged = { ...base, ...overrides };
+  if (!merged.trivyCacheDir) merged.trivyCacheDir = join(merged.dataDir, 'trivy-cache');
+  return merged;
 }

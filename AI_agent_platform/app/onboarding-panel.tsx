@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ApiError, downloadReviewCsv, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type ReviewRow, type ScannerInfo, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { ApiError, downloadReviewCsv, onboardingApi, type Autopack, type CatalogTool, type Issue, type ReleaseRecord, type ReviewRow, type ScannerInfo, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { AutopackPanel } from './autopack-panel';
 import { IconPicker } from './tool-icon';
 import { ToolModelSetting } from './model-admin';
 import { ArchiveControl, isTrialing, LightSwitch, TrialCard } from './trial-panel';
@@ -20,6 +21,9 @@ const SUB_STATUS: Record<string, string> = {
 };
 const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
 const ACTIVE = ['queued', 'running'];
+
+/** 上傳大小上限（與上架服務設定一致：兩種 ZIP 都是 1 GB，2026/11/03 Mila 決定統一） */
+const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 
 type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void; role?: Role; developer?: string };
 type Conn = 'checking' | 'offline' | 'ready';
@@ -118,7 +122,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const [items, setItems] = useState<Submission[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [submissionForm, setSubmissionForm] = useState<{ tool: Submission | null; kind: 'zip' | 'url' } | null>(null);
+  const [submissionForm, setSubmissionForm] = useState<{ tool: Submission | null; kind: 'zip' | 'url' | 'source' } | null>(null);
   const emptyUrl = { url: '', usesAi: false, aiConfirmed: false, guide: '' };
   const [urlForm, setUrlForm] = useState(emptyUrl);
   const formRef = useRef<HTMLElement | null>(null);
@@ -132,6 +136,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const [owner, setOwner] = useState('');
   const [toolName, setToolName] = useState('');
   const [profile, setProfile] = useState({ description: '', scenario: '' });
+  const [aiAnswer, setAiAnswer] = useState<'' | 'yes' | 'no' | 'unsure'>('');
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [warnings, setWarnings] = useState<Issue[]>([]);
@@ -180,13 +185,14 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
 
   // 每個工具只列最新一筆提交（items 由新到舊）
   const myTools = visible.filter((x, i) => visible.findIndex((y) => y.toolId === x.toolId) === i);
-  const openSubmission = (tool: Submission | null, kind: 'zip' | 'url' = 'zip') => {
-    setSubmissionForm({ tool, kind: tool ? (tool.kind === 'url' ? 'url' : 'zip') : kind }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
+  const openSubmission = (tool: Submission | null, kind: 'zip' | 'url' | 'source' = 'zip') => {
+    setSubmissionForm({ tool, kind: tool ? (tool.kind === 'url' ? 'url' : kind === 'source' ? 'source' : 'zip') : kind }); setFile(null); setIssues([]); setWarnings([]); setReasons([]);
     const uc = tool?.urlConfig;
     setUrlForm(uc ? { url: uc.url, usesAi: uc.usesAi, aiConfirmed: uc.aiConfirmed, guide: uc.guide } : emptyUrl);
     setOwner(tool?.owner ?? '');
     setToolName(tool?.toolName ?? '');
     setProfile({ description: '', scenario: '' });
+    setAiAnswer('');
     setDepartment(tool?.department ?? departments.find((d) => d.id === 'purchase')?.id ?? departments[0]?.id ?? '');
   };
 
@@ -218,7 +224,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
   const needsReview = !!selected && ['running', 'awaiting_confirmation'].includes(selected.status) && ['awaiting', 'skipped'].includes(steps.code_review?.status ?? '') && ['passed', 'warning'].includes(steps.scan?.status ?? '');
 
   return <div className="onb">
-    <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」，再選擇上傳 ZIP 小工具，或登錄已經有網址的網站；已上架的工具要更新，請在下方該工具旁操作。</p></div>
+    <section className="mg-panel"><div className="mg-row"><div><h2>工具提交</h2><p className="mg-muted">第一次上架請按「新增工具」，再選擇上傳已打包的 ZIP、上傳專案 ZIP 由平台自動打包，或登錄已經有網址的網站；已上架的工具要更新，請在下方該工具旁操作。</p></div>
       <div className="onb-head-actions"><button className="onb-primary-sm" disabled={busy} onClick={() => openSubmission(null)}>＋ 新增工具</button></div></div>
       {myTools.length > 0 && <div className="onb-tool-list">{myTools.map((t) => {
         const building = items.some((x) => x.toolId === t.toolId && ACTIVE.includes(x.status));
@@ -232,11 +238,17 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
     {submissionForm && <section ref={formRef} className="mg-panel" aria-label={submissionForm.tool ? (submissionForm.kind === 'url' ? '修改網址設定' : '提交新版本') : '新增工具'}>
       <div className="mg-row"><div><h2>{submissionForm.tool ? (submissionForm.kind === 'url' ? `修改網址設定：${submissionForm.tool.toolName}` : `提交新版本：${submissionForm.tool.toolName}`) : '新增工具'}</h2></div></div>
       {!submissionForm.tool && <div className="onb-kind-switch" role="group" aria-label="上架方式">
-        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(null, 'zip')}><b>小工具（上傳 ZIP）</b><small>由平台建置、檢查、測試並執行</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(null, 'zip')}><b>上傳已打包的 ZIP</b><small>已依上架資料包加好 Dockerfile、workhub.yaml，平台直接建置</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(null, 'source')}><b>上傳專案 ZIP，平台自動打包</b><small>整個專案資料夾壓縮上傳，不用自己打包；你確認打包報告後送出</small></button>
         <button type="button" aria-pressed={submissionForm.kind === 'url'} onClick={() => openSubmission(null, 'url')}><b>已有網址的網站（URL）</b><small>網站已在其他地方運作，例如 OpenWebUI、n8n 表單</small></button>
+      </div>}
+      {submissionForm.tool && submissionForm.tool.kind !== 'url' && <div className="onb-kind-switch" role="group" aria-label="新版本上傳方式">
+        <button type="button" aria-pressed={submissionForm.kind === 'zip'} onClick={() => openSubmission(submissionForm.tool, 'zip')}><b>上傳已打包的 ZIP</b><small>已依上架資料包加好 Dockerfile、workhub.yaml</small></button>
+        <button type="button" aria-pressed={submissionForm.kind === 'source'} onClick={() => openSubmission(submissionForm.tool, 'source')}><b>上傳專案 ZIP，平台自動打包</b><small>沿用同一個工具代號，平台比對上一版</small></button>
       </div>}
       {submissionForm.kind === 'url' ? <>
       <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），由 AI Team 切換為公開中。工具圖示由 AI Team 設定。</p>
+      <p className="onb-note">若這個網站有使用 AI 模型，要先改連平台的 LLM Proxy，平台才能計算模型用量；直接連外部或自架模型的用量不會出現在使用分析。</p>
       {submissionForm.tool && <p className="onb-note">工具名稱、用途說明與適用情境請由 AI Team 在發布管理修改。修改網址後需重新經 AI Team 審核。工具已公開時，新網址會先以試用入口並行，一般使用者仍使用目前網址，AI Team 公開後才切換。</p>}
       <form key={`url-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-url-form" onSubmit={(e) => {
         e.preventDefault();
@@ -262,6 +274,31 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
           <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setIssues([]); setWarnings([]); }}>取消</button>
         </div>
       </form>
+      </> : submissionForm.kind === 'source' ? <>
+      <p className="mg-muted">把整個專案資料夾壓成 ZIP 上傳即可，平台會自動打包並測試，有不確定的地方會在下方「自動打包」問你。</p>
+      <p className="onb-note ap-intro">支援 Python、Node.js、Java、.NET、Go、PHP 與純靜態網頁；不支援的類型會通知 AI Team。測試資料可以一起放，金鑰、密碼請不要放。</p>
+      {health && !health.docker && <p className="onb-error">找不到 Docker，無法自動打包。</p>}
+      <form key={`src-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-upload" onSubmit={(e) => {
+        e.preventDefault(); if (!file) return;
+        const t = submissionForm.tool;
+        void act(async () => {
+          await onboardingApi.autopackUpload(file, { mode: t ? 'update' : 'new', expectedToolId: t?.toolId, name: t ? undefined : toolName, department, owner, description: t ? undefined : profile.description, usesAi: aiAnswer || 'unsure' });
+          setFile(null); setSubmissionForm(null);
+          window.dispatchEvent(new Event('workhub:autopack'));
+        }, '已收到原始碼，開始自動打包');
+      }}>
+        <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 報價比較" /></label>
+        <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+        <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
+        <label>專案 ZIP（整個專案資料夾壓縮）<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        <fieldset className="onb-span2 ap-ai-ask"><legend>這個工具會用到 AI 模型嗎？（必填）</legend>
+          {([['yes', '會'], ['no', '不會'], ['unsure', '不確定']] as const).map(([v, l]) => <label key={v} className="onb-check"><input type="radio" name="usesAi" checked={aiAnswer === v} onChange={() => setAiAnswer(v)} />{l}</label>)}
+          <small>平台會和程式內容對照；不一致時會在打包過程中問你。</small></fieldset>
+        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 1 GB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
+        {!submissionForm.tool && <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>}
+        <button disabled={!file || !aiAnswer || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
+        <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
+      </form>
       </> : <>
       {submissionForm.tool
         ? <div className="onb-note onb-kit-note"><span>程式修改完後，照第一次上架的方式打包上傳；版本號不用改，平台會自動編號。</span><a className="onb-kit" href="/api/onboarding/kit" download="workhub-kit.zip">下載上架資料包 ↓</a></div>
@@ -275,18 +312,26 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>工具名稱（使用者看到的名稱）<input readOnly={!!submissionForm.tool} value={toolName} maxLength={40} onChange={(e) => setToolName(e.target.value)} placeholder="例如 出貨進度查詢" title={submissionForm.tool ? '要改名請到發布管理的工具發布詳情' : undefined} /></label>
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
-        <label>原始碼 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        <label>已打包的 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 1 GB。請移除虛擬環境、套件快取、資料檔或影片後重新壓縮。</p>}
+        {file && file.size <= UPLOAD_LIMIT && file.size > 50 * 1024 * 1024 && <p className="onb-note onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，比一般小工具大很多；上傳後平台會列出可能不需要的檔案（虛擬環境、安裝檔、資料檔）。如果還沒加 Dockerfile、workhub.yaml，請改選「上傳專案 ZIP，平台自動打包」。</p>}
         {!submissionForm.tool && <>
           <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
           <label className="onb-span2">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 多家供應商報價整併、價格比較" /></label>
         </>}
-        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
+        <button disabled={!file || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}
-      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : '提交包未通過檢查（已停止建置）'} issues={issues} />
+      {submissionForm.kind === 'zip' && file && issues.some((i) => i.file === 'workhub.yaml' && /找不到/.test(i.reason)) && <div className="onb-note ap-switch">
+        <span>這個 ZIP 還沒打包（沒有 workhub.yaml）。要改用「上傳專案 ZIP，平台自動打包」嗎？同一個檔案，不用重選。</span>
+        <button type="button" className="onb-primary-sm" onClick={() => { setSubmissionForm({ ...submissionForm, kind: 'source' }); setIssues([]); setWarnings([]); }}>改用自動打包</button>
+      </div>}
+      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : submissionForm.kind === 'source' ? '專案 ZIP 未通過檢查（請修正後重新上傳）' : '提交包未通過檢查（已停止建置）'} issues={issues} />
       <IssueTable title="提醒" issues={warnings} />
     </section>}
+
+    <AutopackPanel role={role} developer={developer} notice={notice} onSubmitted={(id) => { setSelectedId(id); setLog(null); setNote(''); void refresh(); }} />
 
     <div className="onb-grid">
       <section className="mg-panel"><div className="mg-row"><div><h2>{role === 'aiteam' ? '全部提交' : '我的提交'}</h2><small className="mg-muted">{role === 'aiteam' ? 'AI Team 看得到所有開發者的提交' : `${developer || '（未選擇開發者）'} 當 Owner 的工具`}</small></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
@@ -433,7 +478,7 @@ type Row = { key: string; cat: Cat; toolId: string; kind?: 'zip' | 'url'; name: 
  * 發布管理（AI Team）：上方狀態卡片兼分頁（待審核／試用中／已公開／已下架），下方一個工具一列；點選後右側滑出工具詳情，
  * 詳情只突出「現在該做的那一步」，版本紀錄與少用的操作（下架、封存）放在下方。只列出經上架服務處理的真實工具。
  */
-export function ReleaseCenter({ notice, departments = [], role, renderSettings }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string, kind: 'zip' | 'url') => ReactNode }) {
+export function ReleaseCenter({ notice, departments = [], role, renderSettings, openAutopack }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string, kind: 'zip' | 'url') => ReactNode; openAutopack?: (id: string) => void }) {
   const [state, setState] = useState<'checking' | 'offline' | 'ready'>('checking');
   const [items, setItems] = useState<Submission[]>([]);
   const [history, setHistory] = useState<ReleaseRecord[]>([]);
@@ -447,6 +492,15 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [log, setLog] = useState<{ title: string; text: string } | null>(null);
+  // 自動打包已通知 AI Team 的案子（2026/11/03）：AI Team 有人點開後就不再列出，由點開的人聯絡開發者（不記錄是誰）
+  const [handoffs, setHandoffs] = useState<Autopack[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const pull = () => { void onboardingApi.autopacks().then((aps) => { if (alive) setHandoffs(aps.filter((a) => a.status === 'handed_off' && !a.ack)); }).catch(() => {}); };
+    pull();
+    window.addEventListener('workhub:catalog-refresh', pull);
+    return () => { alive = false; window.removeEventListener('workhub:catalog-refresh', pull); };
+  }, []);
 
   const apply = useCallback((r: Snapshot) => { setItems(r.items); setHistory(r.history); setHealth(r.health); setCat(r.catalog); setState(r.state); }, []);
   const load = useCallback(async () => apply(await fetchAll()), [apply]);
@@ -578,9 +632,13 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
       {(errors[sub.id]?.length ?? 0) > 0 && <ul className="onb-error">{errors[sub.id].map((r) => <li key={r}>{r}</li>)}</ul>}
       {sub.status === 'awaiting_approval' && <>
         {sub.releaseBlockers.length > 0 && <ul className="onb-error">{sub.releaseBlockers.map((r) => <li key={r}>{r}</li>)}</ul>}
-        <div className="mg-row"><input aria-label={`${sub.toolName} 核准說明`} value={reason[sub.id] ?? ''} onChange={(e) => setReason({ ...reason, [sub.id]: e.target.value })} placeholder="核准說明（會留在稽核紀錄）" />
-          <button disabled={busy || !(reason[sub.id] ?? '').trim() || sub.releaseBlockers.length > 0} onClick={() => void guard(sub.id, async () => { await onboardingApi.approve(sub.id, reason[sub.id] ?? ''); setReason({ ...reason, [sub.id]: '' }); }, `已核准發布：${sub.toolName} ${sub.version}`)}>核准發布</button></div>
+        <div className="mg-row"><input aria-label={`${sub.toolName} 核准說明`} value={reason[sub.id] ?? ''} onChange={(e) => setReason({ ...reason, [sub.id]: e.target.value })} placeholder="核准或退回說明（會留在審核履歷）" />
+          <button disabled={busy || !(reason[sub.id] ?? '').trim() || sub.releaseBlockers.length > 0} onClick={() => void guard(sub.id, async () => { await onboardingApi.approve(sub.id, reason[sub.id] ?? ''); setReason({ ...reason, [sub.id]: '' }); }, `已核准發布：${sub.toolName} ${sub.version}`)}>核准發布</button>
+          <button className="onb-danger" disabled={busy || !(reason[sub.id] ?? '').trim()} title="不核准：這個版本作廢，開發者需修正後重新提交" onClick={() => { if (window.confirm(`確定退回 ${sub.toolName} ${sub.version}？這個版本會作廢，開發者需修正後重新提交。`)) void guard(sub.id, async () => { await onboardingApi.withdraw(sub.id, `AI Team 退回：${(reason[sub.id] ?? '').trim()}`); setReason({ ...reason, [sub.id]: '' }); }, `已退回：${sub.toolName} ${sub.version}`); }}>退回（不核准）</button></div>
+        <small className="mg-muted">不核准請填寫原因後按「退回」，開發者會在提交詳情看到原因。</small>
       </>}
+      {sub.status === 'approved' && !inFlight && <div className="mg-row onb-revoke"><input aria-label={`${sub.toolName} 撤銷核准原因`} value={reason[sub.id] ?? ''} onChange={(e) => setReason({ ...reason, [sub.id]: e.target.value })} placeholder="發現問題、不要發布？填寫原因後按「撤銷核准並退回」" />
+        <button className="onb-danger" disabled={busy || !(reason[sub.id] ?? '').trim()} onClick={() => { if (window.confirm(`確定撤銷 ${sub.toolName} ${sub.version} 的核准並退回？這個版本會作廢，開發者需修正後重新提交。`)) void guard(sub.id, async () => { await onboardingApi.withdraw(sub.id, `AI Team 撤銷核准並退回：${(reason[sub.id] ?? '').trim()}`); setReason({ ...reason, [sub.id]: '' }); }, `已撤銷核准並退回：${sub.toolName} ${sub.version}`); }}>撤銷核准並退回</button></div>}
       {sub.status === 'approved' && <div className="mg-actions">
         <button disabled={busy || !!inFlight} onClick={() => void guard(sub.id, () => onboardingApi.release(sub.id), toTrial ? `開始部署 ${sub.toolName} ${sub.version} 試用版（正式版本不受影響）` : `開始發布 ${sub.toolName} ${sub.version}（發布後為試用中，未公開）`)}>{inFlight ? '發布中…' : rel?.status === 'failed' ? '重新發布' : toTrial ? '發布為試用版' : '發布（先試用）'}</button>
         <small className="mg-muted">{toTrial ? '工具已公開：新版會先以試用版並行，一般使用者仍使用目前版本。' : '發布後為試用中（未公開），AI Team 切換為公開中後才開放（第一次公開會清空試用資料）。'}</small>
@@ -590,9 +648,10 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   };
 
   return <>
-    {todo.length > 0 && <section className="onb-notice rc-todo" role="status">
-      <div><b>有 {todo.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情。</p></div>
-      <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}</div>
+    {todo.length + handoffs.length > 0 && <section className="onb-notice rc-todo" role="status">
+      <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子點開後就不再列在這裡，請點開的人聯絡開發者，用雲端 AI 協助打包'}。</p></div>
+      <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}
+        {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => { setHandoffs((h) => h.filter((x) => x.id !== a.id)); void onboardingApi.ackAutopack(a.id).catch(() => {}).finally(() => openAutopack?.(a.id)); }}>{a.name ?? a.toolId ?? a.filename}：自動打包已通知 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
     </section>}
     <div className="rc-cards" role="tablist" aria-label="發布狀態">
       {CATS.map((x) => <button key={x.id} role="tab" aria-selected={current === x.id} className={`rc-card ${current === x.id ? 'active' : ''} ${x.id === 'pending' && counts.pending > 0 ? 'attention' : ''}`} onClick={() => setTab(x.id)}>

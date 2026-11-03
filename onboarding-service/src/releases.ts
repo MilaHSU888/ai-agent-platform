@@ -21,6 +21,7 @@ import { allocatePort, waitHealthy } from './pipeline.ts';
 import { prepareModelAccess } from './relay.ts';
 import { toolModel } from './models.ts';
 import type { UrlConfig } from './url-tools.ts';
+import { purgeTestData } from './autopack/testdata.ts';
 import type { Ctx, Runtime, ServiceSpec } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 
@@ -302,6 +303,8 @@ export async function runReleaseJob(store: Store, cfg: Config, rt: Runtime, secr
   }
   // 發布後清掉預覽資料（預覽與正式資料本來就分開，這裡只是不讓預覽資料卷一直累積）
   if (ok && detail.kind === 'release') await cleanupPreviews(store, rt, sub.tool_id, ctx);
+  // 已公開工具的新版公開：刪除測試資料（A2）
+  if (ok && detail.fromTrial) purgeTestData(store, cfg, sub.tool_id, detail.actor ?? 'system');
 }
 
 /**
@@ -349,6 +352,7 @@ async function runFirstPublishJob(store: Store, cfg: Config, rt: Runtime, secret
     store.run('UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=?', ok ? 'succeeded' : 'failed', t, ok ? null : error, jobId);
     store.audit(actor, ok ? 'tool.published' : 'tool.publish_failed', sub.tool_id, { version: sub.version, trialDataCleared: !!mount, firstPublish: true, error: ok ? undefined : error });
   });
+  if (ok) purgeTestData(store, cfg, sub.tool_id, actor); // 公開後刪除測試資料（A2）
 }
 
 /** 已公開工具的新版：並行部署試用版（另一個容器、另一個埠、空白資料），舊版照常服務；正式資料不複製給試用版。 */

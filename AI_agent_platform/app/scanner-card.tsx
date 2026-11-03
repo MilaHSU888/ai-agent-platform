@@ -31,6 +31,7 @@ export function ScannerVersionCard() {
         <tr><th>漏洞掃描工具</th><td>Trivy {data.scanner.version ?? '（版本未知）'}</td></tr>
         <tr><th>漏洞資料庫更新時間</th><td>{day(data.scanner.dbUpdatedAt)}{data.dbAgeDays !== null && `（已 ${data.dbAgeDays} 天沒更新）`}</td></tr>
         <tr><th>資料庫下載到本機</th><td>{day(data.scanner.dbDownloadedAt)}</td></tr>
+        {data.scanner.cacheDir && <tr><th>漏洞資料庫位置</th><td><code>{data.scanner.cacheDir}/db</code>（手動更新時把新的資料庫放在這裡）</td></tr>}
         <tr><th>更新方式</th><td>{data.offline ? '手動更新：不能上網，用這台電腦裡現有的漏洞清單；需要 AI Team 定期更新' : '自動更新：每次檢查前會先下載最新的漏洞清單'}</td></tr>
         <tr><th>最近一次掃描</th><td>{day(data.lastScanAt)}</td></tr>
       </tbody></table></div>)}

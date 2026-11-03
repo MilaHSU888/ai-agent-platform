@@ -12,6 +12,7 @@ import { memoryToBytes, type Manifest } from './manifest.ts';
 import { freePort, portInUse, type Ctx, type Runtime } from './runtime.ts';
 import type { Secrets } from './secrets.ts';
 import { prepareModelAccess, toolNetwork } from './relay.ts';
+import { testDataBinds } from './autopack/testdata.ts';
 
 type Sub = { id: string; tool_id: string; version: string; revision: number; source_hash: string; manifest_json: string };
 
@@ -199,12 +200,14 @@ export async function runVerifyJob(store: Store, cfg: Config, rt: Runtime, secre
       set('business_test', 'running');
       const btName = `wh-btest-${jobId}`.toLowerCase();
       const btVol = `${btName}-data`;
-      const r = await rt.runOnce({ image: tag, name: btName, labels: { ...labels, 'workhub.kind': 'business-test' }, volume: mount ? btVol : undefined, mountPath: mount, env: {}, memoryBytes, cpus: m.run.resources.cpu, command: m.test.command, network: 'none' }, m.test.timeoutSeconds * 1000, ctxFor('business_test'));
+      // 自動打包的測試資料不在映像檔裡，測試時才唯讀掛上（公開後刪除，2026/11/03）
+      const binds = testDataBinds(cfg, store.get<{ testdata_json: string | null }>('SELECT testdata_json FROM submissions WHERE id=?', sub.id)?.testdata_json);
+      const r = await rt.runOnce({ image: tag, name: btName, labels: { ...labels, 'workhub.kind': 'business-test' }, volume: mount ? btVol : undefined, mountPath: mount, env: {}, memoryBytes, cpus: m.run.resources.cpu, command: m.test.command, network: 'none', binds }, m.test.timeoutSeconds * 1000, ctxFor('business_test'));
       if (mount) await rt.removeVolume(btVol);
       if (stopIfCancelled()) return;
       results.business_test = r.code === 0 && !r.timedOut ? 'passed' : 'failed';
       const tail = (r.stdout + r.stderr).trim().split('\n').slice(-6);
-      const summary = { layer: 'business', command: m.test.command, exitCode: r.code, timedOut: r.timedOut, network: 'none', tail };
+      const summary = { layer: 'business', command: m.test.command, exitCode: r.code, timedOut: r.timedOut, network: 'none', tail, testDataMounted: binds.map((b) => b.target) };
       set('business_test', results.business_test, summary);
       evidence('business_test.json', summary);
     }

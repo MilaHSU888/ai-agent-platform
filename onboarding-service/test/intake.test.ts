@@ -33,10 +33,12 @@ test('拒絕路徑穿越與絕對路徑', () => {
   assert.match(reasons(validZip([{ name: 'a\\..\\b', data: 'x' }])), /路徑不安全/);
 });
 
-test('拒絕符號連結、巢狀壓縮檔與 .git', () => {
+test('拒絕符號連結與巢狀壓縮檔；.git、虛擬環境、node_modules 直接略過不放進工具（2026/11/03）', () => {
   assert.match(reasons(validZip([{ name: 'link', data: '/etc/passwd', symlink: true }])), /符號連結/);
   assert.match(reasons(validZip([{ name: 'vendor/inner.zip', data: 'PK' }])), /巢狀壓縮檔/);
-  assert.match(reasons(validZip([{ name: '.git/config', data: '[core]' }])), /\.git/);
+  const skipped = validZip([{ name: '.git/config', data: '[core]' }, { name: '.venv/bin/python', data: '/usr/bin/python3', symlink: true },
+    { name: '.venv/lib/python3.14/site-packages/certifi/cacert.pem', data: 'x' }, { name: 'node_modules/a/index.js', data: '' }, { name: 'app/__pycache__/x.pyc', data: '' }]);
+  assert.deepEqual(inspectZip(skipped, cfg).issues, []);
 });
 
 test('拒絕密鑰檔，但允許 .env.example', () => {

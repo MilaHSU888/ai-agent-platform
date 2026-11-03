@@ -44,8 +44,27 @@ export type ReleaseRecord = {
   detail: { kind: 'release' | 'rollback' | 'redeploy' | 'trial'; fromTrial?: string; ended?: { at: string; actor: string; reason: string; promotedTo?: string }; steps: ReleaseStep[]; backupBefore?: string | null; dataMode?: 'keep' | 'restore'; error?: string; reason?: string; actor?: string; offline?: { at: string; actor: string; reason: string } };
 };
 export type Session = { authenticated: boolean; actor?: string; environment?: string };
+/** 原始碼自動打包（2026/11/03） */
+export type AutopackRef = { file: string; line?: number; detail: string };
+export type AutopackQuestion = { id: string; kind: 'duplicate' | 'ai' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: AutopackRef[]; options: { value: string; label: string }[];
+  input?: { key: string; when: string; label: string; default: string; hint: string } };
+export type AutopackChange = { path: string; kind: 'added' | 'modified'; diff: string; add: number; del: number; by: 'template' | 'model' };
+export type AutopackReport = {
+  summary: Record<string, string>;
+  decisions: { keep: string[]; temp: string[]; fixed: string[]; seeds: string[]; liveData: string[]; schemaChanges: string[]; ai: string; network: string };
+  changes: AutopackChange[]; testData: { path: string; size: number }[]; excluded: { path: string; why: string }[];
+  verification: { build: string; test: string; health: string; preflight: string };
+  model: { calls: number; notes: string[]; rejected: string[] }; confirm: string[]; warnings: string[]; markdown: string;
+};
+export type Autopack = {
+  id: string; mode: 'new' | 'update'; toolId: string | null; name: string | null; department: string; owner: string; actor: string; filename: string;
+  status: 'queued' | 'running' | 'awaiting_answer' | 'awaiting_review' | 'submitted' | 'handed_off' | 'cancelled' | 'failed'; stage: string;
+  steps: { name: string; status: 'passed' | 'failed' | 'skipped' | 'running' | 'waiting'; at: string; detail?: string }[];
+  questions: AutopackQuestion[]; report: AutopackReport | null; handoff: { reason: string; detail: string; at: string } | null; ack: boolean; error: string | null;
+  submissionId: string | null; version: string | null; activeMinutes: number; createdAt: string; updatedAt: string;
+};
 /** 漏洞掃描器（2026/11/02）：版本與本機漏洞資料庫時間；正式環境不連網，不查最新版 */
-export type ScannerInfo = { tool: 'trivy'; version: string | null; dbUpdatedAt: string | null; dbDownloadedAt: string | null; offline: boolean };
+export type ScannerInfo = { tool: 'trivy'; version: string | null; dbUpdatedAt: string | null; dbDownloadedAt: string | null; offline: boolean; cacheDir?: string };
 export type ScannerStatus = { scanner: ScannerInfo | null; available: boolean; dbAgeDays: number | null; lastScanAt: string | null; offline: boolean };
 
 export class ApiError extends Error {
@@ -115,6 +134,13 @@ export const onboardingApi = {
   setToolModel: (toolId: string, r: ModelRef | null, reason: string) => call<ToolModelInfo>('POST', `/tools/${toolId}/model`, r ? { ...r, reason } : { useDefault: true, reason }),
   setLocalOnly: (toolId: string, on: boolean) => call<{ localOnly: boolean }>('POST', `/tools/${toolId}/local-only`, { on }),
   scanner: () => call<ScannerStatus>('GET', '/scanner'),
+  autopackUpload: (file: File, f: { mode: 'new' | 'update'; expectedToolId?: string; name?: string; department: string; owner: string; description?: string; usesAi: 'yes' | 'no' | 'unsure' }) =>
+    call<{ autopack: Autopack }>('POST', `/autopack?mode=${f.mode}&usesAi=${f.usesAi}&department=${encodeURIComponent(f.department)}&owner=${encodeURIComponent(f.owner)}&filename=${encodeURIComponent(file.name)}${f.expectedToolId ? `&expectedToolId=${encodeURIComponent(f.expectedToolId)}` : ''}${f.name ? `&name=${encodeURIComponent(f.name.trim())}` : ''}${f.description ? `&description=${encodeURIComponent(f.description.trim())}` : ''}`, file, 'application/zip').then((r) => r.autopack),
+  autopacks: () => call<{ autopacks: Autopack[] }>('GET', '/autopack').then((r) => r.autopacks),
+  answerAutopack: (id: string, answers: Record<string, string>) => call<{ autopack: Autopack }>('POST', `/autopack/${id}/answers`, { answers }),
+  confirmAutopack: (id: string) => call<{ autopack: Autopack; submission: Submission }>('POST', `/autopack/${id}/confirm`, {}),
+  ackAutopack: (id: string) => call<{ autopack: Autopack }>('POST', `/autopack/${id}/ack`, {}),
+  cancelAutopack: (id: string) => call<{ autopack: Autopack }>('POST', `/autopack/${id}/cancel`, {}),
   reviewHistory: (toolId: string) => call<{ rows: ReviewRow[] }>('GET', `/tools/${toolId}/review-history`).then((r) => r.rows),
   modelUsage: (hours: number, toolId?: string) => call<ModelUsage>('GET', `/model-usage?hours=${hours}${toolId ? `&toolId=${encodeURIComponent(toolId)}` : ''}`),
   notices: (owner: string) => call<{ notices: Notice[] }>('GET', `/notices?owner=${encodeURIComponent(owner)}`).then((r) => r.notices),
