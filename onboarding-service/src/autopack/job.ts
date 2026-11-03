@@ -79,6 +79,9 @@ const TEST_DATA_DIR = (id: string) => join('testdata', id);
 
 // ───────────────────────── 建立、回答、確認、取消 ─────────────────────────
 
+/** 專案 ZIP 的上限：還沒整理的專案常夾帶虛擬環境、node_modules（平台會排除），檔案數放寬 */
+const autopackLimits = (cfg: Config): Config => ({ ...cfg, limits: { ...cfg.limits, uploadBytes: cfg.autopack.uploadBytes, totalUncompressedBytes: cfg.autopack.totalUncompressedBytes, entries: cfg.autopack.entries } });
+
 export type CreateForm = { mode: 'new' | 'update'; expectedToolId?: string; name?: string; department: string; owner: string; actor: string; originalFilename: string; description?: string };
 
 export function createAutopack(store: Store, cfg: Config, buf: Buffer, f: CreateForm): { ok: true; id: string } | { ok: false; issues: Issue[] } {
@@ -93,6 +96,8 @@ export function createAutopack(store: Store, cfg: Config, buf: Buffer, f: Create
     else if (t.kind === 'url') bad('toolId', '這是 URL 上架的工具', '請用「修改網址設定」');
   }
   if (buf.length < 22) issues.push({ file: '(上傳檔)', reason: '檔案太小，不是有效的 ZIP', fix: '把原始碼資料夾壓縮成 ZIP 後上傳' });
+  // 上傳當下就做 ZIP 安全檢查：開發者自己能修的問題（檔案太多、加密、路徑不安全）直接告訴開發者，不轉給 AI Team
+  else issues.push(...readCentralDirectory(buf, autopackLimits(cfg), false).issues);
   if (issues.length) return { ok: false, issues };
   const id = newId('ap');
   const dir = autopackDir(cfg, id);
@@ -274,8 +279,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
   async function stageExtract() {
     step('解壓與安全檢查', 'running');
     const buf = readFileSync(join(dir, 'upload.zip'));
-    const lim = { ...cfg, limits: { ...cfg.limits, uploadBytes: cfg.autopack.uploadBytes, totalUncompressedBytes: cfg.autopack.totalUncompressedBytes } };
-    const cd = readCentralDirectory(buf, lim, false);
+    const cd = readCentralDirectory(buf, autopackLimits(cfg), false);
     if (cd.issues.length) { d.issues = cd.issues; throw new HandOff('上傳的檔案沒有通過安全檢查', cd.issues.map((i) => `${i.file}：${i.reason}`).join('\n')); }
     const raw = join(dir, 'raw');
     rmSync(raw, { recursive: true, force: true });

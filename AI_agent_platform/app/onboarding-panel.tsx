@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ApiError, downloadReviewCsv, onboardingApi, type CatalogTool, type Issue, type ReleaseRecord, type ReviewRow, type ScannerInfo, type Session, type Submission, type VulnItem } from './onboarding-api';
+import { ApiError, downloadReviewCsv, onboardingApi, type Autopack, type CatalogTool, type Issue, type ReleaseRecord, type ReviewRow, type ScannerInfo, type Session, type Submission, type VulnItem } from './onboarding-api';
 import { AutopackPanel } from './autopack-panel';
 import { IconPicker } from './tool-icon';
 import { ToolModelSetting } from './model-admin';
@@ -318,7 +318,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}
-      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : submissionForm.kind === 'source' ? '原始碼未通過檢查' : '提交包未通過檢查（已停止建置）'} issues={issues} />
+      <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : submissionForm.kind === 'source' ? '專案 ZIP 未通過檢查（請修正後重新上傳）' : '提交包未通過檢查（已停止建置）'} issues={issues} />
       <IssueTable title="提醒" issues={warnings} />
     </section>}
 
@@ -469,7 +469,7 @@ type Row = { key: string; cat: Cat; toolId: string; kind?: 'zip' | 'url'; name: 
  * 發布管理（AI Team）：上方狀態卡片兼分頁（待審核／試用中／已公開／已下架），下方一個工具一列；點選後右側滑出工具詳情，
  * 詳情只突出「現在該做的那一步」，版本紀錄與少用的操作（下架、封存）放在下方。只列出經上架服務處理的真實工具。
  */
-export function ReleaseCenter({ notice, departments = [], role, renderSettings }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string, kind: 'zip' | 'url') => ReactNode }) {
+export function ReleaseCenter({ notice, departments = [], role, renderSettings, openAutopack }: { notice: (m: string) => void; departments?: { id: string; name: string }[]; role: Role; renderSettings?: (toolId: string, name: string, kind: 'zip' | 'url') => ReactNode; openAutopack?: (id: string) => void }) {
   const [state, setState] = useState<'checking' | 'offline' | 'ready'>('checking');
   const [items, setItems] = useState<Submission[]>([]);
   const [history, setHistory] = useState<ReleaseRecord[]>([]);
@@ -483,6 +483,19 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [log, setLog] = useState<{ title: string; text: string } | null>(null);
+  // 自動打包轉給 AI Team 的案子（2026/11/03）：同一工具之後有新的提交就視為已處理，30 天後不再提醒
+  const [handoffs, setHandoffs] = useState<Autopack[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const pull = () => { void Promise.all([onboardingApi.autopacks(), onboardingApi.list()]).then(([aps, subs]) => {
+      if (!alive) return;
+      const cutoff = Date.now() - 30 * 86400_000;
+      setHandoffs(aps.filter((a) => a.status === 'handed_off' && Date.parse(a.updatedAt) > cutoff && !subs.some((s) => s.toolId === a.toolId && s.createdAt > a.updatedAt)));
+    }).catch(() => {}); };
+    pull();
+    window.addEventListener('workhub:catalog-refresh', pull);
+    return () => { alive = false; window.removeEventListener('workhub:catalog-refresh', pull); };
+  }, []);
 
   const apply = useCallback((r: Snapshot) => { setItems(r.items); setHistory(r.history); setHealth(r.health); setCat(r.catalog); setState(r.state); }, []);
   const load = useCallback(async () => apply(await fetchAll()), [apply]);
@@ -630,9 +643,10 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings }
   };
 
   return <>
-    {todo.length > 0 && <section className="onb-notice rc-todo" role="status">
-      <div><b>有 {todo.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情。</p></div>
-      <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}</div>
+    {todo.length + handoffs.length > 0 && <section className="onb-notice rc-todo" role="status">
+      <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子會開啟開發者中心的「自動打包」，可下載打包紀錄與打包結果'}。</p></div>
+      <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}
+        {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => openAutopack?.(a.id)}>{a.name ?? a.toolId ?? a.filename}：自動打包轉給 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
     </section>}
     <div className="rc-cards" role="tablist" aria-label="發布狀態">
       {CATS.map((x) => <button key={x.id} role="tab" aria-selected={current === x.id} className={`rc-card ${current === x.id ? 'active' : ''} ${x.id === 'pending' && counts.pending > 0 ? 'attention' : ''}`} onClick={() => setTab(x.id)}>

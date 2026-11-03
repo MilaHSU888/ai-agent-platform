@@ -460,3 +460,17 @@ test('地端模型連線失敗：重試，仍失敗就轉 AI Team，不會沒改
     assert.match(v.handoff.detail, /fetch failed/);
   } finally { await t.close(); }
 });
+
+test('專案 ZIP 檔案數放寬到 5 萬（夾帶 node_modules 等）；超過或有安全問題時上傳當下就告訴開發者，不轉 AI Team', async () => {
+  const { createAutopack } = await import('../src/autopack/job.ts');
+  const cfg = testConfig();
+  assert.equal(cfg.autopack.entries, 50_000);
+  const files = Array.from({ length: 6 }, (_, i) => ({ name: `node_modules/x${i}.js`, data: 'x' }));
+  const small = { ...cfg, limits: { ...cfg.limits, entries: 3 }, autopack: { ...cfg.autopack, entries: 10 } };
+  const store = new Store(join(cfg.dataDir, 'ap.db'));
+  const form = { mode: 'new' as const, name: 'X', department: 'it', owner: 'A', actor: 'A', originalFilename: 'x.zip' };
+  assert.equal(createAutopack(store, small, makeZip(files), form).ok, true, '一般 ZIP 的 3 個上限不適用專案 ZIP');
+  const r = createAutopack(store, { ...small, autopack: { ...small.autopack, entries: 4 } }, makeZip(files), form);
+  assert.equal(r.ok, false);
+  assert.match(JSON.stringify(r), /檔案數 6 超過上限 4/);
+});

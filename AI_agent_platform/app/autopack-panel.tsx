@@ -4,7 +4,7 @@
  * 斷網業務測試 → 打包報告 → 開發者確認後直接進一般上架流程。
  * 看不懂的地方才暫停發問；做不到的類型或超過 60 分鐘轉給 AI Team。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, onboardingApi, type Autopack } from './onboarding-api';
 import type { Role } from './role';
 
@@ -14,12 +14,17 @@ const STATUS: Record<Autopack['status'], [string, string]> = {
 };
 const STEP_ICON: Record<string, string> = { passed: '✓', failed: '✕', skipped: '－', running: '…', waiting: '？' };
 const LIVE: Autopack['status'][] = ['queued', 'running'];
+/** 從發布管理的待辦點進來時要打開的自動打包（跨頁面傳遞，讀完即清） */
+export const OPEN_AUTOPACK_KEY = 'workhub-open-autopack';
+const takeOpenRequest = () => { try { const v = sessionStorage.getItem(OPEN_AUTOPACK_KEY) ?? ''; sessionStorage.removeItem(OPEN_AUTOPACK_KEY); return v; } catch { return ''; } };
 
 type Props = { role: Role; developer: string; notice: (m: string) => void; onSubmitted: (submissionId: string) => void };
 
 export function AutopackPanel({ role, developer, notice, onSubmitted }: Props) {
   const [items, setItems] = useState<Autopack[]>([]);
-  const [openId, setOpenId] = useState('');
+  const [openId, setOpenId] = useState(takeOpenRequest);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [scrollTo, setScrollTo] = useState(!!openId);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
 
@@ -41,6 +46,13 @@ export function AutopackPanel({ role, developer, notice, onSubmitted }: Props) {
   }, [items, role, developer]);
   const open = visible.find((x) => x.id === openId) ?? visible.find((x) => !['submitted', 'cancelled'].includes(x.status));
 
+  // 從待辦點進來：資料載入後捲到自動打包區塊
+  useEffect(() => {
+    if (!scrollTo || !items.length) return;
+    sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    queueMicrotask(() => setScrollTo(false));
+  }, [scrollTo, items.length]);
+
   const live = items.some((x) => LIVE.includes(x.status));
   useEffect(() => {
     if (!live) return;
@@ -54,7 +66,7 @@ export function AutopackPanel({ role, developer, notice, onSubmitted }: Props) {
   };
 
   if (visible.length === 0) return null;
-  return <section className="mg-panel ap" aria-label="自動打包">
+  return <section ref={sectionRef} className="mg-panel ap" aria-label="自動打包">
     <div className="mg-row"><div><h2>自動打包</h2><p className="mg-muted">上傳專案 ZIP 後由平台打包；需要你決定的事會在這裡發問，完成後請看報告並確認送出。</p></div><button onClick={() => void refresh()} disabled={busy}>重新整理</button></div>
     <div className="ap-list">{visible.map((x) => <button key={x.id} className={`mg-submission ${open?.id === x.id ? 'current' : ''}`} onClick={() => { setOpenId(x.id); setAnswers({}); }}>
       <span><b>{x.name ?? x.toolId ?? x.filename}</b><small>{x.mode === 'update' ? '版本更新' : '第一次上架'} · {x.filename} · {x.owner} · {new Date(x.createdAt).toLocaleString('zh-TW')}</small></span>

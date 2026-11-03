@@ -59,7 +59,7 @@ export type Config = {
   /** 漏洞資料庫固定放在平台資料夾（2026/11/03，B6）：本機 pilot/onboarding-data/trivy-cache，正式環境 <平台資料目錄>/trivy-cache */
   trivyCacheDir: string;
   /** 原始碼自動打包（2026/11/03）：上傳上限、一件最多幾分鐘、修正幾次、每次呼叫模型的逾時 */
-  autopack: { uploadBytes: number; totalUncompressedBytes: number; maxMinutes: number; maxFixRounds: number; modelTimeoutMs: number };
+  autopack: { uploadBytes: number; totalUncompressedBytes: number; entries: number; maxMinutes: number; maxFixRounds: number; modelTimeoutMs: number };
 };
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
@@ -98,7 +98,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     relay: { image: process.env.ONBOARDING_RELAY_IMAGE ?? 'python:3.14-slim-trixie', timeoutSeconds: 125 },
     toolNetworkInternal: process.env.ONBOARDING_TOOL_NETWORK !== 'open',
     trivyCacheDir: '',
-    autopack: { uploadBytes: 300 * 1024 * 1024, totalUncompressedBytes: 1024 ** 3, maxMinutes: 60, maxFixRounds: 3, modelTimeoutMs: 10 * 60 * 1000 },
+    autopack: { uploadBytes: 300 * 1024 * 1024, totalUncompressedBytes: 1024 ** 3, entries: 50_000, maxMinutes: 60, maxFixRounds: 3, modelTimeoutMs: 10 * 60 * 1000 },
   };
   const merged = { ...base, ...overrides };
   if (!merged.trivyCacheDir) merged.trivyCacheDir = join(merged.dataDir, 'trivy-cache');
