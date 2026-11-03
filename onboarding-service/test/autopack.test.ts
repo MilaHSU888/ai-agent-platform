@@ -30,7 +30,7 @@ async function setup(opts: FakeOpts = {}, fake?: Fake) {
   const cfg = { ...cfg0, timeouts: { ...cfg0.timeouts, healthMs: 300 } };
   const queue = new JobQueue(store, cfg, rt, secrets);
   for (const k of ['release', 'rollback', 'redeploy', 'trial', 'publish']) queue.extraKinds[k] = (id, signal) => runReleaseJob(store, cfg, rt, secrets, id, signal);
-  const worker = new AutopackWorker(store, cfg, rt, secrets, { model: fake ? () => async (system, user) => { fake.calls.push({ system, user }); return fake.reply(user); } : () => null });
+  const worker = new AutopackWorker(store, cfg, rt, secrets, { model: fake ? () => async (system, user) => { fake.calls.push({ system, user }); return fake.reply(user); } : () => null, retryDelayScale: 0 });
   const app = createApp(store, cfg, queue, rt, secrets, TOKEN, worker);
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', () => r()));
   cfg.port = (app.server.address() as AddressInfo).port;
@@ -354,7 +354,7 @@ test('轉給 AI Team 的情況：不支援的類型、需要連外、真的金�
   let clock = 0;
   const slow = new FakeRuntime({});
   slow.build = async (...args) => { clock += 61 * 60_000; return rt.build(...args); };
-  const w = new AutopackWorker(store, cfg0, slow, new Secrets(cfg0.dataDir), { model: () => async () => '{"edits":[]}', clock: () => clock });
+  const w = new AutopackWorker(store, cfg0, slow, new Secrets(cfg0.dataDir), { model: () => async () => '{"edits":[]}', clock: () => clock, retryDelayScale: 0 });
   const { createAutopack } = await import('../src/autopack/job.ts');
   const r = createAutopack(store, cfg0, makeZip([{ name: 'app.py', data: 'import streamlit as st\n' }, { name: 'requirements.txt', data: 'streamlit\n' }]), { mode: 'new', name: 'x', department: 'it', owner: 'A', actor: 'A', originalFilename: 'x.zip' });
   assert.ok(r.ok);
@@ -432,5 +432,31 @@ test('新工具和現有工具撞名：先問是不是新版本（是 → 結束
     await t.runWorker();
     v = (await t.call('GET', `/api/onboarding/autopack/${b}`)).data.autopack;
     assert.equal(v.toolId, 'quote-compare');
+  } finally { await t.close(); }
+});
+
+test('地端模型連線失敗：重試，仍失敗就轉 AI Team，不會沒改程式就繼續打包（2026/11/03 實測）', async () => {
+  let fails = 2;
+  const flaky = fakeModel((user) => { if (user.includes('OPENAI_BASE_URL') && fails-- > 0) throw new TypeError('fetch failed'); return null; });
+  const t = await setup({}, flaky);
+  const answerAll = async (id: string) => {
+    const v = (await t.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
+    await t.call('POST', `/api/onboarding/autopack/${id}/answers`, { answers: Object.fromEntries(v.questions.map((q: any) => [q.id, q.kind === 'secret' ? 'env' : q.kind === 'external' ? 'not_needed' : 'keep'])) });
+    await t.runWorker();
+    return (await t.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
+  };
+  try {
+    const a = (await upload(t)).data.autopack.id as string;
+    await t.runWorker();
+    let v = await answerAll(a);
+    assert.equal(v.status, 'awaiting_review', '失敗 2 次後第 3 次成功');
+    assert.match(v.report.confirm[0], /已改用平台指定的模型（改了 core\/ai\.py）/);
+    fails = 99;
+    const b = (await upload(t)).data.autopack.id as string;
+    await t.runWorker();
+    v = await answerAll(b);
+    assert.equal(v.status, 'handed_off');
+    assert.match(v.handoff.reason, /地端模型沒有完成「AI 連線改用平台設定」/);
+    assert.match(v.handoff.detail, /fetch failed/);
   } finally { await t.close(); }
 });

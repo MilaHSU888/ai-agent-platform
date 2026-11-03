@@ -188,7 +188,7 @@ function cleanup(cfg: Config, id: string, o: { keepWork: boolean; keepTestData?:
 
 // ───────────────────────── 排隊與執行 ─────────────────────────
 
-export type WorkerOpts = { model?: (toolId: string) => ModelFn | null; clock?: () => number };
+export type WorkerOpts = { model?: (toolId: string) => ModelFn | null; clock?: () => number; /** 重試間隔倍率（測試用 0） */ retryDelayScale?: number };
 
 /** 自動打包的獨立排隊線：一次一件；狀態都在 SQLite，服務重開後繼續 */
 export class AutopackWorker {
@@ -402,6 +402,9 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       await runModelTask(model, t.task, t.files, t.extra ?? '', t.name);
       const last = d.modelLog.at(-1)!;
       step(`地端模型：${t.name}`, last.applied.length ? 'passed' : 'failed', last.applied.length ? `改了 ${last.applied.join('、')}` : last.error ?? '模型沒有提出可套用的修改');
+      // 必要的修改沒做成就不能往下（2026/11/03 實測：模型連線失敗後照樣建置，報告卻寫「已改用平台模型」）
+      if (!last.applied.length) throw new HandOff(`地端模型沒有完成「${t.name}」`,
+        `${last.error ?? '模型沒有提出可套用的修改'}${last.rejected.length ? `\n不採用的修改：${last.rejected.map((x) => `${x.path}：${x.reason}`).join('；')}` : ''}\n這一步必須修改程式，請 AI Team 確認平台預設模型可以連線後協助處理。`);
     }
   }
 
@@ -414,9 +417,20 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     if (keepNote) extra = `${extra}\n${keepNote}`.trim();
     const entry: Detail['modelLog'][number] = { task: name, note: '', applied: [], rejected: [] };
     try {
-      const ctrl = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Math.min(cfg.autopack.modelTimeoutMs, remaining())))]);
-      const raw = await model(systemPrompt(), taskPrompt(task, contents, extra), ctrl);
-      const reply = parseReply(raw);
+      // 連線失敗或回覆看不懂時重試（最多 3 次，間隔 5、15 秒）
+      let reply: ReturnType<typeof parseReply> = { edits: [], note: '', raw: '' };
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const ctrl = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Math.min(cfg.autopack.modelTimeoutMs, remaining())))]);
+          reply = parseReply(await model(systemPrompt(), taskPrompt(task, contents, extra), ctrl));
+          if (reply.edits.length || attempt >= 3) break;
+          log(`${name}：模型回覆看不懂，重試第 ${attempt} 次`);
+        } catch (e) {
+          if (signal.aborted || attempt >= 3) throw e;
+          log(`${name}：呼叫模型失敗（${(e as Error).message}），${attempt === 1 ? 5 : 15} 秒後重試`);
+        }
+        await new Promise((res) => setTimeout(res, (opts.retryDelayScale ?? 1) * (attempt === 1 ? 5000 : 15000)));
+      }
       entry.note = reply.note;
       const testData = new Set(d.testData?.files.map((f) => f.path) ?? []);
       const vet = vetEdits(reply.edits, {
@@ -662,7 +676,8 @@ function buildReport(d: Detail, r: Row, originalDir: string, srcDir: string, fil
   const keep = a.data.keep.map((x) => `${x.path}（${x.kind}）`);
   const testData = (d.testData?.files ?? []).map((f) => ({ path: f.path, size: f.size }));
   const confirm: string[] = [];
-  if (a.ai.uses) confirm.push(`AI 功能：已改用平台指定的模型（${a.ai.rewriteFiles.join('、') || '原本就讀平台設定'}），上線後請測試 AI 相關功能`);
+  const aiDone = d.modelLog.find((m) => m.task === 'AI 連線改用平台設定')?.applied ?? [];
+  if (a.ai.uses) confirm.push(a.ai.rewriteFiles.length ? `AI 功能：已改用平台指定的模型（改了 ${aiDone.join('、')}），上線後請測試 AI 相關功能` : 'AI 功能：程式原本就讀平台設定，上線後請測試 AI 相關功能');
   if (fixed.length) confirm.push('資料保存位置有修改，請確認匯出、上傳等功能存檔正常');
   if (g.test.smoke) confirm.push('專案沒有業務測試，目前只有啟動測試；建議之後補上');
   if (d.schemaChanges?.length) confirm.push(`和上一版相比資料格式有變（${d.schemaChanges.join('；')}），請確認新版能讀舊資料`);

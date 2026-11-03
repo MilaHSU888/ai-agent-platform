@@ -246,6 +246,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
       </div>}
       {submissionForm.kind === 'url' ? <>
       <p className="mg-muted">登錄已經在其他地方運作的網站，不需 ZIP。送出後平台會檢查網址能否連線，再交給 AI Team 審核；核准後一樣先試用（未公開），由 AI Team 切換為公開中。工具圖示由 AI Team 設定。</p>
+      <p className="onb-note">若這個網站有使用 AI 模型，要先改連平台的 LLM Proxy，平台才能計算模型用量；直接連外部或自架模型的用量不會出現在使用分析。</p>
       {submissionForm.tool && <p className="onb-note">工具名稱、用途說明與適用情境請由 AI Team 在發布管理修改。修改網址後需重新經 AI Team 審核。工具已公開時，新網址會先以試用入口並行，一般使用者仍使用目前網址，AI Team 公開後才切換。</p>}
       <form key={`url-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-url-form" onSubmit={(e) => {
         e.preventDefault();
