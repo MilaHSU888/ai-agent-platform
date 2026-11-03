@@ -492,15 +492,11 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings, 
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [log, setLog] = useState<{ title: string; text: string } | null>(null);
-  // 自動打包轉給 AI Team 的案子（2026/11/03）：同一工具之後有新的提交就視為已處理，30 天後不再提醒
+  // 自動打包轉給 AI Team 的案子（2026/11/03）：AI Team 有人點開（接手）後就不再列出，由接手的人聯絡開發者
   const [handoffs, setHandoffs] = useState<Autopack[]>([]);
   useEffect(() => {
     let alive = true;
-    const pull = () => { void Promise.all([onboardingApi.autopacks(), onboardingApi.list()]).then(([aps, subs]) => {
-      if (!alive) return;
-      const cutoff = Date.now() - 30 * 86400_000;
-      setHandoffs(aps.filter((a) => a.status === 'handed_off' && Date.parse(a.updatedAt) > cutoff && !subs.some((s) => s.toolId === a.toolId && s.createdAt > a.updatedAt)));
-    }).catch(() => {}); };
+    const pull = () => { void onboardingApi.autopacks().then((aps) => { if (alive) setHandoffs(aps.filter((a) => a.status === 'handed_off' && !a.ack)); }).catch(() => {}); };
     pull();
     window.addEventListener('workhub:catalog-refresh', pull);
     return () => { alive = false; window.removeEventListener('workhub:catalog-refresh', pull); };
@@ -653,9 +649,9 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings, 
 
   return <>
     {todo.length + handoffs.length > 0 && <section className="onb-notice rc-todo" role="status">
-      <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子會開啟開發者中心的「自動打包」，可下載打包紀錄與打包結果'}。</p></div>
+      <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子點開即由你接手（不再列在這裡），請聯絡開發者協助處理'}。</p></div>
       <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}
-        {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => openAutopack?.(a.id)}>{a.name ?? a.toolId ?? a.filename}：自動打包轉給 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
+        {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => { setHandoffs((h) => h.filter((x) => x.id !== a.id)); void onboardingApi.ackAutopack(a.id).catch(() => {}).finally(() => openAutopack?.(a.id)); }}>{a.name ?? a.toolId ?? a.filename}：自動打包轉給 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
     </section>}
     <div className="rc-cards" role="tablist" aria-label="發布狀態">
       {CATS.map((x) => <button key={x.id} role="tab" aria-selected={current === x.id} className={`rc-card ${current === x.id ? 'active' : ''} ${x.id === 'pending' && counts.pending > 0 ? 'attention' : ''}`} onClick={() => setTab(x.id)}>

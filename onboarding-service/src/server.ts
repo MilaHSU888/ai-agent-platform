@@ -11,7 +11,7 @@ import { catalog, recordEntryEvent, releaseHistory, requestRedeploy, requestRele
 import { archiveTool, opsEvents, restartTool, setMaintenance, toolLogs } from './ops.ts';
 import { setLight, type LightTarget } from './trial.ts';
 import { reviewHistory, reviewHistoryCsv } from './review-history.ts';
-import { answerAutopack, autopackList, autopackLog, autopackView, autopackZip, cancelAutopack, confirmAutopack, createAutopack, type AutopackWorker } from './autopack/job.ts';
+import { ackAutopack, answerAutopack, autopackList, autopackLog, autopackView, autopackZip, cancelAutopack, confirmAutopack, createAutopack, type AutopackWorker } from './autopack/job.ts';
 import { setToolIcon, submitUrlTool } from './url-tools.ts';
 import { defaultModel, listEndpoints, seedDefault, setDefault, setEnabled, setLocalOnly, setToolModel, toolModel } from './models.ts';
 import { modelUsage } from './usage.ts';
@@ -314,6 +314,10 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
       const r = confirmAutopack(store, cfg, m[1], session!.actor);
       queue.tick();
       send(res, 200, { autopack: autopackView(store, m[1]), submission: submissionView(r.submissionId) });
+    } },
+    { method: 'POST', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/ack$/, auth: true, fn: ({ res, session }, m) => {
+      ackAutopack(store, m[1], session!.actor);
+      send(res, 200, { autopack: autopackView(store, m[1]) });
     } },
     { method: 'POST', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/cancel$/, auth: true, fn: ({ res, session }, m) => {
       cancelAutopack(store, cfg, m[1], session!.actor);

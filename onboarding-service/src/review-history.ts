@@ -17,7 +17,7 @@ const AUDIT_LABEL: Record<string, string> = {
   'tool.published': '公開', 'tool.unpublished': '切回試用中', 'trial.ended': '下架試用版', 'tool.publish_failed': '公開失敗',
   'release.offline': '下架', 'release.rollback_requested': '回復', 'release.redeploy_requested': '重新上線',
   'submission.withdrawn': '取消提交', 'tool.archived': '封存',
-  'autopack.created': '上傳原始碼（自動打包）', 'autopack.handed_off': '自動打包轉給 AI Team', 'autopack.confirmed': '確認打包報告', 'testdata.deleted': '測試資料已刪除',
+  'autopack.created': '上傳原始碼（自動打包）', 'autopack.handed_off': '自動打包轉給 AI Team', 'autopack.acknowledged': 'AI Team 接手（自動打包）', 'autopack.confirmed': '確認打包報告', 'testdata.deleted': '測試資料已刪除',
 };
 
 export const identityOf = (actor: string) => (actor === 'system' ? '系統' : '示範，未驗證');
