@@ -13,6 +13,8 @@ export type Lang = 'python' | 'node' | 'java' | 'dotnet' | 'go' | 'php' | 'stati
 export type Ref = { file: string; line?: number; detail: string };
 export type DataItem = { path: string; kind: '資料庫' | '資料夾' | '檔案'; ref: Ref };
 export type OutsideWrite = { id: string; path: string; ref: Ref };
+/** 寫在程式資料夾、可以直接「連到資料目錄」的路徑（相對專案資料夾），不用改程式 */
+export const linkablePath = (p: string) => !!p && !p.includes('..') && !p.startsWith('/') && /^[\w.\-/]+$/.test(p);
 
 export type Analysis = {
   root: string;
@@ -32,7 +34,9 @@ export type Analysis = {
   secrets: Ref[];
   external: { host: string; refs: Ref[] }[];
   windowsDeps: { name: string; refs: Ref[] }[];
-  ai: { uses: boolean; refs: Ref[]; rewriteFiles: string[] };
+  ai: { uses: boolean; refs: Ref[]; rewriteFiles: string[];
+    /** 程式本來就是 OpenAI 相容介面、只是設定名稱不同：平台在啟動時把這些環境變數填成平台模型，不改程式（2026/11/03） */
+    envMap: { base: string; key: string | null; model: string | null; stripV1: boolean } | null };
   data: { readsDataDirEnv: boolean; defaultDir: string | null; keep: DataItem[]; temp: DataItem[]; outside: OutsideWrite[]; seeds: string[]; liveData: string[] };
   testData: string[];
   tests: { command: string[] | null; files: string[]; label: string };
@@ -63,6 +67,27 @@ function grep(files: SrcFile[], re: RegExp, opts: { code?: boolean; skipTests?: 
     });
   }
   return out;
+}
+
+/** 專案裡已經有、可以拿來當健康檢查的網址（不用改程式）：優先 /health 類，其次首頁 / */
+export function existingRoute(files: SrcFile[], lang: 'py' | 'js'): string | null {
+  const re = lang === 'py' ? /@\w+\.(?:get|route|api_route)\(\s*["'](\/[\w/-]*)["']/g : /\b\w+\.(?:get|all)\(\s*["'`](\/[\w/-]*)["'`]/g;
+  const paths = new Set<string>();
+  for (const f of files.filter((x) => x.text && (lang === 'py' ? x.path.endsWith('.py') : /\.[cm]?[jt]s$/.test(x.path)) && !/(^|\/)(tests?|__tests__)\//.test(x.path)))
+    for (const m of f.text!.matchAll(re)) paths.add(m[1]);
+  return ['/health', '/healthz', '/api/health', '/api/healthz', '/ping', '/status', '/'].find((p) => paths.has(p)) ?? null;
+}
+
+/** OpenAI 相容呼叫的網址、金鑰、模型若從環境變數讀，回傳變數名稱；Ollama 等非 OpenAI 介面回傳 null */
+export function openaiEnvMap(files: SrcFile[], aiFiles: string[]): Analysis['ai']['envMap'] {
+  const texts = files.filter((f) => aiFiles.includes(f.path) || /(^|\/)(settings|config|conf)\.py$/.test(f.path)).map((f) => f.text ?? '');
+  const all = texts.join('\n');
+  if (/ollama|\/api\/chat|\/api\/generate/i.test(all) || !/chat\/completions|chat\.completions\.create/.test(all)) return null;
+  const names = [...all.matchAll(/(?:getenv|environ\.get|environ\[|process\.env\.|process\.env\[)\(?\s*["'`]?([A-Z][A-Z0-9_]{2,})/g)].map((m) => m[1]);
+  const pick = (re: RegExp, not?: RegExp) => names.find((n) => re.test(n) && !(not && not.test(n))) ?? null;
+  const base = pick(/(API_?BASE|BASE_?URL|ENDPOINT|API_?URL|LLM_?URL|HOST)/, /OPENAI_BASE_URL/);
+  if (!base) return null;
+  return { base, key: pick(/(API_?KEY|TOKEN|SECRET)/, /OPENAI_API_KEY/), model: pick(/MODEL/, /(OPENAI_MODEL|PATH|DIR)/), stripV1: /["'`]\/v1\/chat\/completions/.test(all) };
 }
 
 const DEP_FILE = /^(requirements[\w.-]*\.txt|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|package\.json|package-lock\.json|composer\.json|go\.mod|pom\.xml)$/i;
@@ -149,7 +174,7 @@ export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: 
 
   const a: Analysis = {
     root, borrowed, inferredDeps: [], language: null, framework: null, frameworkLabel: '', entry: null, port: 8080, healthPath: '/health', healthBuiltin: false, runtimeVersion: null,
-    unsupported: null, secrets: [], external: [], windowsDeps: [], ai: { uses: false, refs: [], rewriteFiles: [] },
+    unsupported: null, secrets: [], external: [], windowsDeps: [], ai: { uses: false, refs: [], rewriteFiles: [], envMap: null },
     data: { readsDataDirEnv: false, defaultDir: null, keep: [], temp: [], outside: [], seeds: [], liveData: [] },
     testData: [], tests: { command: null, files: [], label: '' }, systemPackages: [], excluded, manifest: { name: null, deps: [] },
   };
@@ -218,10 +243,7 @@ export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: 
     }
     const hw = imports('(serial|usb|hid|pyvisa|bluetooth|win32print)');
     if (hw.length && !a.unsupported) a.unsupported = { reason: '需要接實體設備', detail: `${hw[0].f.path}:${hw[0].line} 使用 ${hw[0].m[2]}（序列埠、USB、印表機等設備），平台上的工具碰不到電腦上的設備。` };
-    if (a.framework && !a.healthBuiltin) {
-      const route = grep(keepFiles.filter((f) => f.path.endsWith('.py')), /["']\/(health|healthz)["']/);
-      if (route.length) { a.healthBuiltin = true; a.healthPath = `/${route[0].m[1]}`; }
-    }
+    if (a.framework && !a.healthBuiltin) { const r = existingRoute(keepFiles, 'py'); if (r) { a.healthBuiltin = true; a.healthPath = r; } }
     // 現有測試
     const tf = keepFiles.filter((f) => /(^|\/)(test_[^/]+|[^/]+_test)\.py$/.test(f.path)).map((f) => f.path);
     if (tf.length) {
@@ -245,7 +267,7 @@ export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: 
     const listen = grep(keepFiles, /\.listen\(\s*(\d{4,5})/, { code: true, skipTests: true })[0] ?? grep(keepFiles, /PORT\s*\|\|\s*(\d{4,5})/, { code: true, skipTests: true })[0];
     if (listen && a.framework !== 'spa') a.port = Number(listen.m[1]);
     a.entry = pkg.scripts.start ? 'npm start' : pkg.main ?? ['server.js', 'index.js', 'app.js', 'main.js'].find((p) => keepFiles.some((f) => f.path === p)) ?? null;
-    if (a.framework && !a.healthBuiltin && grep(keepFiles, /["'`]\/(health|healthz)["'`]/, { code: true }).length) a.healthBuiltin = true;
+    if (a.framework && !a.healthBuiltin) { const r = existingRoute(keepFiles, 'js'); if (r) { a.healthBuiltin = true; a.healthPath = r; } }
     if (pkg.scripts.test && !/no test specified/.test(pkg.scripts.test)) a.tests = { command: ['npm', 'test'], files: keepFiles.filter((f) => /\.(test|spec)\.[jt]sx?$/.test(f.path)).map((f) => f.path), label: '專案原有的 npm test' };
   } else if (a.language === 'java') {
     const pom = text(keepFiles, 'pom.xml') ?? '';
@@ -335,7 +357,10 @@ export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: 
   a.ai.uses = aiHits.length > 0;
   a.ai.refs = [...new Map(aiHits.map((h) => [h.f.path, { file: h.f.path, line: h.line, detail: h.m[1] }])).values()].slice(0, 8);
   const usesPlatformEnv = keepFiles.some((f) => f.text && CODE_EXT.test(f.path) && /OPENAI_BASE_URL/.test(f.text));
-  if (a.ai.uses && !usesPlatformEnv) a.ai.rewriteFiles = [...new Set(aiHits.map((h) => h.f.path))].slice(0, 4);
+  if (a.ai.uses && !usesPlatformEnv) {
+    a.ai.envMap = openaiEnvMap(keepFiles, aiHits.map((h) => h.f.path));
+    if (!a.ai.envMap) a.ai.rewriteFiles = [...new Set(aiHits.map((h) => h.f.path))].slice(0, 4);
+  }
 
   // ── 資料保存 ──
   analyzeData(a, keepFiles);

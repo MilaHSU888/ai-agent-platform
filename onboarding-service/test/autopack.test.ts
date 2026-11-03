@@ -206,14 +206,16 @@ test('自動打包完整流程：暫停提問 → 模型補程式 → 建置測�
     v = (await t.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
     assert.equal(v.status, 'awaiting_review', JSON.stringify(v.steps));
     // 模型只做兩件事：AI 連線、資料路徑；被擋下的修改留在報告
-    assert.equal(fake.calls.length, 3, '模型做三件事：AI 連線、移除金鑰、資料路徑');
+    assert.equal(fake.calls.length, 2, '模型只做兩件事：AI 連線（Ollama 寫法）、移除金鑰；資料路徑由平台啟動時連到資料目錄');
     assert.match(fake.calls[0].system, /DATA_DIR/);
     assert.ok(!fake.calls.some((c) => c.user.includes('abcdefghijklmnop')), '送模型前遮掉金鑰');
     const rep = v.report;
     assert.equal(rep.summary['tool.id'], 'quote-aggregator');
     assert.match(rep.summary['專案'], /Streamlit（Python 3\.14）/);
     assert.ok(rep.changes.some((c: any) => c.path === 'Dockerfile' && c.kind === 'added' && c.by === 'template'));
-    assert.ok(rep.changes.some((c: any) => c.path === 'core/exporter.py' && c.kind === 'modified' && c.by === 'model' && /DATA_DIR/.test(c.diff)));
+    assert.ok(!rep.changes.some((c: any) => c.path === 'core/exporter.py'), '匯出資料夾不改程式');
+    assert.match(readFileSync(join(t.cfg.dataDir, 'autopack', id, 'src', '.workhub/entrypoint.sh'), 'utf8'), /ln -sfn "\$DATA_DIR\/[\w/]*outbox" "\/app\/[\w/]*outbox"/);
+    assert.ok(rep.decisions.fixed.some((x: string) => /啟動時由平台連到資料目錄（不改程式）/.test(x)));
     assert.ok(rep.changes.some((c: any) => c.path === '.workhub/seed/templates/比較表範本.xlsx'), '範本第一次啟動複製到資料目錄');
     assert.ok(!rep.changes.some((c: any) => c.path.startsWith('tests/fixtures/')), '測試資料不放進工具');
     assert.deepEqual(rep.model.rejected.sort(), ['tests/fixtures/米妮.xlsx：不能修改測試資料', 'tests/test_export.py：專案原有的測試不能修改']);
@@ -483,7 +485,8 @@ test('偵測 AI：網址前半段放在環境變數、只寫 /chat/completions �
   ];
   const a = analyze(files, [], []);
   assert.equal(a.ai.uses, true);
-  assert.deepEqual(a.ai.rewriteFiles, ['translator.py']);
+  assert.deepEqual(a.ai.rewriteFiles, [], '本來就是 OpenAI 相容介面：不改程式');
+  assert.deepEqual(a.ai.envMap, { base: 'UMT_5090_API_BASE', key: null, model: null, stripV1: false });
 });
 
 test('上傳時回答會不會用 AI，平台對照：說會但找不到 → 問檔案；說不會但找到 → 問確認（2026/11/03）', async () => {
@@ -548,7 +551,7 @@ test('AI Team 點開轉過來的自動打包：待辦不再列出（不記錄是
 test('健康檢查由平台直接加（FastAPI／Flask）；模型回覆字串內直接換行也能讀（2026/11/03）', async () => {
   const { addHealthRoute } = await import('../src/autopack/job.ts');
   const src = mkdtempSync(join(tmpdir(), 'ap-health-'));
-  writeFileSync(join(src, 'app.py'), 'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/")\ndef home():\n    return {}\n');
+  writeFileSync(join(src, 'app.py'), 'from fastapi import FastAPI\napp = FastAPI()\n\n@app.post("/translate")\ndef home():\n    return {}\n');
   const a = analyze([{ path: 'app.py', size: 1, text: readFileSync(join(src, 'app.py'), 'utf8') }, { path: 'requirements.txt', size: 1, text: 'fastapi\nuvicorn\n' }], [], []);
   assert.equal(a.framework, 'fastapi');
   assert.equal(addHealthRoute(a, src), 'app.py');
@@ -575,4 +578,25 @@ test('套件清單在上一層時借上來；完全沒有時依 import 推斷（
   assert.ok(!a.excluded.some((e) => e.path.endsWith('requirements.txt')));
   const { inferPythonDeps } = await import('../src/autopack/analyze.ts');
   assert.deepEqual(inferPythonDeps([f('main.py', 'import os, json\nfrom fastapi import FastAPI\nimport cv2\nfrom PIL import Image\nfrom helpers import x\n'), f('helpers.py', 'import yaml\n')]), ['fastapi', 'opencv-python-headless', 'pillow', 'pyyaml']);
+});
+
+test('固定規則：沿用現有健康檢查網址；模型設定與資料夾在啟動時處理，不改程式（2026/11/03）', async () => {
+  const { existingRoute } = await import('../src/autopack/analyze.ts');
+  const { entrypoint } = await import('../src/autopack/templates.ts');
+  const f = (path: string, t: string) => ({ path, size: t.length, text: t });
+  assert.equal(existingRoute([f('main.py', '@app.get("/")\ndef a(): pass\n@app.get("/api/health")\ndef b(): pass\n')], 'py'), '/api/health');
+  assert.equal(existingRoute([f('server.js', "app.get('/', (req, res) => res.send('ok'))\n")], 'js'), '/');
+  assert.equal(existingRoute([f('main.py', '@app.post("/x")\ndef a(): pass\n')], 'py'), null);
+  // 實際用 sh 跑產生的啟動腳本：資料夾連到資料目錄（原有檔案搬過去）、變數名稱對應
+  const { execFileSync } = await import('node:child_process');
+  const base = mkdtempSync(join(tmpdir(), 'ap-entry-'));
+  mkdirSync(join(base, 'app/data/outbox'), { recursive: true });
+  writeFileSync(join(base, 'app/data/outbox/old.xlsx'), 'x');
+  const script = entrypoint({ seed: false, links: ['data/outbox'], workdir: join(base, 'app'), envMap: { base: 'UMT_API_BASE', key: 'UMT_API_KEY', model: null, stripV1: true } });
+  writeFileSync(join(base, 'e.sh'), script);
+  const out = execFileSync('sh', [join(base, 'e.sh'), 'sh', '-c', 'echo "$UMT_API_BASE|$UMT_API_KEY"'], { env: { PATH: process.env.PATH, DATA_DIR: join(base, 'data'), OPENAI_BASE_URL: 'http://llm-relay:8080/v1', OPENAI_API_KEY: 'k' } }).toString().trim();
+  assert.equal(out, 'http://llm-relay:8080|k');
+  assert.ok(existsSync(join(base, 'data/data/outbox/old.xlsx')), '原有檔案搬到資料目錄');
+  writeFileSync(join(base, 'app/data/outbox/new.xlsx'), 'y');
+  assert.ok(existsSync(join(base, 'data/data/outbox/new.xlsx')), '之後寫的檔案落在資料目錄');
 });

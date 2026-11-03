@@ -42,17 +42,32 @@ const SMOKE = sh([
   'echo "90 秒內健康檢查沒有回應："; tail -50 /tmp/workhub-smoke.log; kill $PID 2>/dev/null; exit 1',
 ]);
 
-/** 第一次啟動時把隨程式附帶的資料（例如範本）複製到資料目錄，不覆蓋已存在的檔案 */
-const ENTRYPOINT = sh([
-  '#!/bin/sh',
-  '# WorkHub 自動打包：第一次啟動時把隨程式附帶的資料（/workhub/seed）複製到資料目錄，不覆蓋已存在的檔案',
-  'set -e',
-  'if [ -d /workhub/seed ] && [ -n "$DATA_DIR" ]; then',
-  '  mkdir -p "$DATA_DIR"',
-  '  cp -Rn /workhub/seed/. "$DATA_DIR"/ 2>/dev/null || true',
-  'fi',
-  'exec "$@"',
-]);
+/** 啟動前的固定處理（不改工具程式）：
+ *  1. 第一次啟動時把隨程式附帶的資料（例如範本）複製到資料目錄，不覆蓋已存在的檔案
+ *  2. 程式寫在自己資料夾裡的資料（例如 data/outbox）：把那個資料夾連到資料目錄，更新後不會不見
+ *  3. 程式用自己的環境變數名稱讀模型網址／金鑰／模型：填成平台注入的 OPENAI_* */
+export function entrypoint(o: { seed: boolean; links: string[]; workdir: string; envMap: Analysis['ai']['envMap'] }): string {
+  const q = (x: string) => `"${x.replace(/"/g, '')}"`;
+  const lines = ['#!/bin/sh', '# WorkHub 自動打包產生：啟動前的固定處理（不改工具程式）', 'set -e'];
+  if (o.seed) lines.push('# 1. 隨程式附帶的資料第一次啟動時複製到資料目錄', 'if [ -d /workhub/seed ] && [ -n "$DATA_DIR" ]; then', '  mkdir -p "$DATA_DIR"', '  cp -Rn /workhub/seed/. "$DATA_DIR"/ 2>/dev/null || true', 'fi');
+  if (o.links.length) {
+    lines.push('# 2. 程式寫在自己資料夾裡的資料：連到資料目錄', 'if [ -n "$DATA_DIR" ]; then');
+    for (const p of o.links) {
+      const app = `${o.workdir}/${p}`, data = `$DATA_DIR/${p}`;
+      lines.push(`  mkdir -p ${q(data)}`, `  if [ -d ${q(app)} ] && [ ! -L ${q(app)} ]; then cp -Rn ${q(app + '/.')} ${q(data + '/')} 2>/dev/null || true; rm -rf ${q(app)}; fi`,
+        `  mkdir -p ${q(app.slice(0, app.lastIndexOf('/')))}`, `  ln -sfn ${q(data)} ${q(app)}`);
+    }
+    lines.push('fi');
+  }
+  if (o.envMap) {
+    const m = o.envMap;
+    lines.push('# 3. 模型設定：程式讀自己的變數名稱，填成平台注入的值', `if [ -n "$OPENAI_BASE_URL" ]; then export ${m.base}="${m.stripV1 ? '${OPENAI_BASE_URL%/v1}' : '$OPENAI_BASE_URL'}"; fi`);
+    if (m.key) lines.push(`if [ -n "$OPENAI_API_KEY" ]; then export ${m.key}="$OPENAI_API_KEY"; fi`);
+    if (m.model) lines.push(`if [ -n "$OPENAI_MODEL" ]; then export ${m.model}="$OPENAI_MODEL"; fi`);
+  }
+  lines.push('exec "$@"');
+  return sh(lines);
+}
 
 const DOCKERIGNORE = sh([
   '# WorkHub 自動打包產生：不放進映像檔的東西',
@@ -64,16 +79,18 @@ const apt = (pkgs: string[]) => pkgs.length
   ? [`RUN apt-get update && apt-get install -y --no-install-recommends ${[...new Set(pkgs)].join(' ')} \\`, ' && rm -rf /var/lib/apt/lists/*']
   : [];
 
-export function generate(a: Analysis, opts: { toolId: string; description: string; platforms: string[]; reqFile: string | null; hasLock: boolean; installable?: boolean; prev?: PrevManifest; date: string }): Generated {
+export function generate(a: Analysis, opts: { toolId: string; description: string; platforms: string[]; reqFile: string | null; hasLock: boolean; installable?: boolean; links?: string[]; prev?: PrevManifest; date: string }): Generated {
   const notes: string[] = [];
   const files: Record<string, string> = {};
   const usesData = a.language !== 'static' && a.framework !== 'spa' && (a.data.readsDataDirEnv || a.data.keep.length > 0 || a.data.seeds.length > 0 || a.data.outside.length > 0);
   const dataDir = usesData ? '/data' : null;
   const seed = a.data.seeds.length > 0 && !!dataDir;
+  const links = dataDir && ['python', 'node'].includes(a.language ?? '') ? (opts.links ?? []) : [];
+  const useEntry = seed || links.length > 0 || !!a.ai.envMap;
   const pkgs = a.systemPackages.map((p) => p.pkg);
   const head = [`# WorkHub 自動打包產生（${opts.date}）：${a.frameworkLabel}`, '# 依上架 SOP 第 5 節：非 root 執行、資料只寫在 /data、不放任何金鑰'];
   const envLine = (extra: string[]) => [`ENV TZ=Asia/Taipei${dataDir ? ` DATA_DIR=${dataDir}` : ''}${extra.length ? ' ' + extra.join(' ') : ''}`];
-  const entry = seed ? ['ENTRYPOINT ["/workhub/entrypoint.sh"]'] : [];
+  const entry = useEntry ? ['ENTRYPOINT ["/workhub/entrypoint.sh"]'] : [];
   const port = opts.prev?.run?.port ?? a.port;
   let cmd: string[] = [];
   let df: string[] = [];
@@ -171,11 +188,13 @@ export function generate(a: Analysis, opts: { toolId: string; description: strin
   files['Dockerfile'] = df.join('\n') + '\n';
   files['.dockerignore'] = DOCKERIGNORE;
   files['.workhub/smoke-test.sh'] = SMOKE;
-  files['.workhub/entrypoint.sh'] = ENTRYPOINT;
+  files['.workhub/entrypoint.sh'] = entrypoint({ seed, links, workdir: '/app', envMap: a.ai.envMap });
+  if (links.length) notes.push(`程式寫在自己資料夾裡的 ${links.join('、')}，啟動時由平台連到資料目錄（不改程式），更新後不會不見`);
+  if (a.ai.envMap) notes.push(`程式本來就是 OpenAI 相容介面，啟動時由平台把 ${[a.ai.envMap.base, a.ai.envMap.key, a.ai.envMap.model].filter(Boolean).join('、')} 填成平台模型的設定（不改程式）`);
 
   const health = opts.prev?.run?.healthCheck?.path ?? a.healthPath;
   const smoke = !a.tests.command;
-  const testCmd = smoke ? ['/workhub/smoke-test.sh', `http://127.0.0.1:${port}${health}`, ...(seed ? ['/workhub/entrypoint.sh'] : []), ...cmd] : a.tests.command!;
+  const testCmd = smoke ? ['/workhub/smoke-test.sh', `http://127.0.0.1:${port}${health}`, ...(useEntry ? ['/workhub/entrypoint.sh'] : []), ...cmd] : a.tests.command!;
   if (smoke) notes.push('專案沒有業務測試，先用「啟動測試」（工具能啟動、健康檢查有回應）；建議之後補上真正的業務測試');
 
   const heavy = pkgs.includes('libreoffice-writer-nogui') || pkgs.some((p) => p.startsWith('tesseract'));

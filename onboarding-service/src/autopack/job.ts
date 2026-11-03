@@ -22,7 +22,7 @@ import { toolNetwork } from '../relay.ts';
 import { freePort, type Ctx, type Runtime } from '../runtime.ts';
 import type { Secrets } from '../secrets.ts';
 import { extract, readCentralDirectory, type Issue } from '../zip-intake.ts';
-import { analyze, type Analysis, type Ref } from './analyze.ts';
+import { analyze, linkablePath, type Analysis, type Ref } from './analyze.ts';
 import { lineDiff } from './diff.ts';
 import { loadTree, splitRoot } from './files.ts';
 import { maskSecrets, parseReply, platformModel, systemPrompt, taskPrompt, vetEdits, type ModelFn } from './model.ts';
@@ -397,7 +397,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     const prevManifest = d.prevSubmission ? (JSON.parse(store.get<{ manifest_json: string }>('SELECT manifest_json FROM submissions WHERE id=?', d.prevSubmission)!.manifest_json)) : null;
     const reqFile = a.language === 'python' ? (existsSync(join(src, 'requirements.txt')) ? 'requirements.txt' : readdirSync(src).find((f) => /^requirements[\w.-]*\.txt$/i.test(f)) ?? null)
       : a.language === 'php' && existsSync(join(src, 'composer.json')) ? 'composer.json' : null;
-    const g = generate(a, { toolId: d.toolId!, description: d.description || r.name || '', platforms: [...new Set([cfg.hostPlatform, 'linux/arm64', 'linux/amd64'])], reqFile, installable: ['pyproject.toml', 'setup.py'].some((f) => existsSync(join(src, f))), hasLock: existsSync(join(src, 'package-lock.json')), prev: prevManifest, date: now().slice(0, 10) });
+    const g = generate(a, { toolId: d.toolId!, description: d.description || r.name || '', platforms: [...new Set([cfg.hostPlatform, 'linux/arm64', 'linux/amd64'])], reqFile, links: keptLinks(a, d.answers), installable: ['pyproject.toml', 'setup.py'].some((f) => existsSync(join(src, f))), hasLock: existsSync(join(src, 'package-lock.json')), prev: prevManifest, date: now().slice(0, 10) });
     const replaced = ['Dockerfile', 'workhub.yaml'].filter((p) => existsSync(join(src, p)));
     for (const [p, content] of Object.entries(g.files)) { mkdirSync(dirname(join(src, p)), { recursive: true }); writeFileSync(join(src, p), content); }
     if (g.dataDir && a.data.seeds.length) {
@@ -415,7 +415,8 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     const tasks: { name: string; task: string; files: string[]; extra?: string }[] = [];
     if (a.ai.rewriteFiles.length) tasks.push({ name: 'AI 連線改用平台設定', files: a.ai.rewriteFiles,
       task: '讓這個工具在平台上改用平台的 AI 模型，用「新增」的方式，不要拆掉原本的寫法：有設定環境變數 OPENAI_BASE_URL 時，改走 OpenAI 相容介面（POST {OPENAI_BASE_URL}/chat/completions，金鑰讀 OPENAI_API_KEY 放在 Authorization: Bearer，模型名稱讀 OPENAI_MODEL；需要結構化輸出時用 response_format 或在提示詞要求 JSON，回覆內容在 choices[0].message.content）；檢查 AI 是否可用時，有 OPENAI_BASE_URL 就改查 GET {OPENAI_BASE_URL}/models。沒設定 OPENAI_BASE_URL 時，原本的呼叫方式（例如 Ollama 的 /api/chat）完全照舊，讓專案原有的測試照常通過。原本的函式、常數、參數、提示詞、回傳格式與錯誤處理都要保留，不要改名或刪除。如果程式本來就是 OpenAI 相容介面、只是環境變數名稱不同（例如 UMT_5090_API_BASE、LLM_API_KEY），只要改成優先讀 OPENAI_BASE_URL、OPENAI_API_KEY、OPENAI_MODEL，沒設定時再讀原本的變數。' });
-    for (const o of a.data.outside) if (d.answers?.[o.id] === 'keep') tasks.push({ name: `資料改存到資料目錄（${o.ref.file}）`, files: [o.ref.file, ...(existsSync(join(src, 'settings.py')) && o.ref.file !== 'settings.py' ? ['settings.py'] : [])],
+    // 能直接連到資料目錄的（相對路徑，例如 data/outbox）由平台在啟動時處理，不交給模型
+    for (const o of a.data.outside) if (d.answers?.[o.id] === 'keep' && !(['python', 'node'].includes(a.language ?? '') && linkablePath(o.path))) tasks.push({ name: `資料改存到資料目錄（${o.ref.file}）`, files: [o.ref.file, ...(existsSync(join(src, 'settings.py')) && o.ref.file !== 'settings.py' ? ['settings.py'] : [])],
       task: `${o.ref.file} 第 ${o.ref.line} 行把資料寫在程式資料夾（${o.ref.detail}），容器更新後會不見。改成寫到環境變數 DATA_DIR 指定的資料夾底下（例如 DATA_DIR/${o.path.replace(/^data\//, '')}）；若專案已有集中設定（例如 settings.py 的 DATA_DIR 或對應的變數），直接沿用。只改路徑，不改其他邏輯。` });
     for (const [i, q] of (d.questions ?? []).entries()) if (q.kind === 'secret' && d.answers?.[q.id] === 'env') tasks.push({ name: `移除寫死的金鑰（${q.refs[0].file}）`, files: [q.refs[0].file],
       task: `${q.refs[0].file} 第 ${q.refs.map((x) => x.line).filter(Boolean).join('、')} 行寫死了金鑰或密碼（已遮蔽成 [已遮蔽]）。把它改成讀環境變數（變數名稱用大寫英數字與底線，例如 ERP_TOKEN），沒設定時用空字串，程式照常啟動。不要在程式或註解留下任何金鑰。`, extra: `（第 ${i + 1} 個金鑰問題）` });
@@ -627,6 +628,12 @@ function applyAiAnswer(a: Analysis, q: Question, v: string, file: string | undef
   if (q.id === 'ai.unexpected' && v === 'no') { a.ai.uses = false; a.ai.rewriteFiles = []; }
 }
 
+/** 開發者說要保留、而且可以直接連到資料目錄的路徑 */
+function keptLinks(a: Analysis, answers: Record<string, string> | undefined): string[] {
+  if (!['python', 'node'].includes(a.language ?? '')) return [];
+  return [...new Set(a.data.outside.filter((o) => answers?.[o.id] === 'keep' && linkablePath(o.path)).map((o) => o.path))];
+}
+
 function duplicateQuestion(dup: { id: string; name: string }, suggested: string): Question {
   return { id: 'dup', kind: 'duplicate', title: `平台上已經有「${dup.name}」（${dup.id}），這次上傳的是它的新版本嗎？`,
     detail: '工具代號或名稱和現有工具相同。如果是新版本，要從該工具的「提交新版本」上傳，才會沿用原本的資料、權限與使用紀錄；如果是另一個工具，請給它一個不同的代號。', refs: [],
@@ -752,13 +759,16 @@ function buildReport(d: Detail, r: Row, originalDir: string, srcDir: string, fil
     const dd = lineDiff(before.toString('utf8'), after.toString('utf8'));
     changes.push({ path: p, kind: 'modified', diff: dd.text, add: dd.add, del: dd.del, by: modelFiles.has(p) ? 'model' : 'template' });
   }
-  const fixed = a.data.outside.filter((o) => d.answers?.[o.id] === 'keep').map((o) => `${o.ref.file}：${o.path || '寫檔位置'} 改存到資料目錄`);
+  const linked = new Set(keptLinks(a, d.answers));
+  const fixed = a.data.outside.filter((o) => d.answers?.[o.id] === 'keep').map((o) => linked.has(o.path) ? `${o.path}：啟動時由平台連到資料目錄（不改程式）` : `${o.ref.file}：${o.path || '寫檔位置'} 改存到資料目錄`);
   const temp = [...a.data.temp.map((x) => `${x.path}（${x.kind}）`), ...a.data.outside.filter((o) => d.answers?.[o.id] === 'temp').map((o) => `${o.path}（${o.ref.file}，不保存）`)];
   const keep = a.data.keep.map((x) => `${x.path}（${x.kind}）`);
   const testData = (d.testData?.files ?? []).map((f) => ({ path: f.path, size: f.size }));
   const confirm: string[] = [];
   const aiDone = d.modelLog.find((m) => m.task === 'AI 連線改用平台設定')?.applied ?? [];
-  if (a.ai.uses) confirm.push(a.ai.rewriteFiles.length ? `AI 功能：已改用平台指定的模型（改了 ${aiDone.join('、')}），上線後請測試 AI 相關功能` : 'AI 功能：程式原本就讀平台設定，上線後請測試 AI 相關功能');
+  if (a.ai.uses) confirm.push(a.ai.rewriteFiles.length ? `AI 功能：已改用平台指定的模型（改了 ${aiDone.join('、')}），上線後請測試 AI 相關功能`
+    : a.ai.envMap ? `AI 功能：程式原本就是 OpenAI 相容介面，啟動時由平台把 ${[a.ai.envMap.base, a.ai.envMap.key, a.ai.envMap.model].filter(Boolean).join('、')} 填成平台模型的設定（沒有改程式）；上線後請測試 AI 相關功能`
+    : 'AI 功能：程式原本就讀平台設定，上線後請測試 AI 相關功能');
   if (d.declaredAi === 'unsure') confirm.push(a.ai.uses ? `AI：平台判斷這個工具有用 AI（${a.ai.refs.map((x) => x.file).join('、')}），已改用平台的模型；如果判斷錯了請取消打包重新上傳` : 'AI：平台判斷這個工具沒有用 AI，上線後不會接平台的模型；如果其實有用，請取消打包，上傳時回答「會」');
   if (a.inferredDeps.length) confirm.push(`專案沒有套件清單（requirements.txt），平台依程式的 import 推斷要安裝：${a.inferredDeps.join('、')}；請確認，建議之後補上 requirements.txt 並寫明版本`);
   if (a.borrowed.length) confirm.push(`套件清單不在專案資料夾裡，平台用了上一層的 ${a.borrowed.map((b) => b.from).join('、')}`);
@@ -807,7 +817,7 @@ function buildReport(d: Detail, r: Row, originalDir: string, srcDir: string, fil
   ].join('\n');
   return {
     summary,
-    decisions: { keep, temp, fixed, seeds: a.data.seeds, liveData: a.data.liveData, schemaChanges: d.schemaChanges ?? [], ai: a.ai.uses ? '有用 AI，已改用平台指定的模型' : '沒有用 AI', network },
+    decisions: { keep, temp, fixed, seeds: a.data.seeds, liveData: a.data.liveData, schemaChanges: d.schemaChanges ?? [], ai: !a.ai.uses ? '沒有用 AI' : a.ai.envMap ? `有用 AI，啟動時填入平台模型設定（${a.ai.envMap.base}…，不改程式）` : '有用 AI，已改用平台指定的模型', network },
     changes, testData, excluded: a.excluded,
     verification: { build: '成功', test: d.verify?.test ?? '', health: d.verify?.health ?? '', preflight: warn.length ? `通過（提醒：${warn.join('；')}）` : '通過' },
     model: { calls: d.modelLog.length, notes: d.modelLog.map((m) => `${m.task}：${m.note || m.error || ''}`), rejected: d.modelLog.flatMap((m) => m.rejected.map((x) => `${x.path}：${x.reason}`)) },
