@@ -80,8 +80,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     trivyOffline: process.env.ONBOARDING_TRIVY_OFFLINE !== '0',
     helperImage: process.env.ONBOARDING_HELPER_IMAGE ?? 'busybox:1.36.1',
     limits: {
-      // 2026/11/03 Mila：已打包 ZIP 與自動打包上限統一 300 MB；偏大時不擋，列出可能不需要的檔案
-      uploadBytes: 300 * 1024 * 1024,
+      // 2026/11/03 Mila：已打包 ZIP 與專案 ZIP 上限統一 1 GB（虛擬環境、套件等平台會略過）；偏大時不擋，列出可能不需要的檔案
+      uploadBytes: 1024 ** 3,
       entries: 50_000, // 2026/11/03：與專案 ZIP 一致；檔案多時不擋，列出可能不需要的資料夾
       totalUncompressedBytes: 1024 ** 3,
       singleFileBytes: 200 * 1024 * 1024,
@@ -98,7 +98,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     relay: { image: process.env.ONBOARDING_RELAY_IMAGE ?? 'python:3.14-slim-trixie', timeoutSeconds: 125 },
     toolNetworkInternal: process.env.ONBOARDING_TOOL_NETWORK !== 'open',
     trivyCacheDir: '',
-    autopack: { uploadBytes: 300 * 1024 * 1024, totalUncompressedBytes: 1024 ** 3, entries: 50_000, maxMinutes: 60, maxFixRounds: 3, modelTimeoutMs: 10 * 60 * 1000 },
+    autopack: { uploadBytes: 1024 ** 3, totalUncompressedBytes: 1024 ** 3, entries: 50_000, maxMinutes: 60, maxFixRounds: 3, modelTimeoutMs: 10 * 60 * 1000 },
   };
   const merged = { ...base, ...overrides };
   if (!merged.trivyCacheDir) merged.trivyCacheDir = join(merged.dataDir, 'trivy-cache');

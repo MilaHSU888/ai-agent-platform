@@ -22,8 +22,8 @@ const SUB_STATUS: Record<string, string> = {
 const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
 const ACTIVE = ['queued', 'running'];
 
-/** 上傳大小上限（與上架服務設定一致：兩種 ZIP 都是 300 MB，2026/11/03 Mila 決定統一） */
-const UPLOAD_LIMIT = 300 * 1024 * 1024;
+/** 上傳大小上限（與上架服務設定一致：兩種 ZIP 都是 1 GB，2026/11/03 Mila 決定統一） */
+const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 
 type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void; role?: Role; developer?: string };
 type Conn = 'checking' | 'offline' | 'ready';
@@ -294,7 +294,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <fieldset className="onb-span2 ap-ai-ask"><legend>這個工具會用到 AI 模型嗎？（必填）</legend>
           {([['yes', '會'], ['no', '不會'], ['unsure', '不確定']] as const).map(([v, l]) => <label key={v} className="onb-check"><input type="radio" name="usesAi" checked={aiAnswer === v} onChange={() => setAiAnswer(v)} />{l}</label>)}
           <small>平台會和程式內容對照；不一致時會在打包過程中問你。</small></fieldset>
-        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 {UPLOAD_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
+        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 1 GB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
         {!submissionForm.tool && <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>}
         <button disabled={!file || !aiAnswer || file.size > UPLOAD_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
@@ -313,7 +313,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>已打包的 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
-        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 {UPLOAD_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、資料檔或影片後重新壓縮。</p>}
+        {file && file.size > UPLOAD_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過上限 1 GB。請移除虛擬環境、套件快取、資料檔或影片後重新壓縮。</p>}
         {file && file.size <= UPLOAD_LIMIT && file.size > 50 * 1024 * 1024 && <p className="onb-note onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，比一般小工具大很多；上傳後平台會列出可能不需要的檔案（虛擬環境、安裝檔、資料檔）。如果還沒加 Dockerfile、workhub.yaml，請改選「上傳專案 ZIP，平台自動打包」。</p>}
         {!submissionForm.tool && <>
           <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
