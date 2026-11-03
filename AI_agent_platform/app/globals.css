@@ -1064,8 +1064,6 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .rc-review td small{font-size:11px}
 
 /* 原始碼自動打包（2026/11/03） */
-.ap-intro { margin:0 0 12px; padding-left:28px; }
-.ap-intro li { margin:2px 0; }
 .ap-list { display:grid; gap:6px; margin:8px 0 12px; }
 .ap-detail { border-top:1px solid #eceff5; padding-top:12px; }
 .ap-steps { list-style:none; padding:0; margin:0 0 12px; display:grid; gap:4px; }
@@ -1099,3 +1097,7 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .ap-diff .ap-add { background:#e9f7ef; display:inline-block; min-width:100%; } .ap-diff .ap-del { background:#fdecea; display:inline-block; min-width:100%; }
 .ap-confirm { margin-top:14px; } .ap-confirm ul { margin:6px 0; }
 .ap-handoff-detail { margin:8px 0 0; max-height:220px; overflow:auto; white-space:pre-wrap; word-break:break-word; background:#fff; border:1px solid #f1c9c4; border-radius:8px; padding:8px 10px; font-size:12px; line-height:1.45; color:#7a1f16; }
+.ap-q-input { display:grid; gap:4px; max-width:360px; margin:4px 0 0 26px; font-size:14px; }
+.ap-q-input input { padding:6px 10px; border:1px solid #cfd6e4; border-radius:8px; font-family:ui-monospace,monospace; }
+.ap-q-input small { color:#7c8494; }
+.ap-intro { margin:0 0 12px; }

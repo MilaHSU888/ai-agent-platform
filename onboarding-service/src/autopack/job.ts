@@ -31,7 +31,9 @@ import type { TestDataInfo } from './testdata.ts';
 
 export type AutopackStatus = 'queued' | 'running' | 'awaiting_answer' | 'awaiting_review' | 'submitted' | 'handed_off' | 'cancelled' | 'failed';
 type Stage = 'extract' | 'ask' | 'generate' | 'model' | 'verify' | 'report' | 'done';
-export type Question = { id: string; kind: 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: Ref[]; options: { value: string; label: string }[] };
+export type Question = { id: string; kind: 'duplicate' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: Ref[]; options: { value: string; label: string }[];
+  /** 選某個選項時要另外填的欄位（例如自訂 tool.id），答案存在 answers[key] */
+  input?: { key: string; when: string; label: string; default: string; hint: string } };
 type Step = { name: string; status: 'passed' | 'failed' | 'skipped' | 'running' | 'waiting'; at: string; detail?: string };
 export type Change = { path: string; kind: 'added' | 'modified'; diff: string; add: number; del: number; by: 'template' | 'model' };
 export type Report = {
@@ -115,7 +117,7 @@ const save = (store: Store, id: string, patch: { status?: AutopackStatus; stage?
 };
 
 
-export function answerAutopack(store: Store, id: string, actor: string, answers: Record<string, string>) {
+export function answerAutopack(store: Store, cfg: Config, id: string, actor: string, answers: Record<string, string>) {
   const r = row(store, id);
   if (!r) throw new GateError(['找不到這筆自動打包']);
   if (r.status !== 'awaiting_answer') throw new GateError(['目前不需要回答問題']);
@@ -123,6 +125,22 @@ export function answerAutopack(store: Store, id: string, actor: string, answers:
   const merged = { ...(d.answers ?? {}), ...answers };
   const missing = (d.questions ?? []).filter((q) => !q.options.some((o) => o.value === merged[q.id]));
   if (missing.length) throw new GateError(missing.map((q) => `請回答：${q.title}`));
+  const dupQ = (d.questions ?? []).find((q) => q.kind === 'duplicate');
+  // 是現有工具的新版本：結束這次打包，請開發者到該工具按「提交新版本」（才會沿用原本的資料與權限）
+  if (dupQ && merged[dupQ.id] === 'update') {
+    cleanup(cfg, id, { keepWork: false });
+    store.tx(() => {
+      save(store, id, { status: 'cancelled', error: `${dupQ.title.replace(/^平台上已經有/, '這是').replace(/，.*$/, '')}的新版本：請到該工具按「提交新版本」，選「上傳專案 ZIP，平台自動打包」重新上傳` });
+      store.audit(actor, 'autopack.cancelled', r.tool_id ?? id, { autopack: id, reason: 'duplicate_tool' });
+    });
+    return;
+  }
+  if (dupQ && merged[dupQ.id] === 'new') {
+    const t = (merged['dup.toolId'] ?? '').trim() || dupQ.input!.default;
+    if (!/^[a-z][a-z0-9-]{2,39}$/.test(t)) throw new GateError(['工具代號只能用小寫英文、數字與 -，以英文開頭，3～40 個字']);
+    if (t !== r.tool_id && (store.get('SELECT id FROM tools WHERE id=?', t) || store.get("SELECT id FROM autopacks WHERE tool_id=? AND id<>? AND status NOT IN ('cancelled','handed_off','failed')", t, id))) throw new GateError([`工具代號 ${t} 已經有人使用，請換一個`]);
+    merged['dup.toolId'] = t;
+  }
   d.answers = merged;
   store.tx(() => {
     save(store, id, { status: 'queued', detail: d });
@@ -273,7 +291,14 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     step('判斷專案類型', 'passed', `${a.frameworkLabel}${a.runtimeVersion ? `（${langName(a)} ${a.runtimeVersion}）` : ''}${a.root ? `，專案資料夾 ${a.root}/` : ''}`);
 
     // 工具代號：版更沿用；新工具由平台產生
-    d.toolId = r.mode === 'update' ? r.tool_id! : uniqueToolId(store, slugFrom(a.manifest.name ?? r.original_filename));
+    // 2026/11/03 Mila：新工具的代號或名稱和現有工具相同時，先問是不是那個工具的新版本，不自動另開一個
+    let dup: { id: string; name: string } | undefined;
+    if (r.mode === 'update') d.toolId = r.tool_id!;
+    else {
+      const base = slugFrom(a.manifest.name ?? r.original_filename);
+      dup = store.get<{ id: string; name: string }>('SELECT id, name FROM tools WHERE (id=? OR lower(name)=lower(?)) AND archived_json IS NULL ORDER BY id=? DESC LIMIT 1', base, (r.name ?? '').trim(), base);
+      d.toolId = uniqueToolId(store, base);
+    }
     save(store, id, { tool: d.toolId, detail: d });
 
     // 工作資料夾：original（對照用）、src（打包）、testdata（另外存放）
@@ -313,7 +338,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     step('分析程式碼', 'passed', summaryLine(a, tdFiles.length));
 
     // 要問人的事（SOP 12.5）
-    d.questions = buildQuestions(a);
+    d.questions = [...(dup ? [duplicateQuestion(dup, d.toolId!)] : []), ...buildQuestions(a)];
     d.answers = d.answers ?? {};
   }
 
@@ -325,6 +350,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     if (qs.length) step('等待開發者回答', 'passed', `已回答 ${qs.length} 題`);
     for (const q of qs) {
       const v = d.answers![q.id];
+      if (q.kind === 'duplicate' && v === 'new' && d.answers!['dup.toolId'] && d.answers!['dup.toolId'] !== d.toolId) { d.toolId = d.answers!['dup.toolId']; save(store, id, { tool: d.toolId, detail: d }); }
       if (q.kind === 'secret' && v === 'reupload') throw new HandOff('需要先移除寫死的金鑰', `${q.refs.map(refText).join('、')}：請把金鑰改成環境變數後，重新上傳原始碼。`);
       if (q.kind === 'external' && v === 'needed') throw new HandOff('工具需要連外部系統', `${q.title}。工具在平台上不能連外，需要 AI Team 協助申請或評估。`);
       if (q.kind === 'windows' && v === 'needed') throw new HandOff('需要 Windows 專用套件', `${q.title}。平台是 Linux，需要 AI Team 協助評估改寫方式。`);
@@ -520,6 +546,13 @@ function topTestDir(p: string) {
   const parts = p.split('/');
   const i = parts.findIndex((x) => /^(fixtures?|testdata|test_data|samples?|data)$/i.test(x));
   return parts.slice(0, i >= 0 ? i + 1 : parts.length - 1).join('/') || '.';
+}
+
+function duplicateQuestion(dup: { id: string; name: string }, suggested: string): Question {
+  return { id: 'dup', kind: 'duplicate', title: `平台上已經有「${dup.name}」（${dup.id}），這次上傳的是它的新版本嗎？`,
+    detail: '工具代號或名稱和現有工具相同。如果是新版本，要從該工具的「提交新版本」上傳，才會沿用原本的資料、權限與使用紀錄；如果是另一個工具，請給它一個不同的代號。', refs: [],
+    options: [{ value: 'update', label: `是「${dup.name}」的新版本（結束這次打包，改到該工具按「提交新版本」）` }, { value: 'new', label: '不是，這是另一個工具，繼續打包' }],
+    input: { key: 'dup.toolId', when: 'new', label: '新工具的代號（tool.id）', default: suggested, hint: '小寫英文、數字與 -，例如 quote-compare；上架後不能改' } };
 }
 
 function buildQuestions(a: Analysis): Question[] {

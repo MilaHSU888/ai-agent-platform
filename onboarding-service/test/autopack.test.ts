@@ -406,3 +406,31 @@ test('已打包 ZIP 偏大：不擋，列出虛擬環境、安裝檔、大型資
   assert.deepEqual(w.map((x) => x.reason.replace(/^ZIP 有 \d+ MB，其中/, '').replace(/約.*$/, '')), ['虛擬環境或套件', 'Windows 安裝檔', '資料檔或影音']);
   assert.match(w[0].file, /app\/venv/);
 });
+
+test('新工具和現有工具撞名：先問是不是新版本（是 → 結束這次打包；不是 → 用自訂代號繼續）（2026/11/03）', async () => {
+  const t = await setup({}, fakeModel());
+  try {
+    t.store.run("INSERT INTO tools(id,name,department,owner,created_at,updated_at) VALUES('quote-aggregator','採購報價單彙整工具','purchase','林開發','2026-10-01','2026-10-01')");
+    const a = (await upload(t)).data.autopack.id as string;
+    await t.runWorker();
+    let v = (await t.call('GET', `/api/onboarding/autopack/${a}`)).data.autopack;
+    assert.equal(v.questions[0].kind, 'duplicate');
+    assert.match(v.questions[0].title, /採購報價單彙整工具/);
+    assert.equal(v.questions[0].input.default, 'quote-aggregator-2');
+    const rest = (val: string) => Object.fromEntries(v.questions.map((q: any) => [q.id, q.kind === 'duplicate' ? val : q.kind === 'secret' ? 'env' : q.kind === 'external' ? 'not_needed' : 'keep']));
+    assert.equal((await t.call('POST', `/api/onboarding/autopack/${a}/answers`, { answers: rest('update') })).status, 200);
+    v = (await t.call('GET', `/api/onboarding/autopack/${a}`)).data.autopack;
+    assert.equal(v.status, 'cancelled');
+    assert.match(v.error, /提交新版本/);
+    // 另一個工具：代號不合格或已被使用會被擋；合格就沿用
+    const b = (await upload(t)).data.autopack.id as string;
+    await t.runWorker();
+    v = (await t.call('GET', `/api/onboarding/autopack/${b}`)).data.autopack;
+    assert.equal((await t.call('POST', `/api/onboarding/autopack/${b}/answers`, { answers: { ...rest('new'), 'dup.toolId': 'Quote' } })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/autopack/${b}/answers`, { answers: { ...rest('new'), 'dup.toolId': 'quote-aggregator' } })).status, 409);
+    assert.equal((await t.call('POST', `/api/onboarding/autopack/${b}/answers`, { answers: { ...rest('new'), 'dup.toolId': 'quote-compare' } })).status, 200);
+    await t.runWorker();
+    v = (await t.call('GET', `/api/onboarding/autopack/${b}`)).data.autopack;
+    assert.equal(v.toolId, 'quote-compare');
+  } finally { await t.close(); }
+});

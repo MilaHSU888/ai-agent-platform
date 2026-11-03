@@ -306,7 +306,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     } },
     { method: 'POST', re: /^\/api\/onboarding\/autopack\/([\w-]+)\/answers$/, auth: true, fn: async ({ req, res, session }, m) => {
       const body = await json(req);
-      answerAutopack(store, m[1], session!.actor, (body.answers ?? {}) as Record<string, string>);
+      answerAutopack(store, cfg, m[1], session!.actor, (body.answers ?? {}) as Record<string, string>);
       void autopack?.tick();
       send(res, 200, { autopack: autopackView(store, m[1]) });
     } },

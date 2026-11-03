@@ -46,7 +46,8 @@ export type ReleaseRecord = {
 export type Session = { authenticated: boolean; actor?: string; environment?: string };
 /** 原始碼自動打包（2026/11/03） */
 export type AutopackRef = { file: string; line?: number; detail: string };
-export type AutopackQuestion = { id: string; kind: 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: AutopackRef[]; options: { value: string; label: string }[] };
+export type AutopackQuestion = { id: string; kind: 'duplicate' | 'secret' | 'external' | 'windows' | 'data_keep'; title: string; detail: string; refs: AutopackRef[]; options: { value: string; label: string }[];
+  input?: { key: string; when: string; label: string; default: string; hint: string } };
 export type AutopackChange = { path: string; kind: 'added' | 'modified'; diff: string; add: number; del: number; by: 'template' | 'model' };
 export type AutopackReport = {
   summary: Record<string, string>;

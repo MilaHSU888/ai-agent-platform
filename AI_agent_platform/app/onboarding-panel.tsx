@@ -272,12 +272,8 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         </div>
       </form>
       </> : submissionForm.kind === 'source' ? <>
-      <p className="mg-muted">把整個專案資料夾壓成 ZIP 上傳即可，不用填問卷、不用自己寫 Dockerfile。平台會判斷語言與框架、哪些資料要保存、有沒有用 AI，產生打包檔並在不連網的環境跑測試；看不出來的地方才會在下方「自動打包」發問。</p>
-      <ul className="onb-note ap-intro">
-        <li>支援 Python、Node.js、Java、.NET（新版 .NET）、Go、PHP、純靜態網頁。Windows 專用程式（.NET Framework、WinForms、WPF）、VBA、Access、桌面視窗程式、連接硬體設備的程式，平台會告訴你原因並轉給 AI Team。</li>
-        <li>測試資料（例如 tests/fixtures 裡的樣本檔）一起放進 ZIP 即可：平台會分開存放、不放進工具，測試時才唯讀掛上，工具公開後刪除。</li>
-        <li>金鑰、密碼請不要放進 ZIP；平台找到時會先問你。打包最多 60 分鐘（等你回答的時間不算），超過會轉給 AI Team。</li>
-      </ul>
+      <p className="mg-muted">把整個專案資料夾壓成 ZIP 上傳即可，平台會自動打包並測試，有不確定的地方會在下方「自動打包」問你。</p>
+      <p className="onb-note ap-intro">支援 Python、Node.js、Java、.NET、Go、PHP 與純靜態網頁；不支援的類型會轉給 AI Team。測試資料可以一起放，金鑰、密碼請不要放。</p>
       {health && !health.docker && <p className="onb-error">找不到 Docker，無法自動打包。</p>}
       <form key={`src-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-upload" onSubmit={(e) => {
         e.preventDefault(); if (!file) return;

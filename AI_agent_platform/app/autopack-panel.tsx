@@ -85,6 +85,7 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
         <p>{q.detail}</p>
         {q.refs.length > 0 && <ul className="ap-refs">{q.refs.map((x, i) => <li key={i}><code>{x.file}{x.line ? `:${x.line}` : ''}</code> {x.detail}</li>)}</ul>}
         {q.options.map((o) => <label key={o.value} className="onb-check"><input type="radio" name={q.id} checked={answers[q.id] === o.value} onChange={() => setAnswers({ ...answers, [q.id]: o.value })} />{o.label}</label>)}
+        {q.input && answers[q.id] === q.input.when && <label className="ap-q-input">{q.input.label}<input value={answers[q.input.key] ?? q.input.default} maxLength={40} onChange={(e) => setAnswers({ ...answers, [q.input!.key]: e.target.value.trim().toLowerCase() })} /><small>{q.input.hint}</small></label>}
       </fieldset>)}
       <div className="mg-actions"><button className="onb-primary-sm" disabled={busy || ap.questions.some((q) => !answers[q.id])}>送出回答，繼續打包</button></div>
     </form>}
@@ -96,6 +97,7 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
       {role === 'aiteam' && <p className="ap-downloads"><a className="ap-dl" href={`/api/onboarding/autopack/${ap.id}/log`} download><span aria-hidden>⬇</span>下載打包紀錄<small>.txt：每一步的結果、建置與測試輸出、模型改了什麼</small></a><a className="ap-dl" href={`/api/onboarding/autopack/${ap.id}/files.zip`} download><span aria-hidden>⬇</span>下載目前的打包結果<small>.zip：平台做好的專案（含 Dockerfile、workhub.yaml），不含測試資料</small></a></p>}
     </div>}
     {ap.status === 'failed' && <p className="onb-error">打包失敗：{ap.error}</p>}
+    {ap.status === 'cancelled' && ap.error && ap.error !== '已取消' && <p className="onb-note">已結束這次打包：{ap.error}</p>}
 
     {r && <div className="ap-report">
       <h3>打包報告</h3>
