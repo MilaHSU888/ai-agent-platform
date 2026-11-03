@@ -60,6 +60,7 @@ export function reviewHistory(store: Store, toolId?: string): ReviewRow[] {
       let action = AUDIT_LABEL[e.action];
       if (e.action === 'tool.publish_requested') action = d.trialRelease ? '切換為公開中（換上新版）' : '切換為公開中（清空試用資料）';
       if (e.action === 'tool.published' && d.trialDataCleared) action = '公開（第一次，試用資料已清空）';
+      if (e.action === 'submission.withdrawn' && /^AI Team (退回|撤銷核准並退回)：/.test(String(d.reason ?? ''))) { action = String(d.reason).startsWith('AI Team 撤銷') ? '撤銷核准並退回' : '退回（不核准）'; d.reason = String(d.reason).replace(/^AI Team [^：]+：/, ''); }
       if (e.action === 'testdata.deleted') { push({ at: e.at, version, action, actor: e.actor, note: `${(d.files as unknown[] | undefined)?.length ?? 0} 個檔案（只記檔名與檢查碼）` }); continue; }
       if (e.action === 'autopack.handed_off') { push({ at: e.at, version, action, actor: e.actor, note: String(d.reason ?? '') }); continue; }
       const note = [d.note, d.reason, d.error].filter((x) => typeof x === 'string' && x).join('；');
