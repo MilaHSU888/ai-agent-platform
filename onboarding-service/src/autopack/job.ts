@@ -25,7 +25,7 @@ import { extract, readCentralDirectory, type Issue } from '../zip-intake.ts';
 import { analyze, type Analysis, type Ref } from './analyze.ts';
 import { lineDiff } from './diff.ts';
 import { loadTree, splitRoot } from './files.ts';
-import { parseReply, platformModel, systemPrompt, taskPrompt, vetEdits, type ModelFn } from './model.ts';
+import { maskSecrets, parseReply, platformModel, systemPrompt, taskPrompt, vetEdits, type ModelFn } from './model.ts';
 import { generate } from './templates.ts';
 import type { TestDataInfo } from './testdata.ts';
 
@@ -424,6 +424,12 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     }
   }
 
+  function originalsNote(files: string[]): string {
+    const parts = files.filter((f) => existsSync(join(dir, 'original', f)) && existsSync(join(dir, 'src', f)) && readFileSync(join(dir, 'original', f), 'utf8') !== readFileSync(join(dir, 'src', f), 'utf8'))
+      .map((f) => `===== ${f}（打包前的原始版本，僅供對照）=====\n${maskSecrets(readFileSync(join(dir, 'original', f), 'utf8'))}`);
+    return parts.length ? `\n\n下面是先前被修改過的檔案在打包前的原始版本。原本的測試在原始版本是通過的；如果先前的修改刪掉或改壞了原本的功能，請參考原始版本把它恢復，只保留任務需要的改動：\n\n${parts.join('\n\n')}` : '';
+  }
+
   async function runModelTask(model: ModelFn, task: string, files: string[], extra: string, name: string) {
     const src = join(dir, 'src');
     const contents = files.filter((f) => existsSync(join(src, f))).map((f) => ({ path: f, content: readFileSync(join(src, f), 'utf8') }));
@@ -485,9 +491,11 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
         const model = (opts.model ?? ((t) => platformModel(cfg, store, secrets, t)))(d.toolId!);
         if (!model) throw new HandOff('地端模型尚未設定', `${what}失敗，但平台預設模型還沒設定，無法自動修正。\n${tail.slice(-800)}`);
         step(`修正第 ${d.fixRounds} 次`, 'running', `${what}失敗，交給地端模型修正`);
-        const files = ['Dockerfile', ...referencedFiles(tail, src)].slice(0, 5);
+        // 先前被修改過的檔案也一併給模型看，並附上打包前的原始版本（2026/11/03 實測：AI 改寫時刪掉了原本的檢查，修正時要能對照恢復）
+        const changed = d.modelLog.flatMap((m) => m.applied).filter((f, i, arr) => arr.indexOf(f) === i && !/^(Dockerfile|\.dockerignore|workhub\.yaml)$/.test(f));
+        const files = [...new Set(['Dockerfile', ...referencedFiles(tail, src), ...changed])].slice(0, 6);
         await runModelTask(model, `${what}失敗。請找出原因並修正程式碼或 Dockerfile，讓專案原有的測試通過。測試檔只供參考，一律不能修改（測試就是驗收標準）；也不可以修改 workhub.yaml。常見原因：先前修改時刪掉或改名了測試會用到的函式、常數，或改變了原本的行為——請恢復原本的行為，新增的平台設定只在有對應環境變數時才生效。`, files,
-          `錯誤訊息（最後一段）：\n${tail.slice(-4000)}\n\n專案檔案清單：\n${listFiles(src).slice(0, 150).join('\n')}`, `修正第 ${d.fixRounds} 次`);
+          `錯誤訊息（最後一段）：\n${tail.slice(-4000)}\n\n專案檔案清單：\n${listFiles(src).slice(0, 150).join('\n')}${originalsNote(files)}`, `修正第 ${d.fixRounds} 次`);
         const last = d.modelLog.at(-1)!;
         step(`修正第 ${d.fixRounds} 次`, last.applied.length ? 'passed' : 'failed', last.applied.length ? `改了 ${last.applied.join('、')}` : last.error ?? '模型沒有提出修改');
       };

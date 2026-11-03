@@ -12,7 +12,10 @@ import { defaultModel } from '../models.ts';
 import type { Secrets } from '../secrets.ts';
 import { SECRET_CONTENT } from '../zip-intake.ts';
 
-export type Edit = { path: string; content: string };
+/** 模型的修改：已存在的檔案用 replace（只換指定片段，其他內容原封不動）；新檔案才用 content（完整內容） */
+export type Replace = { find: string; with: string };
+export type Edit = { path: string; content?: string; replace?: Replace[] };
+export type AppliedEdit = { path: string; content: string };
 export type ModelReply = { edits: Edit[]; note: string; raw: string };
 /** 呼叫模型的介面（測試時替換成假模型） */
 export type ModelFn = (system: string, user: string, signal: AbortSignal) => Promise<string>;
@@ -26,8 +29,9 @@ const SYSTEM = [
   '4. 專案原有的測試檔一律不能修改（測試是驗收標準），要讓程式通過原本的測試；不可以刪除或跳過測試。',
   '5. 不要放任何金鑰、密碼或真實資料。',
   '回覆格式：只回一個 JSON 物件，不要其他文字：',
-  '{"edits":[{"path":"相對於專案根目錄的路徑","content":"修改後的完整檔案內容"}],"note":"一句話說明改了什麼"}',
-  '只修改必要的檔案；每個檔案都要回完整內容，不要只回片段；保留原本的註解與功能。',
+  '{"edits":[{"path":"相對於專案根目錄的路徑","replace":[{"find":"原檔案中要換掉的一段（逐字複製，要包含足夠的上下文讓它在檔案中只出現一次）","with":"換成的內容"}]}],"note":"一句話說明改了什麼"}',
+  '修改已存在的檔案一律用 replace，只換需要改的地方，其他程式碼原封不動（平台會逐字比對，find 必須和原檔完全相同）；只有新增檔案時才用 {"path":…,"content":"完整內容"}。',
+  '只修改必要的地方；不要重寫整個檔案、不要刪除或改動和任務無關的程式（例如檢查、驗證、錯誤處理）。',
 ].join('\n');
 
 export function systemPrompt() { return SYSTEM; }
@@ -46,8 +50,10 @@ export function parseReply(raw: string): ModelReply {
   const candidates = [fence?.[1], cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1)].filter((x): x is string => !!x && x.trim().startsWith('{'));
   for (const c of candidates) {
     try {
-      const j = JSON.parse(c) as { edits?: { path?: unknown; content?: unknown }[]; note?: unknown };
-      const edits = (j.edits ?? []).filter((e) => typeof e.path === 'string' && typeof e.content === 'string').map((e) => ({ path: String(e.path), content: String(e.content) }));
+      const j = JSON.parse(c) as { edits?: { path?: unknown; content?: unknown; replace?: unknown }[]; note?: unknown };
+      const asReplace = (r: unknown): Replace[] | undefined => Array.isArray(r) ? r.filter((x) => x && typeof x.find === 'string' && typeof (x.with ?? x.replace) === 'string').map((x) => ({ find: String(x.find), with: String(x.with ?? x.replace) })) : undefined;
+      const edits: Edit[] = (j.edits ?? []).filter((e) => typeof e.path === 'string' && (typeof e.content === 'string' || Array.isArray(e.replace)))
+        .map((e) => (Array.isArray(e.replace) ? { path: String(e.path), replace: asReplace(e.replace) ?? [] } : { path: String(e.path), content: String(e.content) }));
       return { edits, note: typeof j.note === 'string' ? j.note : '', raw };
     } catch { /* 試下一個 */ }
   }
@@ -59,15 +65,30 @@ const TEST_FILE = /(^|\/)(tests?|__tests__|spec)\/|(^|\/)(test_[^/]+|[^/]+_test)
 const countSkips = (t: string) => (t.match(/pytest\.mark\.skip|pytest\.skip\(|unittest\.skip|\.skip\(|\bxit\(|\bxdescribe\(|@Disabled|@Ignore|\[Ignore\]|t\.Skip\(|\.only\(/g) ?? []).length;
 
 /** 檢查模型的修改能不能套用；回傳可套用的修改與被擋下的原因 */
-export function vetEdits(edits: Edit[], opts: { exists: (p: string) => boolean; read: (p: string) => string | null; testData: Set<string>; allowNew: (p: string) => boolean }): { ok: Edit[]; rejected: { path: string; reason: string }[] } {
-  const ok: Edit[] = [];
+export function vetEdits(edits: Edit[], opts: { exists: (p: string) => boolean; read: (p: string) => string | null; testData: Set<string>; allowNew: (p: string) => boolean }): { ok: AppliedEdit[]; rejected: { path: string; reason: string }[] } {
+  const ok: AppliedEdit[] = [];
   const rejected: { path: string; reason: string }[] = [];
   for (const e of edits) {
     const p = e.path.replace(/^\.?\//, '').replace(/\\/g, '/');
     if (!p || p.includes('..') || p.startsWith('/') || p.includes('\0')) { rejected.push({ path: e.path, reason: '路徑不安全' }); continue; }
     if (opts.testData.has(p)) { rejected.push({ path: p, reason: '不能修改測試資料' }); continue; }
     if (!EDITABLE.test(p)) { rejected.push({ path: p, reason: '只能修改程式碼與打包設定檔' }); continue; }
-    if (!e.content.trim()) { rejected.push({ path: p, reason: '不能清空或刪除檔案' }); continue; }
+    // 片段替換：逐字比對，每段都要在檔案中恰好出現一次（避免換錯地方）
+    if (e.replace) {
+      const before = opts.exists(p) ? opts.read(p) : null;
+      if (before === null) { rejected.push({ path: p, reason: '要替換的檔案不存在' }); continue; }
+      let text = before.replace(/\r\n/g, '\n'); let bad = '';
+      for (const r of e.replace) {
+        const find = r.find.replace(/\r\n/g, '\n');
+        const n = find ? text.split(find).length - 1 : 0;
+        if (n !== 1) { bad = n === 0 ? `找不到要替換的原文：「${find.trim().slice(0, 40)}…」` : `要替換的原文出現 ${n} 次，無法確定換哪一段`; break; }
+        text = text.replace(find, () => r.with);
+      }
+      if (bad) { rejected.push({ path: p, reason: bad }); continue; }
+      if (!e.replace.length) { rejected.push({ path: p, reason: '沒有提出修改內容' }); continue; }
+      e.content = text;
+    }
+    if (e.content === undefined || !e.content.trim()) { rejected.push({ path: p, reason: '不能清空或刪除檔案' }); continue; }
     if (Buffer.byteLength(e.content) > 256 * 1024) { rejected.push({ path: p, reason: '檔案太大（超過 256 KB）' }); continue; }
     if (/^workhub\.yaml$/.test(p)) { rejected.push({ path: p, reason: 'workhub.yaml 由平台產生，模型不能修改' }); continue; }
     if (!opts.exists(p) && !opts.allowNew(p)) { rejected.push({ path: p, reason: '不能新增這個檔案' }); continue; }

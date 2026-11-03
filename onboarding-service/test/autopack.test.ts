@@ -516,3 +516,18 @@ test('上傳時回答會不會用 AI，平台對照：說會但找不到 → 問
     assert.ok(v.questions.some((x: any) => x.id === 'ai.unexpected'));
   } finally { await t.close(); }
 });
+
+test('模型用片段替換修改既有檔案：其他程式原封不動；找不到或出現多次的原文不套用（2026/11/03 CNC 翻譯實測）', () => {
+  const files: Record<string, string> = { 'translator.py': 'BASE = os.getenv("UMT_5090_API_BASE", "x")\n\ndef check(a, b):\n    if a != b:\n        raise ValueError("5090 changed protected CNC identifiers")\n\nX = 1\nX = 1\n' };
+  const opt = { exists: (p: string) => p in files, read: (p: string) => files[p] ?? null, testData: new Set<string>(), allowNew: () => false };
+  const ok = vetEdits([{ path: 'translator.py', replace: [{ find: 'BASE = os.getenv("UMT_5090_API_BASE", "x")', with: 'BASE = os.getenv("OPENAI_BASE_URL") or os.getenv("UMT_5090_API_BASE", "x")' }] }], opt);
+  assert.equal(ok.rejected.length, 0);
+  assert.match(ok.ok[0].content, /OPENAI_BASE_URL/);
+  assert.match(ok.ok[0].content, /raise ValueError\("5090 changed protected CNC identifiers"\)/, '和任務無關的檢查保留');
+  const bad = vetEdits([{ path: 'translator.py', replace: [{ find: 'NOT THERE', with: 'y' }] }, { path: 'translator.py', replace: [{ find: 'X = 1', with: 'X = 2' }] }], opt);
+  assert.deepEqual(bad.ok, []);
+  assert.match(bad.rejected[0].reason, /找不到要替換的原文/);
+  assert.match(bad.rejected[1].reason, /出現 2 次/);
+  const parsed = parseReply('```json\n{"edits":[{"path":"a.py","replace":[{"find":"a","with":"b"}]}],"note":"n"}\n```');
+  assert.deepEqual(parsed.edits, [{ path: 'a.py', replace: [{ find: 'a', with: 'b' }] }]);
+});
