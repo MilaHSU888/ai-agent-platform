@@ -600,3 +600,24 @@ test('固定規則：沿用現有健康檢查網址；模型設定與資料夾�
   writeFileSync(join(base, 'app/data/outbox/new.xlsx'), 'y');
   assert.ok(existsSync(join(base, 'data/data/outbox/new.xlsx')), '之後寫的檔案落在資料目錄');
 });
+
+test('完整流程：套件清單在上一層（材質審核平台的資料夾結構）也能打包（2026/11/03）', async () => {
+  const t = await setup({}, fakeModel());
+  try {
+    const files = [
+      { name: '3.平台/01_Docker版/requirements.txt', data: 'fastapi==0.115.0\nuvicorn==0.34.0\n' },
+      { name: '3.平台/01_Docker版/Dockerfile', data: 'FROM python:3.12\n' },
+      { name: '3.平台/01_Docker版/app/main.py', data: 'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/")\ndef home():\n    return {}\n' },
+      { name: '3.平台/README.md', data: '說明' },
+    ];
+    const id = (await upload(t, files, 'mode=new&name=材質審核&department=it&owner=A&usesAi=no&filename=raw.zip')).data.autopack.id as string;
+    await t.runWorker();
+    const v = (await t.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
+    assert.equal(v.status, 'awaiting_review', JSON.stringify([v.handoff, v.steps]));
+    const src = join(t.cfg.dataDir, 'autopack', id, 'src');
+    assert.match(readFileSync(join(src, 'requirements.txt'), 'utf8'), /fastapi/);
+    assert.match(readFileSync(join(src, 'Dockerfile'), 'utf8'), /pip install -r requirements\.txt/);
+    assert.ok(v.report.confirm.some((c: string) => /上一層/.test(c)));
+    assert.equal(v.report.summary['健康檢查'], '/', '沿用現有首頁，不改程式');
+  } finally { await t.close(); }
+});

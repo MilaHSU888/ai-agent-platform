@@ -352,10 +352,10 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       if (live.has(f.path)) continue;
       for (const base of [original, src]) { const to = join(base, f.path); mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); }
     }
-    rmSync(raw, { recursive: true, force: true });
     // 上一層借來的套件清單（專案資料夾裡沒有）；完全沒有時依 import 產生 requirements.txt
     for (const b of a.borrowed) for (const base of [original, src]) { mkdirSync(base, { recursive: true }); copyFileSync(join(raw, b.from), join(base, b.to)); }
     if (a.inferredDeps.length && !existsSync(join(src, 'requirements.txt'))) writeFileSync(join(src, 'requirements.txt'), `# WorkHub 自動打包：專案沒有套件清單，依程式的 import 推斷（請確認，必要時指定版本）\n${a.inferredDeps.join('\n')}\n`);
+    rmSync(raw, { recursive: true, force: true });
     const workdir = ['python', 'node'].includes(a.language!) ? '/app' : null;
     const mountDirs = [...new Set(tdFiles.map((f) => topTestDir(f.path)))];
     d.testData = { dir: TEST_DATA_DIR(id), files: tdFiles, mounts: workdir ? mountDirs.map((m) => ({ from: m, target: `${workdir}/${m}` })) : [] };
