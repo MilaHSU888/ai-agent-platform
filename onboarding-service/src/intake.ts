@@ -52,7 +52,7 @@ export function inspectZip(buf: Buffer, cfg: Config): { issues: Issue[]; warning
 const BULKY_WARN_BYTES = 50 * 1024 * 1024;
 const BULKY_WARN_FILES = 5000;
 const BULKY: { label: string; fix: string; test: (path: string, size: number) => boolean }[] = [
-  { label: '虛擬環境或套件', fix: '平台建置時會依 requirements.txt／package.json 重新安裝，不用放進 ZIP', test: (p) => p.split('/').some((x) => SKIP_DIR.test(x) && !/^(dist|build|target|bin|obj|out|coverage|htmlcov)$/.test(x)) },
+  { label: '虛擬環境、套件或快取（已自動排除）', fix: '平台不檢查也不放進工具，建置時會依 requirements.txt／package.json 重新安裝；建議壓縮前移除，上傳較快', test: (p) => p.split('/').some((x) => SKIP_DIR.test(x) && !/^(dist|build|target|bin|obj|out|coverage|htmlcov)$/.test(x)) },
   { label: 'Windows 安裝檔', fix: '平台用不到 .exe、.msi、.bat 等安裝或啟動檔', test: (p) => WINDOWS_DEPLOY.test(p) },
   { label: '資料檔或影音', fix: '正式資料不要放進工具；測試資料放 tests/fixtures，範本才放在程式資料夾', test: (p, n) => n >= 5 * 1024 * 1024 && /\.(xlsx?|csv|db|sqlite3?|json|parquet|mp4|mov|avi|zip|pdf|png|jpe?g|tiff?)$/i.test(p) },
 ];

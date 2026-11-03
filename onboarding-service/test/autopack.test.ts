@@ -403,7 +403,7 @@ test('已打包 ZIP 偏大：不擋，列出虛擬環境、安裝檔、大型資
   const entries = [e('app/main.py', 1000), e('app/venv/lib/x.so', 30e6), e('app/wheels/a-cp314-win_amd64.whl', 20e6), e('app/setup.exe', 5e6), e('app/data/big.xlsx', 8e6)];
   assert.deepEqual(bulkyWarnings(10e6, entries, ''), []);
   const w = bulkyWarnings(70e6, entries, '');
-  assert.deepEqual(w.map((x) => x.reason.replace(/^ZIP 有 \d+ MB、\d+ 個檔案，其中/, '').replace(/約.*$/, '')), ['虛擬環境或套件', 'Windows 安裝檔', '資料檔或影音']);
+  assert.deepEqual(w.map((x) => x.reason.replace(/^ZIP 有 \d+ MB、\d+ 個檔案，其中/, '').replace(/約.*$/, '')), ['虛擬環境、套件或快取（已自動排除）', 'Windows 安裝檔', '資料檔或影音']);
   assert.match(w[0].file, /app\/venv/);
 });
 

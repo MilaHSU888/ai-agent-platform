@@ -318,6 +318,10 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}
+      {submissionForm.kind === 'zip' && file && issues.some((i) => i.file === 'workhub.yaml' && /找不到/.test(i.reason)) && <div className="onb-note ap-switch">
+        <span>這個 ZIP 還沒打包（沒有 workhub.yaml）。要改用「上傳專案 ZIP，平台自動打包」嗎？同一個檔案，不用重選。</span>
+        <button type="button" className="onb-primary-sm" onClick={() => { setSubmissionForm({ ...submissionForm, kind: 'source' }); setIssues([]); setWarnings([]); }}>改用自動打包</button>
+      </div>}
       <IssueTable title={submissionForm.kind === 'url' ? '表單未通過檢查' : submissionForm.kind === 'source' ? '專案 ZIP 未通過檢查（請修正後重新上傳）' : '提交包未通過檢查（已停止建置）'} issues={issues} />
       <IssueTable title="提醒" issues={warnings} />
     </section>}

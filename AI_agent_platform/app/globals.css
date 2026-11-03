@@ -1102,3 +1102,4 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .ap-q-input small { color:#7c8494; }
 .ap-intro { margin:0 0 12px; }
 .onb-notice-links button.rc-todo-autopack { border-color:#e3b6ae; color:#8a2c20; }
+.ap-switch { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-top:12px; }

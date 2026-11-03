@@ -38,7 +38,10 @@ export const SECRET_CONTENT: { re: RegExp; label: string }[] = [
   { re: /\bxox[abprs]-[A-Za-z0-9-]{10,}/, label: 'Slack Token' },
   { re: /(?:api[_-]?key|secret|token|passw(?:or)?d|access[_-]?key)["']?\s*[:=]\s*["'][A-Za-z0-9_\-/+=]{20,}["']/i, label: '寫死的金鑰或密碼' },
 ];
-const IGNORED = (name: string) => name.startsWith('__MACOSX/') || /(^|\/)\.DS_Store$/.test(name);
+/** 一律略過、不檢查也不解壓的東西：Mac 壓縮時產生的檔案，以及虛擬環境、套件、快取、版控資料夾
+ *  （建置時會依 requirements.txt／package.json 重新安裝；2026/11/03 實測 .venv 內的符號連結與 cacert.pem 讓整包被擋） */
+const ENV_DIR = /(^|\/)(\.venv|venv|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.git|site-packages)\//;
+export const IGNORED = (name: string) => name.startsWith('__MACOSX/') || /(^|\/)\.DS_Store$/.test(name) || ENV_DIR.test(name);
 
 /** policy=false：只做結構安全檢查（原始碼自動打包用；.git、.env、巢狀壓縮檔由打包流程自行排除或詢問） */
 export function readCentralDirectory(buf: Buffer, cfg: Config, policy = true): { entries: ZipEntry[]; issues: Issue[] } {
