@@ -70,12 +70,12 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
 function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolveP, reject) => {
     const declared = Number(req.headers['content-length'] ?? 0);
-    if (declared > limit) { reject(Object.assign(new Error('上傳檔案超過大小上限'), { status: 413 })); req.resume(); return; }
+    if (declared > limit) { reject(Object.assign(new Error(`上傳檔案超過大小上限（${Math.round(limit / 1024 / 1024)} MB）`), { status: 413 })); req.resume(); return; }
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > limit) { reject(Object.assign(new Error('上傳檔案超過大小上限'), { status: 413 })); req.destroy(); return; }
+      if (size > limit) { reject(Object.assign(new Error(`上傳檔案超過大小上限（${Math.round(limit / 1024 / 1024)} MB）`), { status: 413 })); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => resolveP(Buffer.concat(chunks)));

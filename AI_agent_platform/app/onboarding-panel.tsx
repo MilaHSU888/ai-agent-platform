@@ -22,6 +22,10 @@ const SUB_STATUS: Record<string, string> = {
 const tone = (s: string) => (['passed', 'approved', 'released', 'awaiting_approval'].includes(s) ? 'good' : ['failed', 'interrupted', 'incomplete', 'not_verified'].includes(s) ? 'bad' : ['blocked', 'warning', 'skipped', 'awaiting', 'awaiting_confirmation'].includes(s) ? 'warn' : '');
 const ACTIVE = ['queued', 'running'];
 
+/** 上傳大小上限（與上架服務設定一致：已打包 ZIP 100 MB、自動打包原始碼 300 MB） */
+const ZIP_LIMIT = 100 * 1024 * 1024;
+const SOURCE_LIMIT = 300 * 1024 * 1024;
+
 type Props = { departments: { id: string; name: string }[]; notice: (m: string) => void; role?: Role; developer?: string };
 type Conn = 'checking' | 'offline' | 'ready';
 
@@ -289,8 +293,9 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>原始碼 ZIP（整個專案資料夾）<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        {file && file.size > SOURCE_LIMIT && <p className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過自動打包的上限 {SOURCE_LIMIT / 1024 / 1024} MB。請移除虛擬環境、套件快取、影片等大型檔案後重新壓縮。</p>}
         {!submissionForm.tool && <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>}
-        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
+        <button disabled={!file || file.size > SOURCE_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy || (!!health && !health.docker)}>{busy ? '上傳中…' : '上傳並開始自動打包'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </> : <>
@@ -307,11 +312,13 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
         <label>部門（以平台表單為準）<select disabled={!!submissionForm.tool} value={department} onChange={(e) => setDepartment(e.target.value)}>{departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <label>工具負責人（Owner）<input readOnly={!!submissionForm.tool} value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="例如 Mila" /></label>
         <label>原始碼 ZIP<input type="file" accept=".zip,application/zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+        {file && file.size > ZIP_LIMIT && <div className="onb-error onb-span2">這個 ZIP 有 {(file.size / 1024 / 1024).toFixed(0)} MB，超過已打包 ZIP 的上限 {ZIP_LIMIT / 1024 / 1024} MB。如果是還沒打包的原始碼（例如含 Windows 離線套件、安裝檔），請改用自動打包（上限 {SOURCE_LIMIT / 1024 / 1024} MB），平台會自動排除用不到的檔案。
+          <button type="button" className="onb-primary-sm" onClick={() => setSubmissionForm({ ...submissionForm, kind: 'source' })}>改用「上傳原始碼，平台自動打包」</button></div>}
         {!submissionForm.tool && <>
           <label className="onb-span2">用途說明（選填，顯示在工具中心）<input value={profile.description} maxLength={80} onChange={(e) => setProfile({ ...profile, description: e.target.value })} placeholder="一句話說明這個工具做什麼" /></label>
           <label className="onb-span2">適用情境（選填）<input value={profile.scenario} maxLength={80} onChange={(e) => setProfile({ ...profile, scenario: e.target.value })} placeholder="例如 多家供應商報價整併、價格比較" /></label>
         </>}
-        <button disabled={!file || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
+        <button disabled={!file || file.size > ZIP_LIMIT || !owner.trim() || (!submissionForm.tool && !toolName.trim()) || busy}>{busy ? '處理中…' : '上傳並開始建置'}</button>
         <button type="button" disabled={busy} onClick={() => { setSubmissionForm(null); setFile(null); setIssues([]); setWarnings([]); }}>取消</button>
       </form>
       </>}
