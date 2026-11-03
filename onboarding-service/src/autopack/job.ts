@@ -48,6 +48,8 @@ export type Report = {
 };
 export type Detail = {
   steps: Step[];
+  /** 這一輪開始處理的時間（處理中時網站即時算已用時間） */
+  runStartedAt?: string;
   analysis?: Analysis;
   questions?: Question[];
   answers?: Record<string, string>;
@@ -216,7 +218,8 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     save(store, id, { detail: d });
     log(`${name}：${{ passed: '完成', failed: '失敗', skipped: '略過', running: '進行中', waiting: '等待回答' }[status]}${detail ? `（${detail}）` : ''}`);
   };
-  save(store, id, { status: 'running' });
+  d.runStartedAt = new Date(started).toISOString();
+  save(store, id, { status: 'running', detail: d });
   let stage: Stage = r.stage;
   try {
     if (stage === 'extract') { await stageExtract(); stage = 'ask'; save(store, id, { stage, detail: d }); }
@@ -379,6 +382,10 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
   async function runModelTask(model: ModelFn, task: string, files: string[], extra: string, name: string) {
     const src = join(dir, 'src');
     const contents = files.filter((f) => existsSync(join(src, f))).map((f) => ({ path: f, content: readFileSync(join(src, f), 'utf8') }));
+    // 其他檔案（含測試）從這些檔案匯入的名稱：模型不能刪掉或改名（2026/11/03 實測：模型刪了 OLLAMA_HINT，測試匯入失敗）
+    const keep = importedNames(src, contents.map((c) => c.path));
+    const keepNote = Object.entries(keep).filter(([, n]) => n.length).map(([f, n]) => `${f} 必須保留這些名稱（其他檔案或測試會匯入，不能刪除或改名，必要時保留為相容用的常數或函式）：${n.join('、')}`).join('\n');
+    if (keepNote) extra = `${extra}\n${keepNote}`.trim();
     const entry: Detail['modelLog'][number] = { task: name, note: '', applied: [], rejected: [] };
     try {
       const ctrl = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Math.min(cfg.autopack.modelTimeoutMs, remaining())))]);
@@ -392,6 +399,10 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
         testData,
         allowNew: (p) => /^tests?\//.test(p) || /^\.workhub\//.test(p) || /(^|\/)(health|healthcheck)\.\w+$/.test(p),
       });
+      for (const e of [...vet.ok]) {
+        const missing = (keep[e.path] ?? []).filter((n) => !new RegExp(`\\b${n}\\b`).test(e.content));
+        if (missing.length) { vet.ok.splice(vet.ok.indexOf(e), 1); vet.rejected.push({ path: e.path, reason: `刪掉了其他檔案或測試會用到的名稱：${missing.join('、')}` }); }
+      }
       for (const e of vet.ok) { mkdirSync(dirname(join(src, e.path)), { recursive: true }); writeFileSync(join(src, e.path), e.content); entry.applied.push(e.path); }
       entry.rejected = vet.rejected;
       if (!reply.edits.length) entry.error = '模型回覆看不懂（不是約定的 JSON 格式）';
@@ -683,7 +694,7 @@ export function autopackView(store: Store, id: string) {
     answers: d.answers ?? {}, report: r.status === 'awaiting_review' || r.status === 'submitted' ? d.report ?? null : null,
     handoff: d.handoff ?? null, error: r.error, submissionId: r.submission_id, version: d.version ?? null,
     analysis: d.analysis ? { framework: d.analysis.frameworkLabel, language: d.analysis.language, unsupported: d.analysis.unsupported } : null,
-    activeMinutes: Math.round(r.active_ms / 60000), createdAt: r.created_at, updatedAt: r.updated_at,
+    activeMinutes: Math.floor((r.active_ms + (r.status === 'running' && d.runStartedAt ? Math.max(0, Date.now() - Date.parse(d.runStartedAt)) : 0)) / 60000), createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
 
@@ -704,3 +715,21 @@ export function autopackZip(cfg: Config, id: string): Buffer | null {
   if (!existsSync(src)) return null;
   return makeZip(listFiles(src).map((p) => ({ name: p, data: readFileSync(join(src, p)) })));
 }
+
+/** Python：其他檔案從指定檔案匯入的名稱（from a.b import X, Y），依檔案分組 */
+export function importedNames(src: string, targets: string[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  const mods = new Map(targets.filter((t) => t.endsWith('.py')).map((t) => [t.replace(/\.py$/, '').replace(/\/__init__$/, '').split('/').join('.'), t]));
+  if (!mods.size) return out;
+  for (const f of listFiles(src).filter((x) => x.endsWith('.py') && !targets.includes(x))) {
+    const text = readFileSync(join(src, f), 'utf8');
+    for (const m of text.matchAll(/^\s*from\s+([\w.]+)\s+import\s+(\([^)]*\)|[^\n]+)/gm)) {
+      const t = mods.get(m[1]);
+      if (!t) continue;
+      const names = m[2].replace(/[()]/g, '').split(',').map((x) => x.replace(/#.*$/, '').trim().split(/\s+as\s+/)[0].trim()).filter((x) => /^\w+$/.test(x) && x !== '*');
+      out[t] = [...new Set([...(out[t] ?? []), ...names])].sort();
+    }
+  }
+  return out;
+}
+

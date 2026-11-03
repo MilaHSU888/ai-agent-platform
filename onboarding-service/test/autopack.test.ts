@@ -8,7 +8,9 @@ import { JobQueue } from '../src/queue.ts';
 import { Secrets } from '../src/secrets.ts';
 import { createApp } from '../src/server.ts';
 import { runReleaseJob } from '../src/releases.ts';
-import { AutopackWorker, slugFrom } from '../src/autopack/job.ts';
+import { AutopackWorker, importedNames, slugFrom } from '../src/autopack/job.ts';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { analyze } from '../src/autopack/analyze.ts';
 import { loadTree } from '../src/autopack/files.ts';
 import { parseReply, vetEdits } from '../src/autopack/model.ts';
@@ -384,4 +386,13 @@ test('版本更新：沿用工具代號，和上一版比對資料表欄位', as
     assert.deepEqual(v.report.decisions.schemaChanges, ['資料表 quotes 新增欄位：currency']);
     assert.ok(v.report.confirm.some((c: string) => /資料格式有變/.test(c)));
   } finally { await t.close(); }
+});
+
+test('模型不能刪掉測試會匯入的名稱（2026/11/03 實測 OLLAMA_HINT）', () => {
+  const src = mkdtempSync(join(tmpdir(), 'ap-names-'));
+  mkdirSync(join(src, 'parsers'), { recursive: true }); mkdirSync(join(src, 'tests'), { recursive: true });
+  writeFileSync(join(src, 'parsers/ai_parser.py'), 'OLLAMA_HINT = "x"\ndef parse(): pass\n');
+  writeFileSync(join(src, 'tests/test_ai.py'), 'from parsers.ai_parser import (\n    OLLAMA_HINT,  # hint\n    parse as p,\n)\nimport os\n');
+  writeFileSync(join(src, 'app.py'), 'from parsers.ai_parser import parse\nfrom settings import X\n');
+  assert.deepEqual(importedNames(src, ['parsers/ai_parser.py']), { 'parsers/ai_parser.py': ['OLLAMA_HINT', 'parse'] });
 });
