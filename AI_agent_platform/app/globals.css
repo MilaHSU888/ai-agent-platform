@@ -1079,7 +1079,12 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .ap-q p { margin:0; }
 .ap-refs { margin:0; padding-left:20px; font-size:13px; color:#555; }
 .ap-handoff p { margin:6px 0 0; }
-.ap-downloads { display:flex; gap:16px; flex-wrap:wrap; }
+.ap-downloads { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px !important; }
+.ap-handoff a.ap-dl { display:inline-grid; grid-template-columns:auto 1fr; column-gap:8px; align-items:center; padding:10px 16px; border:1.5px solid #2d3a8c; border-radius:10px; background:#2d3a8c; color:#fff; font-weight:700; font-size:14px; text-decoration:none; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+.ap-handoff a.ap-dl:hover { background:#24307a; }
+.ap-handoff a.ap-dl:focus-visible { outline:3px solid #9aa8ff; outline-offset:2px; }
+.ap-handoff a.ap-dl > span { grid-row:span 2; font-size:18px; }
+.ap-handoff a.ap-dl small { font-weight:400; font-size:12px; opacity:.85; }
 .ap-report h3 { margin:16px 0 8px; } .ap-report h4 { margin:14px 0 6px; }
 .ap-report ul { margin:0; padding-left:20px; }
 .ap-summary { border-collapse:collapse; font-size:14px; width:100%; max-width:720px; }
