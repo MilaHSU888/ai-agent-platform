@@ -60,7 +60,7 @@ export type Autopack = {
   id: string; mode: 'new' | 'update'; toolId: string | null; name: string | null; department: string; owner: string; actor: string; filename: string;
   status: 'queued' | 'running' | 'awaiting_answer' | 'awaiting_review' | 'submitted' | 'handed_off' | 'cancelled' | 'failed'; stage: string;
   steps: { name: string; status: 'passed' | 'failed' | 'skipped' | 'running' | 'waiting'; at: string; detail?: string }[];
-  questions: AutopackQuestion[]; report: AutopackReport | null; handoff: { reason: string; detail: string; at: string } | null; ack: { by: string; at: string } | null; error: string | null;
+  questions: AutopackQuestion[]; report: AutopackReport | null; handoff: { reason: string; detail: string; at: string } | null; ack: boolean; error: string | null;
   submissionId: string | null; version: string | null; activeMinutes: number; createdAt: string; updatedAt: string;
 };
 /** 漏洞掃描器（2026/11/02）：版本與本機漏洞資料庫時間；正式環境不連網，不查最新版 */

@@ -532,16 +532,16 @@ test('模型用片段替換修改既有檔案：其他程式原封不動；找�
   assert.deepEqual(parsed.edits, [{ path: 'a.py', replace: [{ find: 'a', with: 'b' }] }]);
 });
 
-test('AI Team 點開轉過來的自動打包：記下接手的人，待辦不再列出（2026/11/03）', async () => {
+test('AI Team 點開轉過來的自動打包：待辦不再列出（不記錄是誰、什麼時候；2026/11/03）', async () => {
   const t = await setup({}, undefined);
   try {
     const gui = (await upload(t, [{ name: 'app.py', data: 'import tkinter\n' }, { name: 'requirements.txt', data: 'pillow\n' }], 'mode=new&name=視窗&department=it&owner=A&usesAi=no&filename=gui.zip')).data.autopack.id;
     await t.runWorker();
     let v = (await t.call('GET', `/api/onboarding/autopack/${gui}`)).data.autopack;
-    assert.equal(v.status, 'handed_off'); assert.equal(v.ack, null);
+    assert.equal(v.status, 'handed_off'); assert.equal(v.ack, false);
     assert.equal((await t.call('POST', `/api/onboarding/autopack/${gui}/ack`, {}, { 'X-WorkHub-Actor': 'Tammy' })).status, 200);
     v = (await t.call('GET', `/api/onboarding/autopack/${gui}`)).data.autopack;
-    assert.equal(v.ack.by, 'Tammy');
+    assert.equal(v.ack, true);
   } finally { await t.close(); }
 });
 

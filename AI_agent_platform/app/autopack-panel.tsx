@@ -104,7 +104,6 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
 
     {ap.status === 'handed_off' && ap.handoff && <div className="onb-error ap-handoff">
       <b>已轉給 AI Team：{ap.handoff.reason}</b>
-      {ap.ack && <p className="ap-ack">AI Team 接手：<b>{ap.ack.by}</b>（{new Date(ap.ack.at).toLocaleString('zh-TW')}）</p>}
       {ap.handoff.detail && <pre className="ap-handoff-detail">{ap.handoff.detail}</pre>}
       {role === 'aiteam'
         ? <div className="ap-next"><b>下一步（這筆自動打包不會再繼續）：</b><ol>

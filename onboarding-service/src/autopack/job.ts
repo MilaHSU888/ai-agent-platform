@@ -68,8 +68,8 @@ export type Detail = {
   testData?: TestDataInfo;
   report?: Report;
   handoff?: { reason: string; detail: string; at: string };
-  /** AI Team 從待辦點進來接手的人與時間（點過就不再出現在待辦，由接手的人聯絡開發者） */
-  ack?: { by: string; at: string };
+  /** AI Team 從待辦點開過（點過就不再出現在待辦，由點開的人聯絡開發者；Mila 2026/11/03：不記錄是誰、什麼時候） */
+  ack?: boolean;
   issues?: Issue[];
   version?: string;
 };
@@ -172,8 +172,8 @@ export function ackAutopack(store: Store, id: string, actor: string) {
   if (r.status !== 'handed_off') throw new GateError(['這筆自動打包沒有轉給 AI Team']);
   const d = JSON.parse(r.detail_json) as Detail;
   if (d.ack) return;
-  d.ack = { by: actor, at: now() };
-  store.tx(() => { save(store, id, { detail: d }); store.audit(actor, 'autopack.acknowledged', r.tool_id ?? id, { autopack: id }); });
+  d.ack = true;
+  save(store, id, { detail: d });
 }
 
 export function cancelAutopack(store: Store, cfg: Config, id: string, actor: string) {
@@ -819,7 +819,7 @@ export function autopackView(store: Store, id: string) {
     id: r.id, mode: r.mode, toolId: r.tool_id, name: r.name, department: r.department, owner: r.owner, actor: r.actor, filename: r.original_filename,
     status: r.status, stage: r.stage, steps: d.steps, questions: r.status === 'awaiting_answer' ? (d.questions ?? []).filter((q) => !d.answers?.[q.id]) : [],
     answers: d.answers ?? {}, report: r.status === 'awaiting_review' || r.status === 'submitted' ? d.report ?? null : null,
-    handoff: d.handoff ?? null, ack: d.ack ?? null, error: r.error, submissionId: r.submission_id, version: d.version ?? null,
+    handoff: d.handoff ?? null, ack: !!d.ack, error: r.error, submissionId: r.submission_id, version: d.version ?? null,
     analysis: d.analysis ? { framework: d.analysis.frameworkLabel, language: d.analysis.language, unsupported: d.analysis.unsupported } : null,
     activeMinutes: Math.floor((r.active_ms + (r.status === 'running' && d.runStartedAt ? Math.max(0, Date.now() - Date.parse(d.runStartedAt)) : 0)) / 60000), createdAt: r.created_at, updatedAt: r.updated_at,
   };

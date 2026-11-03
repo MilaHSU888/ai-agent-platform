@@ -492,7 +492,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings, 
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [log, setLog] = useState<{ title: string; text: string } | null>(null);
-  // 自動打包轉給 AI Team 的案子（2026/11/03）：AI Team 有人點開（接手）後就不再列出，由接手的人聯絡開發者
+  // 自動打包轉給 AI Team 的案子（2026/11/03）：AI Team 有人點開後就不再列出，由點開的人聯絡開發者（不記錄是誰）
   const [handoffs, setHandoffs] = useState<Autopack[]>([]);
   useEffect(() => {
     let alive = true;
@@ -649,7 +649,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings, 
 
   return <>
     {todo.length + handoffs.length > 0 && <section className="onb-notice rc-todo" role="status">
-      <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子點開即由你接手（不再列在這裡），請聯絡開發者，用雲端 AI 協助打包'}。</p></div>
+      <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子點開後就不再列在這裡，請點開的人聯絡開發者，用雲端 AI 協助打包'}。</p></div>
       <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}
         {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => { setHandoffs((h) => h.filter((x) => x.id !== a.id)); void onboardingApi.ackAutopack(a.id).catch(() => {}).finally(() => openAutopack?.(a.id)); }}>{a.name ?? a.toolId ?? a.filename}：自動打包轉給 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
     </section>}
