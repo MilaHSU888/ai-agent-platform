@@ -1098,3 +1098,4 @@ button.table-row.selected { background: #f7f6ff; box-shadow: inset 3px 0 var(--p
 .ap-add { color:#1f7a45; } .ap-del { color:#b42318; }
 .ap-diff .ap-add { background:#e9f7ef; display:inline-block; min-width:100%; } .ap-diff .ap-del { background:#fdecea; display:inline-block; min-width:100%; }
 .ap-confirm { margin-top:14px; } .ap-confirm ul { margin:6px 0; }
+.ap-handoff-detail { margin:8px 0 0; max-height:220px; overflow:auto; white-space:pre-wrap; word-break:break-word; background:#fff; border:1px solid #f1c9c4; border-radius:8px; padding:8px 10px; font-size:12px; line-height:1.45; color:#7a1f16; }

@@ -91,7 +91,7 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
 
     {ap.status === 'handed_off' && ap.handoff && <div className="onb-error ap-handoff">
       <b>已轉給 AI Team：{ap.handoff.reason}</b>
-      {ap.handoff.detail && <p>{ap.handoff.detail}</p>}
+      {ap.handoff.detail && <pre className="ap-handoff-detail">{ap.handoff.detail}</pre>}
       <p>{role === 'aiteam' ? '請下載打包紀錄與目前的打包結果，協助開發者完成上架。' : 'AI Team 會和你聯絡，不需要重新上傳。'}</p>
       {role === 'aiteam' && <p className="ap-downloads"><a className="ap-dl" href={`/api/onboarding/autopack/${ap.id}/log`} download><span aria-hidden>⬇</span>下載打包紀錄<small>.txt：每一步的結果、建置與測試輸出、模型改了什麼</small></a><a className="ap-dl" href={`/api/onboarding/autopack/${ap.id}/files.zip`} download><span aria-hidden>⬇</span>下載目前的打包結果<small>.zip：平台做好的專案（含 Dockerfile、workhub.yaml），不含測試資料</small></a></p>}
     </div>}
