@@ -16,6 +16,10 @@ export type OutsideWrite = { id: string; path: string; ref: Ref };
 
 export type Analysis = {
   root: string;
+  /** 專案資料夾裡沒有套件清單、上一層才有時，借來放到專案最上層（例如 Docker版/requirements.txt + Docker版/app/） */
+  borrowed: { from: string; to: string }[];
+  /** 完全沒有套件清單時，依 import 推斷的套件（平台產生 requirements.txt，報告請開發者確認） */
+  inferredDeps: string[];
   language: Lang | null;
   framework: string | null;
   frameworkLabel: string;
@@ -61,6 +65,26 @@ function grep(files: SrcFile[], re: RegExp, opts: { code?: boolean; skipTests?: 
   return out;
 }
 
+const DEP_FILE = /^(requirements[\w.-]*\.txt|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|package\.json|package-lock\.json|composer\.json|go\.mod|pom\.xml)$/i;
+
+/** import 名稱和套件名稱不同的常見對照 */
+const PIP_NAME: Record<string, string> = { PIL: 'pillow', cv2: 'opencv-python-headless', yaml: 'pyyaml', fitz: 'pymupdf', sklearn: 'scikit-learn', bs4: 'beautifulsoup4', docx: 'python-docx', pptx: 'python-pptx', dotenv: 'python-dotenv', jwt: 'pyjwt', dateutil: 'python-dateutil', multipart: 'python-multipart', Crypto: 'pycryptodome', magic: 'python-magic', serial: 'pyserial', win32com: 'pywin32', pytesseract: 'pytesseract', pdf2image: 'pdf2image' };
+const STDLIB = new Set('__future__ abc argparse array ast asyncio base64 binascii bisect builtins bz2 calendar cgi cmath codecs collections colorsys concurrent configparser contextlib contextvars copy csv ctypes dataclasses datetime decimal difflib dis email enum errno faulthandler fcntl filecmp fnmatch fractions ftplib functools gc getpass gettext glob gzip hashlib heapq hmac html http imaplib importlib inspect io ipaddress itertools json keyword linecache locale logging lzma mailbox math mimetypes mmap multiprocessing netrc numbers operator os pathlib pickle pkgutil platform plistlib poplib posixpath pprint profile pstats queue quopri random re readline reprlib resource sched secrets select selectors shelve shlex shutil signal site smtplib socket socketserver sqlite3 ssl stat statistics string stringprep struct subprocess sys sysconfig tarfile tempfile textwrap threading time timeit tkinter token tokenize tomllib trace traceback tracemalloc types typing unicodedata unittest urllib uuid venv warnings wave weakref webbrowser winreg wsgiref xml xmlrpc zipfile zipimport zlib zoneinfo'.split(' '));
+
+/** 沒有 requirements.txt 時，依 import 推斷要裝的套件（排除標準函式庫與專案自己的模組） */
+export function inferPythonDeps(files: SrcFile[]): string[] {
+  const local = new Set(files.filter((f) => f.path.endsWith('.py') || f.path.endsWith('/__init__.py')).flatMap((f) => [f.path.split('/')[0].replace(/\.py$/, ''), f.path.split('/').pop()!.replace(/\.py$/, '')]));
+  const out = new Set<string>();
+  for (const f of files.filter((x) => x.path.endsWith('.py') && x.text && !/(^|\/)tests?\//.test(x.path))) {
+    for (const m of f.text!.matchAll(/^\s*(?:from\s+([A-Za-z_]\w*)[\w.]*\s+import|import\s+([A-Za-z_]\w*))/gm)) {
+      const mod = m[1] ?? m[2];
+      if (!mod || STDLIB.has(mod) || local.has(mod) || mod.startsWith('_')) continue;
+      out.add(PIP_NAME[mod] ?? mod.replace(/_/g, '-'));
+    }
+  }
+  return [...out].sort();
+}
+
 const text = (files: SrcFile[], name: string) => files.find((f) => f.path === name)?.text ?? null;
 
 function pythonDeps(files: SrcFile[]): string[] {
@@ -103,14 +127,28 @@ function pythonVersion(all: SrcFile[], files: SrcFile[], hints: string[]): strin
 export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: string[] = []): Analysis {
   const root = findRoot(allFiles);
   const { inside: files, outside } = splitRoot(allFiles, root);
+  // 2026/11/03 實測（材質審核平台）：程式在 app/，requirements.txt 在上一層 → 借上來，不然建置找不到套件
+  const borrowed: { from: string; to: string }[] = [];
+  if (root && !files.some((f) => !f.path.includes('/') && DEP_FILE.test(f.path))) {
+    const parts = root.split('/');
+    for (let k = parts.length - 1; k >= 0 && !borrowed.length; k--) {
+      const anc = parts.slice(0, k).join('/');
+      for (const c of outside.filter((f) => (f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '') === anc && DEP_FILE.test(f.path.split('/').pop()!))) {
+        const name = c.path.split('/').pop()!;
+        borrowed.push({ from: c.path, to: name });
+        files.push({ ...c, path: name });
+      }
+    }
+  }
+  const borrowedFrom = new Set(borrowed.map((b) => b.from));
   const excluded: { path: string; why: string }[] = [];
-  for (const f of outside) excluded.push({ path: f.path, why: WINDOWS_DEPLOY.test(f.path) || /wheels\//.test(f.path) ? 'Windows 安裝用的檔案，平台用不到' : '在專案資料夾外（安裝包或說明文件），不放進工具' });
+  for (const f of outside.filter((x) => !borrowedFrom.has(x.path))) excluded.push({ path: f.path, why: WINDOWS_DEPLOY.test(f.path) || /wheels\//.test(f.path) ? 'Windows 安裝用的檔案，平台用不到' : '在專案資料夾外（安裝包或說明文件），不放進工具' });
   for (const d of skippedDirs) excluded.push({ path: `${d}/`, why: /wheels|site-packages|node_modules|venv/.test(d) ? '套件或虛擬環境，平台建置時會重新安裝' : '快取、建置產物或版控資料' });
   for (const f of files) if (WINDOWS_DEPLOY.test(f.path)) excluded.push({ path: root ? `${root}/${f.path}` : f.path, why: 'Windows 安裝或啟動用的檔案，平台用不到' });
   const keepFiles = files.filter((f) => !WINDOWS_DEPLOY.test(f.path));
 
   const a: Analysis = {
-    root, language: null, framework: null, frameworkLabel: '', entry: null, port: 8080, healthPath: '/health', healthBuiltin: false, runtimeVersion: null,
+    root, borrowed, inferredDeps: [], language: null, framework: null, frameworkLabel: '', entry: null, port: 8080, healthPath: '/health', healthBuiltin: false, runtimeVersion: null,
     unsupported: null, secrets: [], external: [], windowsDeps: [], ai: { uses: false, refs: [], rewriteFiles: [] },
     data: { readsDataDirEnv: false, defaultDir: null, keep: [], temp: [], outside: [], seeds: [], liveData: [] },
     testData: [], tests: { command: null, files: [], label: '' }, systemPackages: [], excluded, manifest: { name: null, deps: [] },
@@ -142,7 +180,8 @@ export function analyze(allFiles: SrcFile[], skippedDirs: string[] = [], hints: 
 
   // ── 各語言的框架、進入點、埠與健康檢查（SOP 12.3） ──
   if (a.language === 'python') {
-    const deps = pythonDeps(keepFiles);
+    let deps = pythonDeps(keepFiles);
+    if (!deps.length && !rootHas(/^(pyproject\.toml|setup\.py|setup\.cfg|Pipfile)$/)) { a.inferredDeps = inferPythonDeps(keepFiles); deps = a.inferredDeps.map((d) => d.toLowerCase()); }
     a.manifest.deps = deps;
     a.runtimeVersion = pythonVersion(allFiles, keepFiles, hints);
     const imports = (mod: string) => grep(keepFiles.filter((f) => f.path.endsWith('.py') && !TEST_DIR.test(f.path)), new RegExp(`^\\s*(import|from)\\s+${mod}\\b`));

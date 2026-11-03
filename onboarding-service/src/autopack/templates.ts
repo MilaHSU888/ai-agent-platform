@@ -64,7 +64,7 @@ const apt = (pkgs: string[]) => pkgs.length
   ? [`RUN apt-get update && apt-get install -y --no-install-recommends ${[...new Set(pkgs)].join(' ')} \\`, ' && rm -rf /var/lib/apt/lists/*']
   : [];
 
-export function generate(a: Analysis, opts: { toolId: string; description: string; platforms: string[]; reqFile: string | null; hasLock: boolean; prev?: PrevManifest; date: string }): Generated {
+export function generate(a: Analysis, opts: { toolId: string; description: string; platforms: string[]; reqFile: string | null; hasLock: boolean; installable?: boolean; prev?: PrevManifest; date: string }): Generated {
   const notes: string[] = [];
   const files: Record<string, string> = {};
   const usesData = a.language !== 'static' && a.framework !== 'spa' && (a.data.readsDataDirEnv || a.data.keep.length > 0 || a.data.seeds.length > 0 || a.data.outside.length > 0);
@@ -87,7 +87,8 @@ export function generate(a: Analysis, opts: { toolId: string; description: strin
       if (['flask', 'django'].includes(a.framework ?? '') && !a.manifest.deps.includes('gunicorn')) extra.push('gunicorn==23.0.0');
       if (a.tests.command && !a.manifest.deps.includes('pytest')) extra.push('pytest');
       const install = opts.reqFile ? [`COPY ${opts.reqFile} ./`, `RUN pip install -r ${opts.reqFile}${extra.length ? ` && pip install ${extra.join(' ')}` : ''}`, 'COPY . .']
-        : ['COPY . .', `RUN pip install .${extra.length ? ` && pip install ${extra.join(' ')}` : ''}`];
+        : opts.installable ? ['COPY . .', `RUN pip install .${extra.length ? ` && pip install ${extra.join(' ')}` : ''}`]
+        : ['COPY . .', ...(extra.length ? [`RUN pip install ${extra.join(' ')}`] : [])];
       const env = ['PYTHONDONTWRITEBYTECODE=1', 'PYTHONUNBUFFERED=1', 'PYTHONUTF8=1', 'PIP_NO_CACHE_DIR=1', 'PIP_DISABLE_PIP_VERSION_CHECK=1', 'HOME=/tmp'];
       if (a.framework === 'gradio') env.push('GRADIO_SERVER_NAME=0.0.0.0', `GRADIO_SERVER_PORT=${port}`);
       if (a.framework === 'dash') env.push('HOST=0.0.0.0', `PORT=${port}`);

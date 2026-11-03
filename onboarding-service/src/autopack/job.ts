@@ -353,6 +353,9 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       for (const base of [original, src]) { const to = join(base, f.path); mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); }
     }
     rmSync(raw, { recursive: true, force: true });
+    // 上一層借來的套件清單（專案資料夾裡沒有）；完全沒有時依 import 產生 requirements.txt
+    for (const b of a.borrowed) for (const base of [original, src]) { mkdirSync(base, { recursive: true }); copyFileSync(join(raw, b.from), join(base, b.to)); }
+    if (a.inferredDeps.length && !existsSync(join(src, 'requirements.txt'))) writeFileSync(join(src, 'requirements.txt'), `# WorkHub 自動打包：專案沒有套件清單，依程式的 import 推斷（請確認，必要時指定版本）\n${a.inferredDeps.join('\n')}\n`);
     const workdir = ['python', 'node'].includes(a.language!) ? '/app' : null;
     const mountDirs = [...new Set(tdFiles.map((f) => topTestDir(f.path)))];
     d.testData = { dir: TEST_DATA_DIR(id), files: tdFiles, mounts: workdir ? mountDirs.map((m) => ({ from: m, target: `${workdir}/${m}` })) : [] };
@@ -394,7 +397,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     const prevManifest = d.prevSubmission ? (JSON.parse(store.get<{ manifest_json: string }>('SELECT manifest_json FROM submissions WHERE id=?', d.prevSubmission)!.manifest_json)) : null;
     const reqFile = a.language === 'python' ? (existsSync(join(src, 'requirements.txt')) ? 'requirements.txt' : readdirSync(src).find((f) => /^requirements[\w.-]*\.txt$/i.test(f)) ?? null)
       : a.language === 'php' && existsSync(join(src, 'composer.json')) ? 'composer.json' : null;
-    const g = generate(a, { toolId: d.toolId!, description: d.description || r.name || '', platforms: [...new Set([cfg.hostPlatform, 'linux/arm64', 'linux/amd64'])], reqFile, hasLock: existsSync(join(src, 'package-lock.json')), prev: prevManifest, date: now().slice(0, 10) });
+    const g = generate(a, { toolId: d.toolId!, description: d.description || r.name || '', platforms: [...new Set([cfg.hostPlatform, 'linux/arm64', 'linux/amd64'])], reqFile, installable: ['pyproject.toml', 'setup.py'].some((f) => existsSync(join(src, f))), hasLock: existsSync(join(src, 'package-lock.json')), prev: prevManifest, date: now().slice(0, 10) });
     const replaced = ['Dockerfile', 'workhub.yaml'].filter((p) => existsSync(join(src, p)));
     for (const [p, content] of Object.entries(g.files)) { mkdirSync(dirname(join(src, p)), { recursive: true }); writeFileSync(join(src, p), content); }
     if (g.dataDir && a.data.seeds.length) {
@@ -757,6 +760,8 @@ function buildReport(d: Detail, r: Row, originalDir: string, srcDir: string, fil
   const aiDone = d.modelLog.find((m) => m.task === 'AI 連線改用平台設定')?.applied ?? [];
   if (a.ai.uses) confirm.push(a.ai.rewriteFiles.length ? `AI 功能：已改用平台指定的模型（改了 ${aiDone.join('、')}），上線後請測試 AI 相關功能` : 'AI 功能：程式原本就讀平台設定，上線後請測試 AI 相關功能');
   if (d.declaredAi === 'unsure') confirm.push(a.ai.uses ? `AI：平台判斷這個工具有用 AI（${a.ai.refs.map((x) => x.file).join('、')}），已改用平台的模型；如果判斷錯了請取消打包重新上傳` : 'AI：平台判斷這個工具沒有用 AI，上線後不會接平台的模型；如果其實有用，請取消打包，上傳時回答「會」');
+  if (a.inferredDeps.length) confirm.push(`專案沒有套件清單（requirements.txt），平台依程式的 import 推斷要安裝：${a.inferredDeps.join('、')}；請確認，建議之後補上 requirements.txt 並寫明版本`);
+  if (a.borrowed.length) confirm.push(`套件清單不在專案資料夾裡，平台用了上一層的 ${a.borrowed.map((b) => b.from).join('、')}`);
   if (fixed.length) confirm.push('資料保存位置有修改，請確認匯出、上傳等功能存檔正常');
   if (g.test.smoke) confirm.push('專案沒有業務測試，目前只有啟動測試；建議之後補上');
   if (d.schemaChanges?.length) confirm.push(`和上一版相比資料格式有變（${d.schemaChanges.join('；')}），請確認新版能讀舊資料`);

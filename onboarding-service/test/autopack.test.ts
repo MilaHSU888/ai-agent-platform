@@ -560,3 +560,19 @@ test('健康檢查由平台直接加（FastAPI／Flask）；模型回覆字串�
   const r = parseReply('{"edits":[{"path":"a.py","replace":[{"find":"x = 1\n","with":"x = 2\n\ty = 3"}]}],"note":"n"}');
   assert.deepEqual(r.edits, [{ path: 'a.py', replace: [{ find: 'x = 1\n', with: 'x = 2\n\ty = 3' }] }]);
 });
+
+test('套件清單在上一層時借上來；完全沒有時依 import 推斷（2026/11/03 材質審核平台）', async () => {
+  const f = (path: string, t: string) => ({ path, size: t.length, text: t });
+  const a = analyze([
+    f('tool/01_Docker版/requirements.txt', 'fastapi==0.115.0\nuvicorn==0.34.0\npdfplumber\n'),
+    f('tool/01_Docker版/Dockerfile', 'FROM python:3.12\n'),
+    f('tool/01_Docker版/app/main.py', 'from fastapi import FastAPI\nfrom processing import run\napp = FastAPI()\n'),
+    f('tool/01_Docker版/app/processing.py', 'import pdfplumber\ndef run(): pass\n'),
+  ], [], []);
+  assert.equal(a.root, 'tool/01_Docker版/app');
+  assert.deepEqual(a.borrowed, [{ from: 'tool/01_Docker版/requirements.txt', to: 'requirements.txt' }]);
+  assert.ok(a.manifest.deps.includes('fastapi'));
+  assert.ok(!a.excluded.some((e) => e.path.endsWith('requirements.txt')));
+  const { inferPythonDeps } = await import('../src/autopack/analyze.ts');
+  assert.deepEqual(inferPythonDeps([f('main.py', 'import os, json\nfrom fastapi import FastAPI\nimport cv2\nfrom PIL import Image\nfrom helpers import x\n'), f('helpers.py', 'import yaml\n')]), ['fastapi', 'opencv-python-headless', 'pillow', 'pyyaml']);
+});
