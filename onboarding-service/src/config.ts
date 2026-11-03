@@ -98,7 +98,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     relay: { image: process.env.ONBOARDING_RELAY_IMAGE ?? 'python:3.14-slim-trixie', timeoutSeconds: 125 },
     toolNetworkInternal: process.env.ONBOARDING_TOOL_NETWORK !== 'open',
     trivyCacheDir: '',
-    autopack: { uploadBytes: 1024 ** 3, totalUncompressedBytes: 1024 ** 3, entries: 50_000, maxMinutes: 60, maxFixRounds: 3, modelTimeoutMs: 10 * 60 * 1000 },
+    autopack: { uploadBytes: 1024 ** 3, totalUncompressedBytes: 1024 ** 3, entries: 50_000, maxMinutes: 60, maxFixRounds: 5, modelTimeoutMs: 10 * 60 * 1000 },
   };
   const merged = { ...base, ...overrides };
   if (!merged.trivyCacheDir) merged.trivyCacheDir = join(merged.dataDir, 'trivy-cache');

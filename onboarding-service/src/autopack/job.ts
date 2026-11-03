@@ -1,10 +1,10 @@
 /**
  * 原始碼自動打包（第 7 項，2026/11/03）：上傳原始碼 → 平台檢查與分析 → 範本產生打包檔 → 地端模型補程式
- * → 建置、斷網業務測試、健康檢查（失敗由模型修正，最多 3 次）→ 預檢 → 打包報告 → 開發者確認 → 進原本的上架流程。
+ * → 建置、斷網業務測試、健康檢查（失敗由模型修正，最多 5 次）→ 預檢 → 打包報告 → 開發者確認 → 進原本的上架流程。
  *
  * - 獨立排隊線（AutopackWorker）：一次打包一件，不卡住原本的上架檢查（JobQueue）。
  * - 遇到要問人的事（SOP 12.5：寫死的金鑰、對外連線、Windows 專用套件、資料要不要保存）就暫停，在網頁上問開發者。
- * - 一件最多 60 分鐘（等開發者回答的時間不算）；超過或修了 3 次仍失敗就轉 AI Team。
+ * - 一件最多 60 分鐘（等開發者回答的時間不算）；超過或修了 5 次仍失敗就轉 AI Team。
  * - 上傳的原始碼解壓後立刻刪除原檔；測試資料另外存放（testdata.ts），不放進 ZIP。
  */
 import { createHash } from 'node:crypto';
@@ -498,7 +498,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     save(store, id, { detail: d });
   }
 
-  // ── 5. 建置 → 斷網業務測試 → 健康檢查；失敗交給模型修正，最多 3 次 ──
+  // ── 5. 建置 → 斷網業務測試 → 健康檢查；失敗交給模型修正，最多 5 次 ──
   async function stageVerify() {
     const a = d.analysis!;
     const src = join(dir, 'src');

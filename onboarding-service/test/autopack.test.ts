@@ -273,7 +273,7 @@ test('自動打包完整流程：暫停提問 → 模型補程式 → 建置測�
   } finally { await t.close(); }
 });
 
-test('建置或測試失敗：交給模型修正，修好就繼續；修了 3 次還不行就轉 AI Team', async () => {
+test('建置或測試失敗：交給模型修正，修好就繼續；修了 5 次還不行就轉 AI Team', async () => {
   // 第一次業務測試失敗，模型修正後通過
   let fail = true;
   const fake = fakeModel((user) => (user.includes('業務測試失敗') ? (fail = false, JSON.stringify({ note: '修正匯出路徑', edits: [{ path: 'app.py', content: 'import streamlit as st\nst.title("ok")\n' }] })) : null));
@@ -298,8 +298,8 @@ test('建置或測試失敗：交給模型修正，修好就繼續；修了 3 �
     await t2.runWorker();
     const v = (await t2.call('GET', `/api/onboarding/autopack/${id}`)).data.autopack;
     assert.equal(v.status, 'handed_off');
-    assert.match(v.handoff.reason, /修了 3 次仍然建置失敗/);
-    assert.equal(fake2.calls.length, 3);
+    assert.match(v.handoff.reason, /修了 5 次仍然建置失敗/);
+    assert.equal(fake2.calls.length, 5);
     const log = await fetch(`http://127.0.0.1:${t2.cfg.port}/api/onboarding/autopack/${id}/log`, { headers: { 'X-WorkHub-Proxy-Token': TOKEN } });
     assert.match(await log.text(), /通知 AI Team/);
     const z = await fetch(`http://127.0.0.1:${t2.cfg.port}/api/onboarding/autopack/${id}/files.zip`, { headers: { 'X-WorkHub-Proxy-Token': TOKEN } });
