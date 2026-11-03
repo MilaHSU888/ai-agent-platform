@@ -544,3 +544,19 @@ test('AI Team 點開轉過來的自動打包：記下接手的人，待辦不再
     assert.equal(v.ack.by, 'Tammy');
   } finally { await t.close(); }
 });
+
+test('健康檢查由平台直接加（FastAPI／Flask）；模型回覆字串內直接換行也能讀（2026/11/03）', async () => {
+  const { addHealthRoute } = await import('../src/autopack/job.ts');
+  const src = mkdtempSync(join(tmpdir(), 'ap-health-'));
+  writeFileSync(join(src, 'app.py'), 'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/")\ndef home():\n    return {}\n');
+  const a = analyze([{ path: 'app.py', size: 1, text: readFileSync(join(src, 'app.py'), 'utf8') }, { path: 'requirements.txt', size: 1, text: 'fastapi\nuvicorn\n' }], [], []);
+  assert.equal(a.framework, 'fastapi');
+  assert.equal(addHealthRoute(a, src), 'app.py');
+  const after = readFileSync(join(src, 'app.py'), 'utf8');
+  assert.match(after, /@app\.get\("\/health", include_in_schema=False\)/);
+  assert.match(after, /def home\(\):/, '原本的路由保留');
+  addHealthRoute(a, src);
+  assert.equal(readFileSync(join(src, 'app.py'), 'utf8'), after, '已經有就不重複加');
+  const r = parseReply('{"edits":[{"path":"a.py","replace":[{"find":"x = 1\n","with":"x = 2\n\ty = 3"}]}],"note":"n"}');
+  assert.deepEqual(r.edits, [{ path: 'a.py', replace: [{ find: 'x = 1\n', with: 'x = 2\n\ty = 3' }] }]);
+});

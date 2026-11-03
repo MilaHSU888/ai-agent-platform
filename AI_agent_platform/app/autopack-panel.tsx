@@ -104,9 +104,14 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
 
     {ap.status === 'handed_off' && ap.handoff && <div className="onb-error ap-handoff">
       <b>已轉給 AI Team：{ap.handoff.reason}</b>
-      {ap.ack ? <p className="ap-ack">AI Team 接手：<b>{ap.ack.by}</b>（{new Date(ap.ack.at).toLocaleString('zh-TW')}）{role === 'aiteam' ? '，請聯絡開發者 ' + ap.owner + ' 協助處理。' : '，會和你聯絡。'}</p> : role === 'aiteam' && <p className="ap-ack">尚未有人接手（從發布管理的待辦點開即接手）。</p>}
+      {ap.ack && <p className="ap-ack">AI Team 接手：<b>{ap.ack.by}</b>（{new Date(ap.ack.at).toLocaleString('zh-TW')}）</p>}
       {ap.handoff.detail && <pre className="ap-handoff-detail">{ap.handoff.detail}</pre>}
-      <p>{role === 'aiteam' ? '請下載打包紀錄與目前的打包結果，協助開發者完成上架。' : 'AI Team 會和你聯絡，不需要重新上傳。'}</p>
+      {role === 'aiteam'
+        ? <div className="ap-next"><b>下一步（這筆自動打包不會再繼續）：</b><ol>
+            <li>聯絡開發者 <b>{ap.owner}</b>，取得原始檔案（或下載下方「目前的打包結果」接著做）。</li>
+            <li>用雲端 AI 依「上架資料包」打包成已打包的 ZIP（含 Dockerfile、workhub.yaml）。</li>
+            <li>把 ZIP 交給開發者，由開發者在開發者中心用「上傳已打包的 ZIP」上傳，走一般上架流程。</li></ol></div>
+        : <p>這筆自動打包不會再繼續。AI Team 會和你聯絡，協助用雲端 AI 打包；拿到打包好的 ZIP 後，請在開發者中心用「上傳已打包的 ZIP」上傳。</p>}
       {role === 'aiteam' && <p className="ap-downloads"><a className="ap-dl" href={`/api/onboarding/autopack/${ap.id}/log`} download><span aria-hidden>⬇</span>下載打包紀錄<small>.txt：每一步的結果、建置與測試輸出、模型改了什麼</small></a><a className="ap-dl" href={`/api/onboarding/autopack/${ap.id}/files.zip`} download><span aria-hidden>⬇</span>下載目前的打包結果<small>.zip：平台做好的專案（含 Dockerfile、workhub.yaml），不含測試資料</small></a></p>}
     </div>}
     {ap.status === 'failed' && <p className="onb-error">打包失敗：{ap.error}</p>}

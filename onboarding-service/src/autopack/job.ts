@@ -418,7 +418,10 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       task: `${q.refs[0].file} 第 ${q.refs.map((x) => x.line).filter(Boolean).join('、')} 行寫死了金鑰或密碼（已遮蔽成 [已遮蔽]）。把它改成讀環境變數（變數名稱用大寫英數字與底線，例如 ERP_TOKEN），沒設定時用空字串，程式照常啟動。不要在程式或註解留下任何金鑰。`, extra: `（第 ${i + 1} 個金鑰問題）` });
     for (const w of a.windowsDeps) if (d.answers?.[`win:${w.name}`] === 'remove') tasks.push({ name: `移除 Windows 專用套件 ${w.name}`, files: [...new Set(w.refs.map((x) => x.file))].filter((f) => existsSync(join(src, f))),
       task: `移除對 Windows 專用套件 ${w.name} 的使用（開發者已確認不需要）。相關功能改成在 Linux 也能執行，或在非 Windows 時略過。` });
-    if (!a.healthBuiltin && a.framework && !['streamlit', 'gradio', 'dash', 'static', 'php', 'spa', 'next'].includes(a.framework)) {
+    // FastAPI／Flask 的健康檢查由平台直接加（固定寫法，不需要模型；2026/11/03 實測模型回覆格式錯誤導致整包轉 AI Team）
+    const fixedHealth = !a.healthBuiltin && addHealthRoute(a, src);
+    if (fixedHealth) step('加上健康檢查網址', 'passed', `平台範本：${fixedHealth}`);
+    if (!fixedHealth && !a.healthBuiltin && a.framework && !['streamlit', 'gradio', 'dash', 'static', 'php', 'spa', 'next'].includes(a.framework)) {
       const entryFile = healthTarget(a, src);
       if (entryFile) tasks.push({ name: '加上健康檢查網址', files: [entryFile], task: `在 ${a.frameworkLabel} 程式加上 GET ${a.healthPath}，回傳 HTTP 200 與 {"status":"ok"}；不要改其他路由。` });
     }
@@ -457,7 +460,9 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
       for (let attempt = 1; ; attempt++) {
         try {
           const ctrl = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Math.min(cfg.autopack.modelTimeoutMs, remaining())))]);
-          reply = parseReply(await model(systemPrompt(), taskPrompt(task, contents, extra), ctrl));
+          const raw = await model(systemPrompt(), taskPrompt(task, contents, extra), ctrl);
+          appendFileSync(join(dir, `model-${d.modelLog.length + 1}.log`), `===== ${name}（第 ${attempt} 次）=====\n${maskSecrets(raw).slice(0, 60000)}\n\n`);
+          reply = parseReply(raw);
           if (reply.edits.length || attempt >= 3) break;
           log(`${name}：模型回覆看不懂，重試第 ${attempt} 次`);
         } catch (e) {
@@ -640,6 +645,22 @@ function buildQuestions(a: Analysis): Question[] {
   for (const o of a.data.outside) qs.push({ id: o.id, kind: 'data_keep', title: `${o.ref.file} 會把檔案寫到程式資料夾${o.path ? `的 ${o.path}` : ''}`, detail: `第 ${o.ref.line} 行：${o.ref.detail}\n放在程式資料夾的檔案，工具更新或重新啟動後會不見。這些檔案要保留嗎？`, refs: [o.ref],
     options: [{ value: 'keep', label: '要保留（請平台改存到資料目錄）' }, { value: 'temp', label: '不用保留（只是暫存）' }] });
   return qs;
+}
+
+/** FastAPI／Flask：在入口檔最後加上健康檢查路由，回傳改了哪個檔；其他框架回傳 null（交給模型） */
+export function addHealthRoute(a: Analysis, src: string): string | null {
+  if (!['fastapi', 'flask'].includes(a.framework ?? '') || !a.entry?.includes(':')) return null;
+  const [mod, v] = a.entry.split(':');
+  const file = `${mod.replace(/\./g, '/')}.py`;
+  const abs = join(src, file);
+  if (!existsSync(abs) || !/^[A-Za-z_]\w*$/.test(v)) return null;
+  const text = readFileSync(abs, 'utf8');
+  if (new RegExp(`["']${a.healthPath.replace(/[/.]/g, '\\$&')}["']`).test(text)) return file;
+  const route = a.framework === 'fastapi'
+    ? `@${v}.get("${a.healthPath}", include_in_schema=False)\ndef _workhub_health():\n    return {"status": "ok"}\n`
+    : `@${v}.route("${a.healthPath}")\ndef _workhub_health():\n    return {"status": "ok"}\n`;
+  writeFileSync(abs, `${text.replace(/\s*$/, '\n')}\n\n# WorkHub 健康檢查（平台自動加上）\n${route}`);
+  return file;
 }
 
 function healthTarget(a: Analysis, src: string): string | null {

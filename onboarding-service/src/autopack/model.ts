@@ -43,12 +43,29 @@ export function maskSecrets(text: string): string {
   return out;
 }
 
+/** 地端模型常在 JSON 字串裡直接換行或放 Tab（不合法），在字串內把它們轉成跳脫字元 */
+export function repairJson(s: string): string {
+  let out = ''; let inStr = false; let esc = false;
+  for (const ch of s) {
+    if (inStr) {
+      if (esc) { out += ch; esc = false; continue; }
+      if (ch === '\\') { out += ch; esc = true; continue; }
+      if (ch === '"') { inStr = false; out += ch; continue; }
+      if (ch === '\n') { out += '\\n'; continue; }
+      if (ch === '\r') { out += '\\r'; continue; }
+      if (ch === '\t') { out += '\\t'; continue; }
+      out += ch;
+    } else { if (ch === '"') inStr = true; out += ch; }
+  }
+  return out;
+}
+
 /** 從模型回覆取出 JSON（容忍前後有說明文字或 ```json 區塊） */
 export function parseReply(raw: string): ModelReply {
   const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '');
   const fence = /```(?:json)?\s*([\s\S]*?)```/.exec(cleaned);
   const candidates = [fence?.[1], cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1)].filter((x): x is string => !!x && x.trim().startsWith('{'));
-  for (const c of candidates) {
+  for (const c of candidates.flatMap((x) => [x, repairJson(x)])) {
     try {
       const j = JSON.parse(c) as { edits?: { path?: unknown; content?: unknown; replace?: unknown }[]; note?: unknown };
       const asReplace = (r: unknown): Replace[] | undefined => Array.isArray(r) ? r.filter((x) => x && typeof x.find === 'string' && typeof (x.with ?? x.replace) === 'string').map((x) => ({ find: String(x.find), with: String(x.with ?? x.replace) })) : undefined;
