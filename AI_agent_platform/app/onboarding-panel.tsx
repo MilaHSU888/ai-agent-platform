@@ -276,7 +276,7 @@ export function OnboardingPanel({ departments, notice, role = 'aiteam', develope
       </form>
       </> : submissionForm.kind === 'source' ? <>
       <p className="mg-muted">把整個專案資料夾壓成 ZIP 上傳即可，平台會自動打包並測試，有不確定的地方會在下方「自動打包」問你。</p>
-      <p className="onb-note ap-intro">支援 Python、Node.js、Java、.NET、Go、PHP 與純靜態網頁；不支援的類型會轉給 AI Team。測試資料可以一起放，金鑰、密碼請不要放。</p>
+      <p className="onb-note ap-intro">支援 Python、Node.js、Java、.NET、Go、PHP 與純靜態網頁；不支援的類型會通知 AI Team。測試資料可以一起放，金鑰、密碼請不要放。</p>
       {health && !health.docker && <p className="onb-error">找不到 Docker，無法自動打包。</p>}
       <form key={`src-${submissionForm.tool?.id ?? 'new'}`} className="mg-fields onb-upload" onSubmit={(e) => {
         e.preventDefault(); if (!file) return;
@@ -492,7 +492,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings, 
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string[]>>({});
   const [log, setLog] = useState<{ title: string; text: string } | null>(null);
-  // 自動打包轉給 AI Team 的案子（2026/11/03）：AI Team 有人點開後就不再列出，由點開的人聯絡開發者（不記錄是誰）
+  // 自動打包已通知 AI Team 的案子（2026/11/03）：AI Team 有人點開後就不再列出，由點開的人聯絡開發者（不記錄是誰）
   const [handoffs, setHandoffs] = useState<Autopack[]>([]);
   useEffect(() => {
     let alive = true;
@@ -651,7 +651,7 @@ export function ReleaseCenter({ notice, departments = [], role, renderSettings, 
     {todo.length + handoffs.length > 0 && <section className="onb-notice rc-todo" role="status">
       <div><b>有 {todo.length + handoffs.length} 件需要 AI Team 處理</b><p>點選項目會直接開啟該工具的詳情{handoffs.length > 0 && '；自動打包的案子點開後就不再列在這裡，請點開的人聯絡開發者，用雲端 AI 協助打包'}。</p></div>
       <div className="onb-notice-links">{todo.map((r) => <button key={r.key} onClick={() => { setTab(r.cat); setOpen(r.toolId); }}>{r.name}{r.kind === 'url' && '（URL）'} {r.version}：{todoLabel(r)} ›</button>)}
-        {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => { setHandoffs((h) => h.filter((x) => x.id !== a.id)); void onboardingApi.ackAutopack(a.id).catch(() => {}).finally(() => openAutopack?.(a.id)); }}>{a.name ?? a.toolId ?? a.filename}：自動打包轉給 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
+        {handoffs.map((a) => <button key={a.id} className="rc-todo-autopack" title={a.handoff?.reason ?? ''} onClick={() => { setHandoffs((h) => h.filter((x) => x.id !== a.id)); void onboardingApi.ackAutopack(a.id).catch(() => {}).finally(() => openAutopack?.(a.id)); }}>{a.name ?? a.toolId ?? a.filename}：自動打包已通知 AI Team（{a.handoff?.reason ?? '需要協助'}）›</button>)}</div>
     </section>}
     <div className="rc-cards" role="tablist" aria-label="發布狀態">
       {CATS.map((x) => <button key={x.id} role="tab" aria-selected={current === x.id} className={`rc-card ${current === x.id ? 'active' : ''} ${x.id === 'pending' && counts.pending > 0 ? 'attention' : ''}`} onClick={() => setTab(x.id)}>

@@ -299,11 +299,11 @@ test('建置或測試失敗：交給模型修正，修好就繼續；修了 3 �
     assert.match(v.handoff.reason, /修了 3 次仍然建置失敗/);
     assert.equal(fake2.calls.length, 3);
     const log = await fetch(`http://127.0.0.1:${t2.cfg.port}/api/onboarding/autopack/${id}/log`, { headers: { 'X-WorkHub-Proxy-Token': TOKEN } });
-    assert.match(await log.text(), /轉給 AI Team/);
+    assert.match(await log.text(), /通知 AI Team/);
     const z = await fetch(`http://127.0.0.1:${t2.cfg.port}/api/onboarding/autopack/${id}/files.zip`, { headers: { 'X-WorkHub-Proxy-Token': TOKEN } });
     assert.equal(z.status, 200);
     const notices = (await t2.call('GET', `/api/onboarding/notices?owner=${encodeURIComponent('林開發')}`)).data.notices as { message: string }[];
-    assert.ok(notices.some((n) => /轉給 AI Team/.test(n.message)));
+    assert.ok(notices.some((n) => /通知 AI Team/.test(n.message)));
   } finally { await t2.close(); }
 });
 

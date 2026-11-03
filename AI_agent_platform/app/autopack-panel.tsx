@@ -2,7 +2,7 @@
 /**
  * 原始碼自動打包（2026/11/03）：開發者上傳原始碼 → 平台分析、產生 Dockerfile／workhub.yaml、地端模型修正、
  * 斷網業務測試 → 打包報告 → 開發者確認後直接進一般上架流程。
- * 看不懂的地方才暫停發問；做不到的類型或超過 60 分鐘轉給 AI Team。
+ * 看不懂的地方才暫停發問；做不到的類型或超過 60 分鐘通知 AI Team。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, onboardingApi, type Autopack } from './onboarding-api';
@@ -10,7 +10,7 @@ import type { Role } from './role';
 
 const STATUS: Record<Autopack['status'], [string, string]> = {
   queued: ['排隊中', 'warn'], running: ['打包中', 'warn'], awaiting_answer: ['等你回答', 'warn'], awaiting_review: ['等你確認報告', 'warn'],
-  submitted: ['已送出上架', 'ok'], handed_off: ['已轉給 AI Team', 'bad'], cancelled: ['已取消', ''], failed: ['失敗', 'bad'],
+  submitted: ['已送出上架', 'ok'], handed_off: ['已通知 AI Team', 'bad'], cancelled: ['已取消', ''], failed: ['失敗', 'bad'],
 };
 const STEP_ICON: Record<string, string> = { passed: '✓', failed: '✕', skipped: '－', running: '…', waiting: '？' };
 const LIVE: Autopack['status'][] = ['queued', 'running'];
@@ -39,7 +39,7 @@ export function AutopackPanel({ role, developer, notice, onSubmitted }: Props) {
     return () => { alive = false; window.removeEventListener('workhub:autopack', h); };
   }, [refresh]);
 
-  // 開發者只看自己當 Owner 的；AI Team 看全部（轉給 AI Team 的排最前面）
+  // 開發者只看自己當 Owner 的；AI Team 看全部（通知 AI Team 的排最前面）
   const visible = useMemo(() => {
     const v = role === 'aiteam' ? items : items.filter((x) => x.owner === developer || x.actor === developer);
     return role === 'aiteam' ? [...v].sort((a, b) => Number(b.status === 'handed_off') - Number(a.status === 'handed_off')) : v;
@@ -103,7 +103,7 @@ function AutopackDetail({ ap, role, busy, answers, setAnswers, onAnswer, onConfi
     </form>}
 
     {ap.status === 'handed_off' && ap.handoff && <div className="onb-error ap-handoff">
-      <b>已轉給 AI Team：{ap.handoff.reason}</b>
+      <b>已通知 AI Team：{ap.handoff.reason}</b>
       {ap.handoff.detail && <pre className="ap-handoff-detail">{ap.handoff.detail}</pre>}
       {role === 'aiteam'
         ? <div className="ap-next"><b>下一步（這筆自動打包不會再繼續）：</b><ol>

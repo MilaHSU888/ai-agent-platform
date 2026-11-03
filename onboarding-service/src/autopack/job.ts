@@ -102,7 +102,7 @@ export function createAutopack(store: Store, cfg: Config, buf: Buffer, f: Create
     else if (t.kind === 'url') bad('toolId', '這是 URL 上架的工具', '請用「修改網址設定」');
   }
   if (buf.length < 22) issues.push({ file: '(上傳檔)', reason: '檔案太小，不是有效的 ZIP', fix: '把原始碼資料夾壓縮成 ZIP 後上傳' });
-  // 上傳當下就做 ZIP 安全檢查：開發者自己能修的問題（檔案太多、加密、路徑不安全）直接告訴開發者，不轉給 AI Team
+  // 上傳當下就做 ZIP 安全檢查：開發者自己能修的問題（檔案太多、加密、路徑不安全）直接告訴開發者，不通知 AI Team
   else issues.push(...readCentralDirectory(buf, autopackLimits(cfg), false).issues);
   if (issues.length) return { ok: false, issues };
   const id = newId('ap');
@@ -169,7 +169,7 @@ export function answerAutopack(store: Store, cfg: Config, id: string, actor: str
 export function ackAutopack(store: Store, id: string, actor: string) {
   const r = row(store, id);
   if (!r) throw new GateError(['找不到這筆自動打包']);
-  if (r.status !== 'handed_off') throw new GateError(['這筆自動打包沒有轉給 AI Team']);
+  if (r.status !== 'handed_off') throw new GateError(['這筆自動打包沒有通知 AI Team']);
   const d = JSON.parse(r.detail_json) as Detail;
   if (d.ack) return;
   d.ack = true;
@@ -256,7 +256,7 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
   const budgetMs = cfg.autopack.maxMinutes * 60_000;
   const used = () => r.active_ms + (clock() - started);
   const remaining = () => budgetMs - used();
-  const checkTime = () => { if (remaining() <= 0) throw new HandOff(`超過 ${cfg.autopack.maxMinutes} 分鐘還沒打包完成`, '打包時間超過上限（等你回答問題的時間不算），已轉給 AI Team 協助。'); };
+  const checkTime = () => { if (remaining() <= 0) throw new HandOff(`超過 ${cfg.autopack.maxMinutes} 分鐘還沒打包完成`, '打包時間超過上限（等你回答問題的時間不算），已通知 AI Team 協助。'); };
   const step = (name: string, status: Step['status'], detail?: string) => {
     const i = d.steps.findIndex((s) => s.name === name);
     const s = { name, status, at: now(), detail };
@@ -283,11 +283,11 @@ export async function runAutopack(store: Store, cfg: Config, rt: Runtime, secret
     if (signal.aborted) { save(store, id, { status: 'queued', addMs: ms }); return; }
     if (e instanceof HandOff) {
       d.handoff = { reason: e.message, detail: e.detail, at: now() };
-      log(`轉給 AI Team：${e.message}`);
+      log(`通知 AI Team：${e.message}`);
       cleanup(cfg, id, { keepWork: true });
       save(store, id, { status: 'handed_off', detail: d, error: e.message, addMs: ms });
       store.audit('system', 'autopack.handed_off', d.toolId ?? id, { autopack: id, reason: e.message });
-      notify(store, d.toolId ?? id, r.owner, 'autopack', `「${r.name ?? d.toolId}」自動打包已轉給 AI Team：${e.message}`);
+      notify(store, d.toolId ?? id, r.owner, 'autopack', `「${r.name ?? d.toolId}」自動打包已通知 AI Team：${e.message}`);
       return;
     }
     const msg = (e as Error).message;
@@ -607,8 +607,8 @@ function topTestDir(p: string) {
 /** 開發者回答和平台判斷不一致時要問的題目 */
 function aiQuestion(a: Analysis, declared: AiAnswer | undefined): Question[] {
   if (declared === 'yes' && !a.ai.uses) return [{ id: 'ai.missing', kind: 'ai', title: '你說這個工具會用到 AI 模型，但平台找不到呼叫模型的程式',
-    detail: '請告訴平台是哪個檔案呼叫模型（例如組網址呼叫 /chat/completions、或用公司內部套件），平台會把它改成用平台的模型；找不到也可以轉給 AI Team。', refs: [],
-    options: [{ value: 'file', label: '我指定呼叫模型的檔案' }, { value: 'none', label: '其實沒有用 AI，繼續打包' }, { value: 'help', label: '我也不確定在哪裡（轉給 AI Team）' }],
+    detail: '請告訴平台是哪個檔案呼叫模型（例如組網址呼叫 /chat/completions、或用公司內部套件），平台會把它改成用平台的模型；找不到也可以通知 AI Team。', refs: [],
+    options: [{ value: 'file', label: '我指定呼叫模型的檔案' }, { value: 'none', label: '其實沒有用 AI，繼續打包' }, { value: 'help', label: '我也不確定在哪裡（通知 AI Team）' }],
     input: { key: 'ai.file', when: 'file', label: '呼叫模型的檔案（專案資料夾裡的相對路徑）', default: '', hint: '例如 translator.py、core/ai.py' } }];
   if (declared === 'no' && a.ai.uses) return [{ id: 'ai.unexpected', kind: 'ai', title: '你說這個工具不會用到 AI 模型，但程式裡有呼叫模型的寫法',
     detail: `位置：${a.ai.refs.map(refText).join('、')}。如果工具會用到，平台會改成用平台的模型（才連得到、才算得到用量）。`, refs: a.ai.refs,
@@ -639,9 +639,9 @@ function buildQuestions(a: Analysis): Question[] {
   for (const [file, refs] of bySecretFile) qs.push({ id: `sec${++n}`, kind: 'secret', title: `${file} 疑似寫死的金鑰或密碼`, detail: `位置：${refs.map(refText).join('、')}（${refs[0].detail}；內容不顯示）。金鑰不能放進工具，要改成由平台以環境變數注入。`, refs,
     options: [{ value: 'env', label: '請平台改成讀環境變數（程式裡不留金鑰），繼續打包' }, { value: 'reupload', label: '我自己移除後重新上傳' }] });
   for (const h of a.external) qs.push({ id: `ext:${h.host}`, kind: 'external', title: `程式會連到 ${h.host}`, detail: `位置：${h.refs.slice(0, 5).map(refText).join('、')}。工具在平台上不能連外部網站或公司其他系統。`, refs: h.refs,
-    options: [{ value: 'not_needed', label: '不需要（只是範例、註解或不會用到的功能），繼續打包' }, { value: 'needed', label: '需要，這是必要功能（轉給 AI Team 協助申請）' }] });
+    options: [{ value: 'not_needed', label: '不需要（只是範例、註解或不會用到的功能），繼續打包' }, { value: 'needed', label: '需要，這是必要功能（通知 AI Team 協助申請）' }] });
   for (const w of a.windowsDeps) qs.push({ id: `win:${w.name}`, kind: 'windows', title: `使用 Windows 專用套件 ${w.name}`, detail: `位置：${w.refs.slice(0, 5).map(refText).join('、')}。平台是 Linux，這個套件無法執行。`, refs: w.refs,
-    options: [{ value: 'remove', label: '不需要，請平台移除相關程式碼' }, { value: 'needed', label: '需要（轉給 AI Team 評估）' }] });
+    options: [{ value: 'remove', label: '不需要，請平台移除相關程式碼' }, { value: 'needed', label: '需要（通知 AI Team 評估）' }] });
   for (const o of a.data.outside) qs.push({ id: o.id, kind: 'data_keep', title: `${o.ref.file} 會把檔案寫到程式資料夾${o.path ? `的 ${o.path}` : ''}`, detail: `第 ${o.ref.line} 行：${o.ref.detail}\n放在程式資料夾的檔案，工具更新或重新啟動後會不見。這些檔案要保留嗎？`, refs: [o.ref],
     options: [{ value: 'keep', label: '要保留（請平台改存到資料目錄）' }, { value: 'temp', label: '不用保留（只是暫存）' }] });
   return qs;
