@@ -50,13 +50,15 @@ export function inspectZip(buf: Buffer, cfg: Config): { issues: Issue[]; warning
 
 /** 已打包的 ZIP 偏大時（2026/11/03 Mila：上限統一 300 MB，不擋，改列出可能不需要的東西） */
 const BULKY_WARN_BYTES = 50 * 1024 * 1024;
+const BULKY_WARN_FILES = 5000;
 const BULKY: { label: string; fix: string; test: (path: string, size: number) => boolean }[] = [
   { label: '虛擬環境或套件', fix: '平台建置時會依 requirements.txt／package.json 重新安裝，不用放進 ZIP', test: (p) => p.split('/').some((x) => SKIP_DIR.test(x) && !/^(dist|build|target|bin|obj|out|coverage|htmlcov)$/.test(x)) },
   { label: 'Windows 安裝檔', fix: '平台用不到 .exe、.msi、.bat 等安裝或啟動檔', test: (p) => WINDOWS_DEPLOY.test(p) },
   { label: '資料檔或影音', fix: '正式資料不要放進工具；測試資料放 tests/fixtures，範本才放在程式資料夾', test: (p, n) => n >= 5 * 1024 * 1024 && /\.(xlsx?|csv|db|sqlite3?|json|parquet|mp4|mov|avi|zip|pdf|png|jpe?g|tiff?)$/i.test(p) },
 ];
 export function bulkyWarnings(zipBytes: number, entries: ZipEntry[], prefix: string): Issue[] {
-  if (zipBytes < BULKY_WARN_BYTES) return [];
+  const fileCount = entries.filter((e) => !e.isDir).length;
+  if (zipBytes < BULKY_WARN_BYTES && fileCount <= BULKY_WARN_FILES) return [];
   const mb = (n: number) => `${(n / 1024 / 1024).toFixed(0)} MB`;
   const out: Issue[] = [];
   for (const b of BULKY) {
@@ -64,9 +66,9 @@ export function bulkyWarnings(zipBytes: number, entries: ZipEntry[], prefix: str
     if (!hit.length) continue;
     const size = hit.reduce((t, e) => t + e.compressedSize, 0);
     const tops = [...new Set(hit.map((e) => e.name.slice(prefix.length).split('/').slice(0, 2).join('/')))].slice(0, 5);
-    out.push({ file: tops.join('、') + (hit.length > tops.length ? ' 等' : ''), reason: `ZIP 有 ${mb(zipBytes)}，其中${b.label}約 ${mb(size)}（${hit.length} 個檔案）`, fix: b.fix });
+    out.push({ file: tops.join('、') + (hit.length > tops.length ? ' 等' : ''), reason: `ZIP 有 ${mb(zipBytes)}、${fileCount} 個檔案，其中${b.label}約 ${mb(size)}（${hit.length} 個檔案）`, fix: b.fix });
   }
-  if (!out.length) out.push({ file: '(ZIP)', reason: `ZIP 有 ${mb(zipBytes)}，比一般小工具大很多`, fix: '確認沒有夾帶資料檔、虛擬環境或套件快取' });
+  if (!out.length) out.push({ file: '(ZIP)', reason: `ZIP 有 ${mb(zipBytes)}、${fileCount} 個檔案，比一般小工具大很多`, fix: '確認沒有夾帶資料檔、虛擬環境或套件快取' });
   return out;
 }
 
