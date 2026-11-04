@@ -99,6 +99,9 @@ export class Store {
     this.db.exec(`CREATE TABLE IF NOT EXISTS model_catalog (endpoint TEXT NOT NULL, model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, actor TEXT, PRIMARY KEY(endpoint, model));
       CREATE TABLE IF NOT EXISTS platform_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, tool_id TEXT, owner TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT);`);
+    // 試用／公開提醒（2026/11/04）：ref 唯一，同一個工具版本只提醒一次
+    if (!this.all<{ name: string }>('PRAGMA table_info(notices)').some((c) => c.name === 'ref')) this.db.exec('ALTER TABLE notices ADD COLUMN ref TEXT');
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS notices_ref ON notices(ref) WHERE ref IS NOT NULL');
     if (!this.all<{ name: string }>('PRAGMA table_info(submissions)').some((c) => c.name === 'kind')) this.db.exec("ALTER TABLE submissions ADD COLUMN kind TEXT NOT NULL DEFAULT 'zip'");
     // 第一次公開的時間（2026/11/02）：新工具第一次切到「公開中」時清空試用資料，之後再切換不再清空。
     // 既有資料：目前公開中、或曾經公開過的工具視為已公開過

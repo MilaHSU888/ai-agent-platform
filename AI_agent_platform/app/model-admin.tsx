@@ -142,7 +142,14 @@ export function ModelUsagePanel() {
 /** 開發者中心最上方：給工具 Owner 的提醒（例如 AI Team 換了模型） */
 export function ModelNotices({ owner }: { owner: string }) {
   const [items, setItems] = useState<Notice[]>([]);
-  useEffect(() => { if (!owner) return; let alive = true; void onboardingApi.notices(owner).then((r) => { if (alive) setItems(r); }).catch(() => {}); return () => { alive = false; }; }, [owner]);
+  useEffect(() => {
+    if (!owner) return;
+    let alive = true;
+    const load = () => { void onboardingApi.notices(owner).then((r) => { if (alive) setItems(r.filter((n) => n.kind !== 'trial')); }).catch(() => {}); };
+    load();
+    const timer = setInterval(load, 20000); // AI Team 公開或換模型後不用重新整理也看得到
+    return () => { alive = false; clearInterval(timer); };
+  }, [owner]);
   if (!items.length) return null;
   return <section className="onb-notice mm-notices" role="status">
     <div><b>AI Team 通知</b>{items.map((n) => <p key={n.id}>{new Date(n.createdAt).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}｜{n.message}</p>)}</div>

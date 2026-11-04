@@ -15,6 +15,7 @@ import { ackAutopack, answerAutopack, autopackList, autopackLog, autopackView, a
 import { setToolIcon, submitUrlTool } from './url-tools.ts';
 import { defaultModel, listEndpoints, seedDefault, setDefault, setEnabled, setLocalOnly, setToolModel, toolModel } from './models.ts';
 import { modelUsage } from './usage.ts';
+import { syncDeveloperNotices } from './notices.ts';
 import { buildKit } from './kit.ts';
 import { approvalsFor, approveException, approveRelease, confirmCodeReview, confirmTest, GateError, latestSteps, missingExceptions, releaseBlockers, withdraw } from './approvals.ts';
 import type { Runtime } from './runtime.ts';
@@ -401,6 +402,7 @@ export function createApp(store: Store, cfg: Config, queue: JobQueue, rt: Runtim
     // 給工具 Owner 的提醒（開發者中心最上方）
     { method: 'GET', re: /^\/api\/onboarding\/notices$/, auth: true, fn: ({ res, url }) => {
       const owner = url.searchParams.get('owner') ?? '';
+      syncDeveloperNotices(store);
       send(res, 200, { notices: store.all(`SELECT n.id, n.tool_id AS toolId, t.name AS toolName, n.kind, n.message, n.created_at AS createdAt FROM notices n LEFT JOIN tools t ON t.id=n.tool_id
         WHERE n.read_at IS NULL AND n.owner=? ORDER BY n.created_at DESC LIMIT 50`, owner) });
     } },

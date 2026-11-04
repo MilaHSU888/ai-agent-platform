@@ -1,13 +1,13 @@
 "use client";
 import { useCallback, useEffect, useState } from 'react';
-import { ApiError, onboardingApi, type CatalogTool } from './onboarding-api';
+import { ApiError, onboardingApi, type CatalogTool, type Notice } from './onboarding-api';
 import { canSeeTrial, type Role } from './role';
 
 const newEventId = () => `evt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
 /**
  * 試用中（未公開）的工具。開發者中心用：列出目前身分看得到的試用工具（開發者只看得到自己當 Owner 的）。
- * 2026/11/02 起開發者不用按「試用通過」：試用沒問題請通知 AI Team，由 AI Team 切換燈號公開。
+ * 2026/11/02 起開發者不用按「試用通過」，由 AI Team 切換燈號公開；2026/11/04 起提醒文字不再要求開發者通知 AI Team。
  */
 export function TrialPanel({ role, developer = '', notice }: { role: Role; developer?: string; notice: (m: string) => void }) {
   const [tools, setTools] = useState<CatalogTool[] | null>(null);
@@ -24,7 +24,7 @@ export function TrialPanel({ role, developer = '', notice }: { role: Role; devel
   void notice;
   return <section id="trial-panel" className="mg-panel onb-review">
     <div className="mg-row"><div><h2>試用中（未公開）</h2>
-      <p className="mg-muted">只有該工具的 Owner（開發者）與 AI Team 看得到。試用沒問題請通知 AI Team，由 AI Team 切換為「公開中」後一般使用者才看得到。{role === 'developer' && `目前顯示 ${developer || '（未選擇開發者）'} 當 Owner 的工具。`}</p></div>
+      <p className="mg-muted">只有該工具的 Owner（開發者）與 AI Team 看得到；AI Team 切換為「公開中」後，一般使用者才看得到。{role === 'developer' && `目前顯示 ${developer || '（未選擇開發者）'} 當 Owner 的工具。`}</p></div>
       <button onClick={() => void load()}>重新整理</button></div>
     {items.length === 0 ? <p className="mg-submission-empty">目前沒有試用中的工具或版本。</p> : items.map((t) => <TrialCard key={t.toolId} tool={t} />)}
   </section>;
@@ -34,29 +34,30 @@ export function TrialPanel({ role, developer = '', notice }: { role: Role; devel
 export const isTrialing = (t: CatalogTool) => !!t.trial || (t.visibility === 'trial' && !t.offline);
 export const trialVersionOf = (t: CatalogTool) => (t.trial ? t.trial.version : t.version);
 
-/** 開發者中心最上方的提醒：有工具已進入試用。點擊直接捲到該工具的試用卡片。 */
-export function TrialNotice({ role, developer = '' }: { role: Role; developer?: string }) {
-  const [tools, setTools] = useState<CatalogTool[]>([]);
+/** 開發者中心最上方的提醒：工具已可以開始試用（2026/11/04：點「前往試用」後就消失，不再一直顯示）。 */
+export function TrialNotice({ developer = '' }: { role?: Role; developer?: string }) {
+  const [items, setItems] = useState<Notice[]>([]);
   useEffect(() => {
+    if (!developer) return;
     let alive = true;
-    const load = () => { void onboardingApi.catalog().then((r) => { if (alive) setTools(r); }).catch(() => { if (alive) setTools([]); }); };
+    const load = () => { void onboardingApi.notices(developer).then((r) => { if (alive) setItems(r.filter((n) => n.kind === 'trial')); }).catch(() => {}); };
     load();
     const timer = setInterval(load, 20000);
     window.addEventListener('workhub:catalog-refresh', load);
     return () => { alive = false; clearInterval(timer); window.removeEventListener('workhub:catalog-refresh', load); };
-  }, []);
-  const waiting = tools.filter((t) => isTrialing(t) && canSeeTrial(role, developer, t.owner));
-  if (!waiting.length) return null;
-  const go = (toolId: string) => {
-    const el = document.getElementById(`trial-${toolId}`) ?? document.getElementById('trial-panel');
+  }, [developer]);
+  if (!items.length) return null;
+  const go = (n: Notice) => {
+    setItems((list) => list.filter((x) => x.id !== n.id));
+    void onboardingApi.readNotice(n.id).catch(() => {});
+    const el = document.getElementById(`trial-${n.toolId}`) ?? document.getElementById('trial-panel');
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el?.classList.add('onb-flash');
     setTimeout(() => el?.classList.remove('onb-flash'), 2400);
   };
   return <div className="onb-notice" role="status">
-    <div><b>有 {waiting.length} 個工具在試用中，可以開始試用</b>
-      <p>工具尚未公開，一般使用者看不到。試用沒問題請通知 AI Team 公開。</p></div>
-    <div className="onb-notice-links">{waiting.map((t) => <button key={t.toolId} onClick={() => go(t.toolId)}>{t.name} {trialVersionOf(t)}：前往試用 ↓</button>)}</div>
+    <div><b>有 {items.length} 個工具已可以開始試用</b></div>
+    <div className="onb-notice-links">{items.map((n) => <button key={n.id} onClick={() => go(n)}>{n.message.replace(/ 已可以開始試用$/, '')}：前往試用 ↓</button>)}</div>
   </div>;
 }
 

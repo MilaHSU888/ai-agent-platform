@@ -926,10 +926,10 @@ test('模型管理：可用模型、預設模型只能地端、工具指定模�
     const routes = JSON.parse(readFileSync(join(t.cfg.dataDir, 'relay-routes', 'routes.json'), 'utf8'));
     assert.deepEqual(routes.tools['demo-tool'], { endpoint: 'cloud-x', model: 'gpt-cloud' });
     assert.deepEqual(routes.default, { endpoint: 'wisely-5090', model: 'huihui-qwen-vision' });
-    const notices = ((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices;
+    const notices = ((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices.filter((x: any) => x.kind === 'model');
     assert.match(notices[0].message, /gpt-cloud.*需要較強的模型/);
     assert.equal((await t.call('POST', `/api/onboarding/notices/${notices[0].id}/read`)).status, 200);
-    assert.equal(((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices.length, 0);
+    assert.equal(((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices.filter((x: any) => x.kind === 'model').length, 0);
     // 使用中的模型不能停用；僅限地端時不能用雲端
     assert.equal((await t.call('POST', '/api/onboarding/models/enabled', { endpoint: 'cloud-x', model: 'gpt-cloud', enabled: false })).status, 409);
     assert.equal((await t.call('POST', '/api/onboarding/tools/demo-tool/local-only', { on: true })).status, 409);
@@ -942,7 +942,7 @@ test('模型管理：可用模型、預設模型只能地端、工具指定模�
     // 換平台預設：跟著預設的工具 Owner 收到提醒
     assert.equal((await t.call('POST', '/api/onboarding/models/enabled', { endpoint: 'wisely-5090', model: 'small', enabled: true })).status, 200);
     assert.equal((await t.call('POST', '/api/onboarding/models/default', { endpoint: 'wisely-5090', model: 'small', reason: '測試' })).status, 200);
-    assert.match(((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices[0].message, /預設模型.*small/);
+    assert.match(((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices.filter((x: any) => x.kind === 'model')[0].message, /預設模型.*small/);
     // 用量統計：彙整轉接服務日誌
     mkdirSync(join(t.cfg.dataDir, 'relay-logs'), { recursive: true });
     const nowIso = new Date().toISOString();
@@ -1007,5 +1007,30 @@ test('審核履歷：記錄網站選的示範身分（未驗證）、誰上傳�
     assert.throws(() => t.store.run('DELETE FROM audit_events'), /不能刪除/);
     assert.throws(() => t.store.run("UPDATE audit_events SET actor='x'"), /不能修改/);
     assert.throws(() => t.store.run('DELETE FROM approvals'), /不能刪除/);
+  } finally { await t.close(); }
+});
+
+test('開發者提醒：進入試用提醒一次、點了就消失；AI Team 公開同一版本再提醒一次（2026/11/04）', async () => {
+  const t = await setup();
+  try {
+    const notices = async () => ((await t.call('GET', '/api/onboarding/notices?owner=Mila')).data as any).notices as { id: string; kind: string; message: string }[];
+    const v1 = await approvedVersion(t, 'v1');
+    assert.equal((await notices()).length, 0, '還沒發布不提醒');
+    await t.call('POST', `/api/onboarding/submissions/${v1.id}/release`); await t.runQueue();
+    let n = await notices();
+    assert.equal(n.length, 1); assert.equal(n[0].kind, 'trial'); assert.match(n[0].message, /v1 已可以開始試用/);
+    await t.call('POST', `/api/onboarding/notices/${n[0].id}/read`);
+    assert.equal((await notices()).length, 0, '點了就消失，不再出現');
+    const pub = await t.call('POST', '/api/onboarding/tools/demo-tool/light', { target: 'public' });
+    assert.ok([200, 202].includes(pub.status)); await t.runQueue();
+    n = await notices();
+    assert.equal(n.length, 1); assert.equal(n[0].kind, 'published'); assert.match(n[0].message, /v1 已由 AI Team 公開/);
+    await t.call('POST', `/api/onboarding/notices/${n[0].id}/read`);
+    assert.equal((await notices()).length, 0);
+    // 新版並行試用 → 新版本再提醒
+    const v2 = await approvedVersion(t, 'v2', 'update');
+    await t.call('POST', `/api/onboarding/submissions/${v2.id}/release`); await t.runQueue();
+    n = await notices();
+    assert.equal(n.length, 1); assert.match(n[0].message, /v2 已可以開始試用/);
   } finally { await t.close(); }
 });
